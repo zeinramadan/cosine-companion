@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
-import soundfile as sf
 import essentia.standard as es
 
 from config import DEFAULT_SAMPLE_RATE, MODELS
@@ -102,77 +101,33 @@ class DiscogsEffnetEmbedder:
         Returns:
             Normalized embedding vector as float32 numpy array, or None if failed
         """
-        # Prefer Essentia's audio loader; then fallback to soundfile, then librosa/audioread, then ffmpeg
-        audio = None
-        in_sr = None
-        # 1) Essentia MonoLoader (resamples to target sr)
         try:
+            # Load audio using Essentia's MonoLoader (resamples to target sr automatically)
             loader = es.MonoLoader(filename=path_local, sampleRate=self.sr, resampleQuality=4)
             audio = loader()
-            in_sr = self.sr
-        except Exception:
-            pass
+            
+            # Direct model inference on the whole audio per Essentia docs
+            pred_out = self.pred(audio)
+            Y = np.asarray(pred_out)
+            if Y.size == 0 or not np.isfinite(Y).all():
+                return None
+                
+            # Pool along time/frame axis if present
+            if Y.ndim == 1:
+                pooled = Y
+            elif Y.ndim == 2:
+                pooled = np.concatenate([Y.mean(axis=0), Y.std(axis=0)])
+            else:
+                # Collapse extra dims then pool
+                Y2 = Y.reshape(Y.shape[0], -1)
+                pooled = np.concatenate([Y2.mean(axis=0), Y2.std(axis=0)])
 
-        # 2) soundfile
-        if audio is None:
-            try:
-                audio, in_sr = sf.read(path_local, always_2d=False)
-                if hasattr(audio, "ndim") and audio.ndim > 1:
-                    audio = audio.mean(axis=1)
-            except Exception:
-                audio = None
-                in_sr = None
-
-        # 3) librosa/audioread
-        if audio is None:
-            try:
-                import librosa  # type: ignore
-                audio, in_sr = librosa.load(path_local, sr=self.sr, mono=True)
-                in_sr = self.sr
-            except Exception:
-                audio = None
-                in_sr = None
-
-        # 4) ffmpeg fallback
-        if audio is None:
-            try:
-                import subprocess
-                cmd = [
-                    "ffmpeg", "-v", "error", "-i", path_local,
-                    "-f", "f32le", "-ac", "1", "-ar", str(self.sr), "pipe:1"
-                ]
-                proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                if proc.returncode == 0 and proc.stdout:
-                    audio = np.frombuffer(proc.stdout, dtype=np.float32)
-                    in_sr = self.sr
-            except Exception:
-                audio = None
-                in_sr = None
-
-        if audio is None:
+            # L2 normalize
+            pooled = pooled / (np.linalg.norm(pooled) + 1e-9)
+            return pooled.astype("float32")
+            
+        except Exception as e:
+            # If audio loading fails, return None (will be logged by caller)
             return None
-
-        # Convert to mono if stereo
-        # audio is mono already if loaded via MonoLoader
-
-        # Direct model inference on the whole audio per Essentia docs
-        pred_out = self.pred(audio)
-        Y = np.asarray(pred_out)
-        if Y.size == 0 or not np.isfinite(Y).all():
-            return None
-        # Pool along time/frame axis if present
-        if Y.ndim == 1:
-            pooled = Y
-        elif Y.ndim == 2:
-            pooled = np.concatenate([Y.mean(axis=0), Y.std(axis=0)])
-        else:
-            # Collapse extra dims then pool
-            Y2 = Y.reshape(Y.shape[0], -1)
-            pooled = np.concatenate([Y2.mean(axis=0), Y2.std(axis=0)])
-
-        # L2 normalize
-        pooled = pooled / (np.linalg.norm(pooled) + 1e-9)
-
-        return pooled.astype("float32")
 
 
