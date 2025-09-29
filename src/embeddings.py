@@ -21,75 +21,45 @@ class DiscogsEffnetEmbedder:
     def __init__(
         self,
         model_path: Optional[str] = None,
-        output_node: Optional[str] = None,
         sr: int = DEFAULT_SAMPLE_RATE,
     ):
         """
         Initialize the embedder.
 
         Args:
-            model_path: Path to the TensorFlow model file (optional). If not provided,
-                        attempts to load from models/ directory.
+            model_path: Path to the TensorFlow model file (optional). Defaults to
+                        'models/discogs_multi_embeddings-effnet-bs64-1.pb'
             sr: Target sample rate
         """
         self.sr = sr
 
-        resolved_model = model_path or self._find_default_model()
-        if not resolved_model:
+        # Use the standard Discogs multi-embeddings model
+        model_file = model_path or (MODELS / "discogs_multi_embeddings-effnet-bs64-1.pb")
+        
+        if not Path(model_file).exists():
             raise RuntimeError(
-                "EffNet model not found. Place the model file in models/ (e.g., 'models/effnet-discogs.pb') "
-                "or pass model_path=... to DiscogsEffnetEmbedder."
+                f"Model not found: {model_file}\n"
+                "Please download the model from: "
+                "https://essentia.upf.edu/models/feature-extractors/discogs_multi_embeddings/discogs_multi_embeddings-effnet-bs64-1.pb"
             )
 
-        # Initialize predictor; try provided or common output node names if default fails
-        last_err: Optional[Exception] = None
-        candidate_nodes = [output_node] if output_node else [
-            "PartitionedCall:1",  # Essentia docs recommended output tensor for Discogs Effnet
-            "embeddings",
-            "StatefulPartitionedCall",
-            "PartitionedCall",
-            "StatefulPartitionedCall_1",
-        ]
-        for node in candidate_nodes:
-            try:
-                self.pred = es.TensorflowPredictEffnetDiscogs(
-                    graphFilename=str(resolved_model),
-                    output=node,
-                )
-                self._output_node = node
-                last_err = None
-                break
-            except AttributeError as e:
-                available_tf = [name for name in dir(es) if name.lower().startswith("tensorflow")]
-                raise RuntimeError(
-                    "Your Essentia installation does not include 'TensorflowPredictEffnetDiscogs'. "
-                    "Install Essentia with TensorFlow support (e.g., 'pip install essentia-tensorflow') "
-                    "or use a supported predictor. Available TensorFlow-related algorithms: "
-                    f"{available_tf}"
-                ) from e
-            except Exception as e:  # includes invalid node names
-                last_err = e
-                continue
-
-        if last_err is not None:
-            raise RuntimeError(
-                "Failed to configure TensorflowPredictEffnetDiscogs with known output node names. "
-                "Tried: 'embeddings', 'StatefulPartitionedCall', 'PartitionedCall'. "
-                f"Set a compatible model or pass a known-good .pb matching the wrapper. Underlying error: {last_err}"
+        try:
+            # Initialize predictor with known output node for discogs_multi_embeddings model
+            self.pred = es.TensorflowPredictEffnetDiscogs(
+                graphFilename=str(model_file),
+                output="PartitionedCall:1",
             )
+        except AttributeError as e:
+            raise RuntimeError(
+                "Your Essentia installation does not include 'TensorflowPredictEffnetDiscogs'. "
+                "Install Essentia with TensorFlow support: pip install essentia-tensorflow"
+            ) from e
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to load model {model_file}. "
+                "Ensure you have the correct discogs_multi_embeddings-effnet-bs64-1.pb model."
+            ) from e
 
-    def _find_default_model(self) -> Optional[Path]:
-        """Return a model path from models/ if available."""
-        candidates = [
-            MODELS / "discogs_multi_embeddings-effnet-bs64-1.pb",  # Primary model
-            MODELS / "effnet-discogs.pb",
-            MODELS / "DiscogsEffnet.pb", 
-            MODELS / "effnet.pb",
-        ]
-        for p in candidates:
-            if p.exists():
-                return p
-        return None
 
     def embed_file(self, path_local: str) -> Optional[np.ndarray]:
         """
