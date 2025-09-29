@@ -3,9 +3,12 @@
 
 from pathlib import Path
 
-# Data paths
-DATA = Path("data")
+# Data paths (relative to project root, not src/)
+DATA = Path("../data").resolve()
 DATA.mkdir(exist_ok=True)
+
+# Model paths
+MODELS = Path("../models").resolve()
 
 META_PQ = DATA / "meta.parquet"
 EMB_PQ = DATA / "embeddings.parquet"

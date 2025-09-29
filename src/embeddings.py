@@ -9,7 +9,7 @@ import soundfile as sf
 import essentia
 import essentia.standard as es
 
-from config import DEFAULT_FRAME_SEC, DEFAULT_HOP_SEC, DEFAULT_SAMPLE_RATE
+from config import DEFAULT_FRAME_SEC, DEFAULT_HOP_SEC, DEFAULT_SAMPLE_RATE, MODELS
 
 
 class DiscogsEffnetEmbedder:
@@ -89,12 +89,10 @@ class DiscogsEffnetEmbedder:
     def _find_default_model(self) -> Optional[Path]:
         """Return a model path from models/ if available."""
         candidates = [
-            Path("models/effnet-discogs.pb"),
-            Path("models/DiscogsEffnet.pb"),
-            Path("models/effnet.pb"),
-            # Path("models/discogs_artist_embeddings-effnet-bs64-1.pb"),
-            Path("models/discogs_multi_embeddings-effnet-bs64-1.pb")
-
+            MODELS / "discogs_multi_embeddings-effnet-bs64-1.pb",  # Primary model
+            MODELS / "effnet-discogs.pb",
+            MODELS / "DiscogsEffnet.pb", 
+            MODELS / "effnet.pb",
         ]
         for p in candidates:
             if p.exists():
