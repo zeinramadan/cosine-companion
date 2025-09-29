@@ -514,11 +514,28 @@ class App(tk.Tk):
         
         # Delete tracks
         try:
+            # Remember scroll position and track info before deletion
+            first_visible = self.library_listbox.nearest(0)
+            deleted_track_ids = {track["track_id"] for track in selected_tracks}
+            
+            # Count how many deleted tracks are above the first visible item
+            deleted_above_count = 0
+            for i in range(min(first_visible, len(self.filtered_library_tracks))):
+                if self.filtered_library_tracks[i]["track_id"] in deleted_track_ids:
+                    deleted_above_count += 1
+            
             deleted_count = self.perform_track_deletion(selected_tracks)
             
             if deleted_count > 0:
                 self.status.config(text=f"✅ Deleted {deleted_count} tracks from library")
-                self.refresh_library()  # Refresh the display
+                
+                # Refresh library data and display
+                self.refresh_library()
+                
+                # Restore scroll position (adjust for deleted items above the visible area)
+                new_position = max(0, first_visible - deleted_above_count)
+                if new_position < len(self.filtered_library_tracks):
+                    self.library_listbox.see(new_position)
                 
                 # Clear current track if it was deleted
                 if self.current_id and any(track["track_id"] == self.current_id for track in selected_tracks):
