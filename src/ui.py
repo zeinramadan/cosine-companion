@@ -65,7 +65,7 @@ class App(tk.Tk):
     def create_recommendations_tab(self):
         """Create the recommendations tab with existing functionality."""
         rec_frame = ttk.Frame(self.notebook)
-        self.notebook.add(rec_frame, text="AI Suggestions")
+        self.notebook.add(rec_frame, text="Explore")
         
         # Main buttons
         btns = tk.Frame(rec_frame); btns.pack(fill="x", pady=8)
