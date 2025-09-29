@@ -4,11 +4,16 @@
 from pathlib import Path
 
 # Data paths (relative to project root, not src/)
-DATA = Path("../data").resolve()
+# Get the directory where this config.py file is located (src/)
+# Then go up one level to get project root, then into data/models
+_CONFIG_DIR = Path(__file__).parent
+_PROJECT_ROOT = _CONFIG_DIR.parent
+
+DATA = _PROJECT_ROOT / "data"
 DATA.mkdir(exist_ok=True)
 
 # Model paths
-MODELS = Path("../models").resolve()
+MODELS = _PROJECT_ROOT / "models"
 
 META_PQ = DATA / "meta.parquet"
 EMB_PQ = DATA / "embeddings.parquet"
