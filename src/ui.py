@@ -35,7 +35,7 @@ class SimplePicker(tk.Toplevel):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("DJ Companion – Similar Track Suggestions")
+        self.title("Cosine Companion - Explore your taste")
         self.geometry("800x600")
         self.configure(padx=12, pady=12)
 

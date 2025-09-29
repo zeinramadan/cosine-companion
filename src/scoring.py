@@ -6,8 +6,7 @@ from typing import Optional
 from config import DEFAULT_SCORING_WEIGHTS
 
 
-camelot_order = [f"{n}{l}" for l in ("A", "B") for n in range(1, 13)]
-camelot_to_idx = {k: i for i, k in enumerate(camelot_order)}
+camelot_to_idx = {f"{n}{l}": i for i, (n, l) in enumerate((n, l) for l in ("A", "B") for n in range(1, 13))}
 
 key_to_camelot = {
     # Minors (A): 1A..12A

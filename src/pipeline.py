@@ -2,7 +2,6 @@
 """Indexing pipeline for processing audio files and building the search index."""
 
 import json
-import sys
 import os
 import numpy as np
 import pandas as pd

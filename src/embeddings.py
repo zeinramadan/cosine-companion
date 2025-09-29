@@ -6,10 +6,9 @@ from typing import Optional
 
 import numpy as np
 import soundfile as sf
-import essentia
 import essentia.standard as es
 
-from config import DEFAULT_FRAME_SEC, DEFAULT_HOP_SEC, DEFAULT_SAMPLE_RATE, MODELS
+from config import DEFAULT_SAMPLE_RATE, MODELS
 
 
 class DiscogsEffnetEmbedder:
@@ -24,8 +23,6 @@ class DiscogsEffnetEmbedder:
         self,
         model_path: Optional[str] = None,
         output_node: Optional[str] = None,
-        frame_sec: float = DEFAULT_FRAME_SEC,
-        hop_sec: float = DEFAULT_HOP_SEC,
         sr: int = DEFAULT_SAMPLE_RATE,
     ):
         """
@@ -34,12 +31,8 @@ class DiscogsEffnetEmbedder:
         Args:
             model_path: Path to the TensorFlow model file (optional). If not provided,
                         attempts to load from models/ directory.
-            frame_sec: Frame size in seconds
-            hop_sec: Hop size in seconds
             sr: Target sample rate
         """
-        self.frame_sec = frame_sec
-        self.hop_sec = hop_sec
         self.sr = sr
 
         resolved_model = model_path or self._find_default_model()

@@ -21,8 +21,6 @@ IDX_NPY = DATA / "index.npy"  # stores vectors
 IDS_JSON = DATA / "ids.json"  # track_id order
 
 # Default embedding parameters
-DEFAULT_FRAME_SEC = 1.0
-DEFAULT_HOP_SEC = 0.5
 DEFAULT_SAMPLE_RATE = 32000
 
 # Default scoring weights (cosine, key, bpm)
