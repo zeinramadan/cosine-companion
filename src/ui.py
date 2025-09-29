@@ -5,10 +5,11 @@ from typing import Optional, List, Dict, Any
 import time
 
 import tkinter as tk
-from tkinter import simpledialog, messagebox
+from tkinter import ttk, simpledialog, messagebox
 import pandas as pd
 
 from recommendations import load_all, recommend_for
+from set_creator import generate_set, search_tracks, SetTrack
 
 
 class SimplePicker(tk.Toplevel):
@@ -50,8 +51,24 @@ class App(tk.Tk):
         self.lbl_current = tk.Label(self, text="Current track: —", font=("Helvetica", 14, "bold"), anchor="w", justify="left")
         self.lbl_current.pack(fill="x")
 
+        # Create tabbed interface
+        self.notebook = ttk.Notebook(self)
+        self.notebook.pack(fill="both", expand=True, pady=8)
+        
+        # Create tabs
+        self.create_recommendations_tab()
+        self.create_set_creator_tab()
+
+        self.status = tk.Label(self, text="💡 Tip: Double-click any suggestion to set it as current track", anchor="w", font=("Helvetica", 9), fg="gray")
+        self.status.pack(fill="x")
+
+    def create_recommendations_tab(self):
+        """Create the recommendations tab with existing functionality."""
+        rec_frame = ttk.Frame(self.notebook)
+        self.notebook.add(rec_frame, text="AI Suggestions")
+        
         # Main buttons
-        btns = tk.Frame(self); btns.pack(fill="x", pady=8)
+        btns = tk.Frame(rec_frame); btns.pack(fill="x", pady=8)
         tk.Button(btns, text="Set Current Track", command=self.pick_current).pack(side="left")
         tk.Button(btns, text="Copy Selected to Clipboard", command=self.copy_selected).pack(side="left", padx=8)
         tk.Button(btns, text="Set Selected as Current", command=self.set_selected_as_current).pack(side="left", padx=8)
@@ -61,7 +78,7 @@ class App(tk.Tk):
         self.back_btn.pack(side="left", padx=8)
 
         # Sorting buttons
-        sort_frame = tk.Frame(self); sort_frame.pack(fill="x", pady=4)
+        sort_frame = tk.Frame(rec_frame); sort_frame.pack(fill="x", pady=4)
         tk.Label(sort_frame, text="Sort by:", font=("Helvetica", 10, "bold")).pack(side="left")
         tk.Button(sort_frame, text="Score", command=lambda: self.sort_suggestions("score")).pack(side="left", padx=2)
         tk.Button(sort_frame, text="Cosine", command=lambda: self.sort_suggestions("cosine")).pack(side="left", padx=2)
@@ -69,7 +86,7 @@ class App(tk.Tk):
         tk.Button(sort_frame, text="BPM", command=lambda: self.sort_suggestions("bpm")).pack(side="left", padx=2)
         tk.Button(sort_frame, text="Artist", command=lambda: self.sort_suggestions("artist")).pack(side="left", padx=2)
 
-        self.listbox = tk.Listbox(self, height=20)
+        self.listbox = tk.Listbox(rec_frame, height=20)
         self.listbox.pack(fill="both", expand=True)
         
         # Add double-click event to set current track
@@ -77,9 +94,42 @@ class App(tk.Tk):
         
         # Add right-click context menu
         self.setup_context_menu()
-
-        self.status = tk.Label(self, text="💡 Tip: Double-click any suggestion to set it as current track", anchor="w", font=("Helvetica", 9), fg="gray")
-        self.status.pack(fill="x")
+    
+    def create_set_creator_tab(self):
+        """Create the set creator tab."""
+        set_frame = ttk.Frame(self.notebook)
+        self.notebook.add(set_frame, text="Set Creator")
+        
+        # Set configuration
+        config_frame = tk.Frame(set_frame); config_frame.pack(fill="x", pady=8)
+        tk.Label(config_frame, text="Total Tracks:", font=("Helvetica", 10, "bold")).pack(side="left")
+        self.total_tracks_var = tk.StringVar(value="10")
+        tk.Entry(config_frame, textvariable=self.total_tracks_var, width=5).pack(side="left", padx=4)
+        tk.Button(config_frame, text="Generate Set", command=self.generate_set_ui, bg="lightgreen").pack(side="left", padx=8)
+        tk.Button(config_frame, text="Clear Set", command=self.clear_set).pack(side="left", padx=4)
+        
+        # Anchor tracks section
+        anchor_frame = tk.Frame(set_frame); anchor_frame.pack(fill="x", pady=8)
+        tk.Label(anchor_frame, text="Anchor Tracks:", font=("Helvetica", 10, "bold")).pack(side="left")
+        tk.Button(anchor_frame, text="+ Add Anchor", command=self.add_anchor_track).pack(side="left", padx=8)
+        
+        # Anchor tracks list
+        self.anchor_listbox = tk.Listbox(anchor_frame, height=4)
+        self.anchor_listbox.pack(fill="x", expand=True, padx=(0, 80))
+        tk.Button(anchor_frame, text="Remove", command=self.remove_anchor_track).pack(side="right")
+        
+        # Generated set
+        tk.Label(set_frame, text="Generated Set:", font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(8, 4))
+        self.set_listbox = tk.Listbox(set_frame, height=15)
+        self.set_listbox.pack(fill="both", expand=True)
+        
+        # Set controls
+        set_controls = tk.Frame(set_frame); set_controls.pack(fill="x", pady=4)
+        tk.Button(set_controls, text="Export to Clipboard", command=self.export_set).pack(side="left")
+        
+        # Initialize data structures
+        self.anchor_tracks: Dict[int, str] = {}  # position -> track_id
+        self.generated_set: List[SetTrack] = []
 
     def setup_context_menu(self):
         """Setup right-click context menu for the suggestions list."""
@@ -300,6 +350,206 @@ class App(tk.Tk):
         self.clipboard_clear()
         self.clipboard_append(track_title)
         self.update()
+
+    # Set Creator methods
+    def add_anchor_track(self):
+        """Add an anchor track at a specific position."""
+        dialog = AddAnchorDialog(self, self.meta_ix, self.anchor_tracks)
+        self.wait_window(dialog)
+        if dialog.result:
+            position, track_id = dialog.result
+            self.anchor_tracks[position] = track_id
+            self.update_anchor_listbox()
+    
+    def remove_anchor_track(self):
+        """Remove selected anchor track."""
+        sel = self.anchor_listbox.curselection()
+        if not sel:
+            messagebox.showwarning("No Selection", "Please select an anchor track to remove.")
+            return
+        
+        # Parse position from listbox item
+        item_text = self.anchor_listbox.get(sel[0])
+        try:
+            position = int(item_text.split(".")[0])
+            if position in self.anchor_tracks:
+                del self.anchor_tracks[position]
+                self.update_anchor_listbox()
+        except (ValueError, IndexError):
+            pass
+    
+    def update_anchor_listbox(self):
+        """Update the anchor tracks display."""
+        self.anchor_listbox.delete(0, tk.END)
+        for position in sorted(self.anchor_tracks.keys()):
+            track_id = self.anchor_tracks[position]
+            if track_id in self.meta_ix.index:
+                row = self.meta_ix.loc[track_id]
+                display_name = f"{row.get('artist', '')} – {row.get('title', '')}"
+                self.anchor_listbox.insert(tk.END, f"{position}. {display_name}")
+    
+    def generate_set_ui(self):
+        """Generate a complete set with current anchor tracks."""
+        try:
+            total_tracks = int(self.total_tracks_var.get())
+        except ValueError:
+            messagebox.showerror("Invalid Input", "Please enter a valid number for total tracks.")
+            return
+        
+        if not self.anchor_tracks:
+            messagebox.showwarning("No Anchors", "Please add at least one anchor track before generating a set.")
+            return
+        
+        if total_tracks < len(self.anchor_tracks):
+            messagebox.showerror("Invalid Configuration", "Total tracks must be greater than the number of anchor tracks.")
+            return
+        
+        try:
+            self.status.config(text="🎵 Generating set... This may take a moment.")
+            self.update()
+            
+            self.generated_set = generate_set(
+                self.anchor_tracks, 
+                total_tracks,
+                self.meta_ix, 
+                self.emb_ix, 
+                self.idx
+            )
+            self.update_set_listbox()
+            self.status.config(text=f"✅ Generated {len(self.generated_set)}-track set successfully!")
+            
+        except Exception as e:
+            messagebox.showerror("Generation Error", f"Failed to generate set: {str(e)}")
+            self.status.config(text="❌ Set generation failed.")
+    
+    def update_set_listbox(self):
+        """Update the generated set display."""
+        self.set_listbox.delete(0, tk.END)
+        for track in self.generated_set:
+            score_text = ""
+            if not track.is_anchor and track.score > 0:
+                score_text = f" ({track.score:.0%} match)"
+            
+            display_text = f"[{track.position:2d}] {track.icon} {track.display_name}{score_text}"
+            self.set_listbox.insert(tk.END, display_text)
+    
+    def clear_set(self):
+        """Clear all anchor tracks and generated set."""
+        self.anchor_tracks.clear()
+        self.generated_set.clear()
+        self.update_anchor_listbox()
+        self.update_set_listbox()
+        self.status.config(text="🧹 Set cleared.")
+    
+    def export_set(self):
+        """Export the generated set to clipboard."""
+        if not self.generated_set:
+            messagebox.showwarning("No Set", "Please generate a set first.")
+            return
+        
+        # Create playlist text
+        playlist_lines = []
+        for track in self.generated_set:
+            if track.display_name and "No suitable track found" not in track.display_name:
+                playlist_lines.append(track.display_name)
+        
+        playlist_text = "\n".join(playlist_lines)
+        self.clipboard_clear()
+        self.clipboard_append(playlist_text)
+        self.update()
+        
+        messagebox.showinfo("Exported", f"Copied {len(playlist_lines)} tracks to clipboard!")
+
+
+class AddAnchorDialog(tk.Toplevel):
+    """Dialog for adding an anchor track at a specific position."""
+    
+    def __init__(self, parent, meta_ix: pd.DataFrame, existing_anchors: Dict[int, str]):
+        super().__init__(parent)
+        self.title("Add Anchor Track")
+        self.geometry("500x500")  # Made taller to show all elements
+        self.resizable(True, True)
+        self.transient(parent)
+        self.grab_set()
+        
+        self.meta_ix = meta_ix
+        self.existing_anchors = existing_anchors
+        self.result = None
+        
+        # Position input
+        pos_frame = tk.Frame(self); pos_frame.pack(fill="x", padx=10, pady=10)
+        tk.Label(pos_frame, text="Position in Set:", font=("Helvetica", 10, "bold")).pack(side="left")
+        self.position_var = tk.StringVar()
+        tk.Entry(pos_frame, textvariable=self.position_var, width=5).pack(side="left", padx=4)
+        
+        # Search input
+        search_frame = tk.Frame(self); search_frame.pack(fill="x", padx=10, pady=5)
+        tk.Label(search_frame, text="Search for Track:", font=("Helvetica", 10, "bold")).pack(anchor="w")
+        self.search_var = tk.StringVar()
+        search_entry = tk.Entry(search_frame, textvariable=self.search_var)
+        search_entry.pack(fill="x", pady=2)
+        search_entry.bind("<KeyRelease>", self.on_search_change)
+        
+        # Results listbox
+        tk.Label(self, text="Search Results:", font=("Helvetica", 10, "bold")).pack(anchor="w", padx=10)
+        self.results_listbox = tk.Listbox(self, height=15)
+        self.results_listbox.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        # Add double-click support
+        self.results_listbox.bind("<Double-Button-1>", self.on_double_click)
+        
+        # Buttons
+        btn_frame = tk.Frame(self); btn_frame.pack(fill="x", padx=10, pady=10)
+        tk.Button(btn_frame, text="Cancel", command=self.destroy).pack(side="right")
+        tk.Button(btn_frame, text="Add to Set", command=self.add_selected, bg="lightgreen").pack(side="right", padx=5)
+        
+        # Initialize with some tracks
+        self.update_search_results("")
+    
+    def on_search_change(self, event=None):
+        """Handle search input changes."""
+        query = self.search_var.get()
+        self.update_search_results(query)
+    
+    def update_search_results(self, query: str):
+        """Update search results based on query."""
+        self.results_listbox.delete(0, tk.END)
+        
+        results = search_tracks(query, self.meta_ix, limit=50)
+        for result in results:
+            self.results_listbox.insert(tk.END, result["display_name"])
+        
+        # Store results for selection
+        self.search_results = results
+    
+    def on_double_click(self, event=None):
+        """Handle double-click on search results - same as clicking Add to Set."""
+        self.add_selected()
+    
+    def add_selected(self):
+        """Add the selected track as an anchor."""
+        sel = self.results_listbox.curselection()
+        if not sel:
+            messagebox.showwarning("No Selection", "Please select a track.")
+            return
+        
+        try:
+            position = int(self.position_var.get())
+        except ValueError:
+            messagebox.showerror("Invalid Position", "Please enter a valid position number.")
+            return
+        
+        if position < 1:
+            messagebox.showerror("Invalid Position", "Position must be 1 or greater.")
+            return
+        
+        if position in self.existing_anchors:
+            if not messagebox.askyesno("Position Taken", f"Position {position} already has an anchor track. Replace it?"):
+                return
+        
+        selected_result = self.search_results[sel[0]]
+        self.result = (position, selected_result["track_id"])
+        self.destroy()
 
 
 def run_ui():
