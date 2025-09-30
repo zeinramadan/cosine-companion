@@ -51,21 +51,58 @@ See [models/README.md](models/README.md) for detailed instructions and troublesh
 
 ```
 dj-cosine/
-├── src/                    # Source code
-│   ├── dj_companion.py     # Main entry point
-│   ├── config.py           # Configuration constants
-│   ├── rekordbox.py        # Rekordbox XML parsing
-│   ├── embeddings.py       # Audio embedding generation
-│   ├── indexing.py         # FAISS similarity search
-│   ├── scoring.py          # Key/BPM compatibility
-│   ├── recommendations.py  # Track recommendation logic
-│   ├── pipeline.py         # Indexing pipeline
-│   ├── ui.py              # Tkinter user interface
-│   └── features/          # Feature specifications
-├── models/                # ML models (download required)
-├── data/                  # Generated data files (gitignored)
-└── README.md
+├── src/                       # Source code
+│   ├── dj_companion.py        # Main CLI entry point
+│   │
+│   ├── config/                # Configuration management
+│   │   ├── paths.py           # File paths
+│   │   └── defaults.py        # Default parameters
+│   │
+│   ├── core/                  # Core data management
+│   │   ├── loader.py          # Data loading
+│   │   ├── persistence.py     # Data saving
+│   │   ├── index_builder.py   # FAISS index management
+│   │   └── duplicates.py      # Duplicate detection
+│   │
+│   ├── processing/            # Audio processing & pipeline
+│   │   ├── embeddings.py      # Audio embedding generation
+│   │   ├── xml_parser.py      # Rekordbox XML parsing
+│   │   └── pipeline.py        # Indexing orchestration
+│   │
+│   ├── recommendations/       # Recommendation engine
+│   │   ├── engine.py          # Main recommendation logic
+│   │   ├── scoring.py         # Key/BPM compatibility
+│   │   ├── set_generator.py   # DJ set generation
+│   │   ├── models.py          # Data models
+│   │   ├── transitions.py     # Transition scoring
+│   │   └── search.py          # Track search
+│   │
+│   ├── ui/                    # User interface
+│   │   ├── app.py             # Main application
+│   │   ├── recommendations_tab.py  # Track exploration
+│   │   ├── set_creator_tab.py      # DJ set creation
+│   │   ├── library_tab.py          # Library management
+│   │   └── dialogs.py         # UI dialogs
+│   │
+│   └── features/              # Feature specifications
+│
+├── models/                    # ML models (download required)
+├── data/                      # Generated data files (gitignored)
+├── README.md
+└── PROGRAM_FLOW.md           # Detailed system documentation
 ```
+
+### Architecture
+
+The codebase follows a modular package structure with clear separation of concerns:
+
+- **config/**: Configuration and constants (no dependencies)
+- **core/**: Data management, loading, persistence, and indexing
+- **processing/**: Audio processing and indexing pipeline
+- **recommendations/**: Recommendation engine with scoring and set generation
+- **ui/**: Tabbed user interface with mixin architecture
+
+Each package contains focused modules (90-270 lines each) for better maintainability and testability. See [PROGRAM_FLOW.md](PROGRAM_FLOW.md) for detailed documentation.
 
 ## Usage
 
@@ -91,18 +128,41 @@ python src/dj_companion.py index /path/to/rekordbox_export.xml --force
 python src/dj_companion.py index /path/to/rekordbox_export.xml --sample 50
 ```
 
+### Check for Duplicates (Optional)
+```bash
+python src/dj_companion.py clean-duplicates /path/to/rekordbox_export.xml
+```
+
+This analyzes your collection for duplicate tracks without modifying any files. Duplicates are automatically removed during indexing.
+
 ### Launch the UI
 ```bash
 python src/dj_companion.py ui
 ```
+
+The UI features three tabs:
+- **Explore**: Find similar tracks with interactive sorting
+- **Set Creator**: Generate DJ sets with anchor tracks at specific positions
+- **Library**: Browse, search, and manage your indexed tracks
+
+## Features
+
+- 🎵 **Audio Similarity Search**: Find tracks that sound similar using deep learning embeddings
+- 🎹 **Key Compatibility**: Harmonic mixing support with Camelot wheel notation
+- 🥁 **BPM Matching**: Automatic tempo compatibility detection (including half/double time)
+- 🎛️ **Interactive Sorting**: Sort recommendations by score, cosine similarity, key, BPM, or artist
+- 🎚️ **DJ Set Generation**: Create complete sets with anchor tracks at specific positions
+- 📚 **Library Management**: Browse, search, and delete tracks with multi-select support
+- ⚡ **Incremental Indexing**: Only process new tracks, saving time on library updates
+- 🔍 **Duplicate Detection**: Automatic identification and removal of duplicate tracks
 
 ## Dependencies
 
 - `numpy`, `pandas` - Data processing
 - `lxml` - XML parsing  
 - `soundfile` - Audio file reading
-- `essentia` - Audio analysis and embeddings
-- `faiss` - Similarity search
+- `essentia-tensorflow` - Audio analysis and embeddings (Discogs-EffNet model)
+- `faiss-cpu` - Fast similarity search with HNSW indexing
 - `typer` - CLI interface
 - `tkinter` - GUI (included with Python)
 
