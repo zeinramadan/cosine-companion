@@ -15,7 +15,7 @@ class App(RecommendationsTabMixin, SetCreatorTabMixin, LibraryTabMixin, tk.Tk):
     """Main application window for DJ Companion."""
     
     def __init__(self):
-        super().__init__()
+        super().__init__(className='Cosine Companion')
         self.title("Cosine Companion - Explore your taste")
         self.geometry("900x720")
         self.minsize(820, 640)
@@ -58,6 +58,12 @@ class App(RecommendationsTabMixin, SetCreatorTabMixin, LibraryTabMixin, tk.Tk):
         self.status.pack(fill="x", side="bottom")
         # Initialize bottom status hint for current tab
         self.after(0, self.set_default_status_hint)
+        
+        # Force window to show on macOS
+        self.deiconify()
+        self.lift()
+        self.focus_force()
+        self.update()
 
     def initialize_ui_state(self):
         """Ensure all UI elements are in the correct initial state."""

@@ -31,6 +31,12 @@ class SettingsWindow(tk.Toplevel):
         
         self.create_ui()
         self.load_settings()
+        
+        # Force window to show on macOS
+        self.deiconify()
+        self.lift()
+        self.focus_force()
+        self.update()
     
     def create_ui(self):
         """Create the settings UI."""

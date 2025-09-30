@@ -8,7 +8,7 @@ from ui.onboarding import OnboardingWindow, needs_onboarding
 def run_ui():
     """Run the DJ Companion UI application."""
     # Create root window (initially hidden)
-    root = tk.Tk()
+    root = tk.Tk(className='Cosine Companion')
     root.withdraw()  # Hide until ready
     
     if needs_onboarding():

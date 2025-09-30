@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Reindexing window for updating library."""
 
+import queue
 import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
-from processing.pipeline import index_library
 
 
 class ReindexWindow(tk.Toplevel):
@@ -16,6 +16,7 @@ class ReindexWindow(tk.Toplevel):
         self.force_full = force_full
         self.indexing_complete = False
         self.parent_app = parent
+        self.message_queue = queue.Queue()
         
         title = "Full Re-index" if force_full else "Update Library"
         self.title(f"{title} - DJ Companion")
@@ -33,6 +34,12 @@ class ReindexWindow(tk.Toplevel):
         self.geometry(f"600x400+{x}+{y}")
         
         self.create_ui()
+        
+        # Force window to show on macOS
+        self.deiconify()
+        self.lift()
+        self.focus_force()
+        self.update()
         
         # Start indexing immediately
         self.after(100, self.start_indexing)
@@ -110,37 +117,84 @@ class ReindexWindow(tk.Toplevel):
     def run_indexing(self):
         """Run the indexing process (in background thread)."""
         import sys
-        from io import StringIO
+        from processing.pipeline import index_library
         
-        # Capture stdout
+        # Create a custom writer that sends to queue
+        class QueueWriter:
+            def __init__(self, message_queue):
+                self.queue = message_queue
+                self.buffer = ""
+            
+            def write(self, text):
+                self.buffer += text
+                # Send complete lines to queue
+                while '\n' in self.buffer:
+                    line, self.buffer = self.buffer.split('\n', 1)
+                    if line.strip():  # Only send non-empty lines
+                        self.queue.put(('log', line))
+            
+            def flush(self):
+                if self.buffer.strip():
+                    self.queue.put(('log', self.buffer))
+                    self.buffer = ""
+        
+        # Redirect stdout to queue
         old_stdout = sys.stdout
-        sys.stdout = captured_output = StringIO()
+        sys.stdout = QueueWriter(self.message_queue)
         
         try:
             # Run indexing
             index_library(self.xml_path, force_full=self.force_full, sample_size=None)
-            self.indexing_complete = True
-            self.log_message("\n✅ Indexing completed successfully!")
+            self.message_queue.put(('complete', True))
+            self.message_queue.put(('log', "\n✅ Indexing completed successfully!"))
         except Exception as e:
-            self.indexing_complete = False
-            self.log_message(f"\n❌ Error during indexing: {str(e)}")
+            self.message_queue.put(('complete', False))
+            self.message_queue.put(('log', f"\n❌ Error during indexing: {str(e)}"))
+            import traceback
+            self.message_queue.put(('log', traceback.format_exc()))
         finally:
             # Restore stdout
-            output = captured_output.getvalue()
+            sys.stdout.flush()
             sys.stdout = old_stdout
-            
-            # Display captured output
-            for line in output.split('\n'):
-                if line.strip():
-                    self.log_message(line)
     
     def check_indexing_status(self):
-        """Check if indexing is complete."""
+        """Check if indexing is complete and process queue messages."""
+        # Process all pending messages from queue (non-blocking)
+        # Limit how many messages we process at once to keep UI responsive
+        messages_processed = 0
+        max_messages_per_check = 10  # Process max 10 messages per UI update
+        
+        try:
+            while messages_processed < max_messages_per_check:
+                msg_type, msg_data = self.message_queue.get_nowait()
+                if msg_type == 'log':
+                    # Add log message to UI
+                    if hasattr(self, 'log_text'):
+                        self.log_text.insert(tk.END, msg_data + "\n")
+                        self.log_text.see(tk.END)
+                elif msg_type == 'complete':
+                    self.indexing_complete = msg_data
+                messages_processed += 1
+        except queue.Empty:
+            pass  # No more messages
+        
         if self.indexing_thread.is_alive():
-            # Still running
-            self.after(500, self.check_indexing_status)
+            # Still running (200ms is gentler on CPU)
+            self.after(200, self.check_indexing_status)
         else:
-            # Complete
+            # Complete - process any remaining messages
+            try:
+                while True:
+                    msg_type, msg_data = self.message_queue.get_nowait()
+                    if msg_type == 'log':
+                        if hasattr(self, 'log_text'):
+                            self.log_text.insert(tk.END, msg_data + "\n")
+                            self.log_text.see(tk.END)
+                    elif msg_type == 'complete':
+                        self.indexing_complete = msg_data
+            except queue.Empty:
+                pass
+            
             self.progress_bar.stop()
             
             if self.indexing_complete:

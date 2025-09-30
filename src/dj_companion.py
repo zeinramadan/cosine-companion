@@ -12,9 +12,6 @@ import os
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
-from processing.pipeline import index_library
-from ui import run_ui
-
 # --- CLI ---
 import typer
 
@@ -28,12 +25,14 @@ def index(
     sample: int = typer.Option(None, "--sample", "-s", help="Limit number of new tracks to process (debug)")
 ):
     """Index your library: parses XML, embeds audio, builds FAISS (incremental by default)."""
+    from processing.pipeline import index_library
     index_library(xml, force_full=force, sample_size=sample)
 
 
 @cli.command()
 def ui():
     """Open the minimal UI (manual 'Set Current' for v1)."""
+    from ui import run_ui
     run_ui()
 
 
@@ -42,6 +41,7 @@ def clean_duplicates(
     xml: str = typer.Argument(..., help="Path to Rekordbox XML export")
 ):
     """Analyze duplicate tracks in your collection using fast file-based detection."""
+    # Lazy imports to avoid loading heavy dependencies
     from core.duplicates import remove_simple_duplicates
     from processing.xml_parser import read_rekordbox_xml
     

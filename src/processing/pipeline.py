@@ -2,6 +2,8 @@
 """Indexing pipeline for processing audio files and building the search index."""
 
 import os
+import sys
+import time
 import numpy as np
 import pandas as pd
 
@@ -77,17 +79,27 @@ def index_library(rb_xml: str, force_full: bool = False, sample_size: int | None
     for i, (_, row) in enumerate(new_tracks.iterrows(), 1):
         pl = str(row.get("path_local", ""))
         print(f"   [{i:3d}/{len(new_tracks)}] {row.get('artist','')} - {row.get('title','')}")
+        sys.stdout.flush()  # Ensure message appears immediately
+        
         if not pl or not os.path.exists(pl):
             print(f"      ⚠️  File not found: {pl}")
+            sys.stdout.flush()
             continue
+        
         vector = embedder.embed_file(pl)
         
         if vector is None:
             print(f"      ⚠️  Failed to process audio file (unsupported codec or decode error): {pl}")
+            sys.stdout.flush()
             continue
             
         new_track_ids.append(row["track_id"])
         new_vectors.append(vector)
+        
+        # Small pause to let UI update and prevent system overload
+        # This makes the UI responsive without significantly impacting total time
+        time.sleep(0.05)  # 50ms pause between tracks
+        sys.stdout.flush()
     
     if not new_vectors:
         print("❌ No new embeddings generated. Check audio paths/codecs.")
