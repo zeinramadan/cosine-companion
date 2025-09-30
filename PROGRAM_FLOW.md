@@ -9,25 +9,34 @@ This document provides a comprehensive overview of how the DJ Companion system w
 │                        DJ COMPANION SYSTEM                      │
 ├─────────────────────────────────────────────────────────────────┤
 │  CLI Entry Point: dj_companion.py                               │
-│  ├── index command → pipeline.py                                │
-│  └── ui command → ui.py                                         │
+│  ├── index command → processing.pipeline                        │
+│  └── ui command → ui.App                                        │
 └─────────────────────────────────────────────────────────────────┘
          │                                    │
          ▼                                    ▼
-┌─────────────────┐                 ┌───────────────────────┐
-│  INDEXING FLOW  │                 │   UI/APP FLOW         │
-│                 │                 │                       │
-│ pipeline.py     │                 │ ui.py                 │
-│ ├─ rekordbox.py │                 │ ├─ recommendations.py │
-│ ├─ embeddings.py│                 │ ├─ indexing.py        │
-│ ├─ indexing.py  │                 │ └─ scoring.py         │
-│ └─ config.py    │                 │                       │
-└─────────────────┘                 └───────────────────────┘
-         │                                    │
-         ▼                                    ▼
+┌─────────────────────┐           ┌───────────────────────────┐
+│  INDEXING FLOW      │           │   UI/APP FLOW             │
+│                     │           │                           │
+│ processing/         │           │ ui/                       │
+│ ├─ pipeline.py      │           │ ├─ app.py                 │
+│ ├─ xml_parser.py    │           │ ├─ recommendations_tab.py │
+│ └─ embeddings.py    │           │ ├─ set_creator_tab.py     │
+│                     │           │ ├─ library_tab.py         │
+│ core/               │           │ └─ dialogs.py             │
+│ ├─ loader.py        │           │                           │
+│ ├─ persistence.py   │           │ recommendations/          │
+│ ├─ index_builder.py │           │ ├─ engine.py              │
+│ ├─ duplicates.py    │           │ ├─ scoring.py             │
+│                     │           │ └─ set_generator.py       │
+│ config/             │           │                           │
+│ ├─ paths.py         │           │ core/                     │
+│ └─ defaults.py      │           │ ├─ loader.py              │
+└─────────────────────┘           │ └─ index_builder.py       │
+         │                        └───────────────────────────┘
+         ▼                                    │
 ┌─────────────────────────────────────────────────────────────────┐
 │                     SHARED DATA LAYER                           │
-│  config.py → data/ directory                                    │
+│  config/paths.py → data/ directory                              │
 │  ├── meta.parquet     (track metadata)                          │
 │  ├── embeddings.parquet (audio embeddings)                      │
 │  ├── index.npy        (FAISS vectors)                           │
@@ -46,8 +55,9 @@ if __name__ == "__main__":
 ```
 
 **Available Commands:**
-1. `python dj_companion.py index <xml_file> [--force] [--sample N]`
-2. `python dj_companion.py ui`
+1. `python src/dj_companion.py index <xml_file> [--force] [--sample N]`
+2. `python src/dj_companion.py ui`
+3. `python src/dj_companion.py clean_duplicates <xml_file>`
 
 ---
 
@@ -64,58 +74,66 @@ dj_companion.py:index()
 ├─ Option: --force (boolean, default False)
 ├─ Option: --sample N (integer, optional debug sample size)
 │
-└─ Calls: pipeline.cmd_index(xml, force_full=force, sample_size=sample)
+└─ Calls: processing.pipeline.index_library(xml, force_full=force, sample_size=sample)
 ```
 
 ### Phase 2: Incremental Index Pipeline
 
 ```mermaid
 graph TD
-    A[cmd_index starts] --> B{force_full?}
+    A[index_library starts] --> B{force_full?}
     B -->|Yes| C[existing_meta = None<br/>existing_emb = None]
-    B -->|No| D[load_existing_data]
+    B -->|No| D[core.loader.load_existing_data]
     
     D --> E{Data files exist?}
     E -->|Yes| F[Load meta.parquet<br/>Load embeddings.parquet]
     E -->|No| G[existing_meta = None<br/>existing_emb = None]
     
-    C --> H[read_rekordbox_xml]
+    C --> H[processing.xml_parser.read_rekordbox_xml]
     F --> H
     G --> H
     
-    H --> I[find_new_tracks]
+    H --> Ha[core.duplicates.remove_simple_duplicates]
+    Ha --> I[core.loader.find_new_tracks]
     I --> J{sample_size set?}
     J -->|Yes| K[Limit to first N tracks]
     J -->|No| L[Process all new tracks]
     K --> M{New tracks found?}
     L --> M
     M -->|No| N[Print: No new tracks<br/>EXIT]
-    M -->|Yes| O[Initialize DiscogsEffnetEmbedder]
+    M -->|Yes| O[processing.embeddings.DiscogsEffnetEmbedder]
     
     O --> P[Process each new track]
     P --> Q[embed_file for each track]
     Q --> R[Collect vectors & track_ids]
     R --> S[Create embeddings DataFrame with pd.concat]
-    S --> T[merge_embeddings]
-    T --> U[Save combined data]
+    S --> T[core.persistence.merge_embeddings]
+    T --> U[core.persistence.save_index_data]
     U --> V[Print completion stats]
 ```
 
 ### Detailed Component Calls in Indexing:
 
-#### 1. **pipeline.cmd_index(rb_xml, force_full=False, sample_size=None)**
+#### 1. **processing.pipeline.index_library(rb_xml, force_full=False, sample_size=None)**
 ```python
-def cmd_index(rb_xml: str, force_full: bool = False, sample_size: int | None = None):
+def index_library(rb_xml: str, force_full: bool = False, sample_size: int | None = None):
     # Step 1: Load existing data (unless force)
     if force_full:
         existing_meta, existing_emb = None, None
     else:
+        from core.loader import load_existing_data
         existing_meta, existing_emb = load_existing_data()
     
     # Step 2: Parse current XML
-    current_meta = read_rekordbox_xml(rb_xml)  # → rekordbox.py
+    from processing.xml_parser import read_rekordbox_xml
+    current_meta = read_rekordbox_xml(rb_xml)
+    
+    # Step 2.5: Remove duplicates
+    from core.duplicates import remove_simple_duplicates
+    current_meta, duplicates_info = remove_simple_duplicates(current_meta)
     
     # Step 3: Find new tracks
+    from core.loader import find_new_tracks
     new_tracks = find_new_tracks(current_meta, existing_meta)
     
     # Step 4: Apply sample limit if debugging
@@ -123,7 +141,8 @@ def cmd_index(rb_xml: str, force_full: bool = False, sample_size: int | None = N
         new_tracks = new_tracks.head(sample_size)
     
     # Step 5: Process new tracks
-    embedder = DiscogsEffnetEmbedder()  # → embeddings.py
+    from processing.embeddings import DiscogsEffnetEmbedder
+    embedder = DiscogsEffnetEmbedder()
     for track in new_tracks:
         vector = embedder.embed_file(track.path_local)
     
@@ -135,11 +154,14 @@ def cmd_index(rb_xml: str, force_full: bool = False, sample_size: int | None = N
     ], axis=1)
     
     # Step 7: Merge and save
-    combined_data = merge_embeddings(...)
-    save_to_files(combined_data)
+    from core.persistence import merge_embeddings, save_index_data
+    combined_emb, combined_vectors, combined_track_ids = merge_embeddings(
+        existing_emb, new_emb_df, new_track_ids, new_vectors_array
+    )
+    save_index_data(current_meta, combined_emb, combined_vectors, combined_track_ids)
 ```
 
-#### 2. **rekordbox.read_rekordbox_xml(xml_path)**
+#### 2. **processing.xml_parser.read_rekordbox_xml(xml_path)**
 ```python
 def read_rekordbox_xml(xml_path: str) -> pd.DataFrame:
     # Parse XML using lxml
@@ -160,23 +182,26 @@ def read_rekordbox_xml(xml_path: str) -> pd.DataFrame:
     return processed_dataframe
 ```
 
-#### 3. **embeddings.DiscogsEffnetEmbedder.embed_file(path)**
+#### 3. **processing.embeddings.DiscogsEffnetEmbedder.embed_file(path)**
 ```python
 def embed_file(self, path_local: str) -> np.ndarray:
-    # Multi-decoder fallback strategy
-    audio = self._load_audio_robust(path_local)  # Essentia → soundfile → librosa → ffmpeg
-    if audio is None:
-        return None
+    # Load audio using Essentia's MonoLoader
+    loader = es.MonoLoader(filename=path_local, sampleRate=self.sr, resampleQuality=4)
+    audio = loader()
     
     # Use Essentia's recommended approach
     # Call TensorflowPredictEffnetDiscogs once on whole audio
-    embeddings = self.pred(audio)  # output="PartitionedCall:1"
+    pred_out = self.pred(audio)  # output="PartitionedCall:1"
+    Y = np.asarray(pred_out)
     
     # Pool if model outputs multiple embeddings
-    if embeddings.ndim > 1:
-        pooled = np.concatenate([embeddings.mean(axis=0), embeddings.std(axis=0)])
+    if Y.ndim == 1:
+        pooled = Y
+    elif Y.ndim == 2:
+        pooled = np.concatenate([Y.mean(axis=0), Y.std(axis=0)])
     else:
-        pooled = embeddings
+        Y2 = Y.reshape(Y.shape[0], -1)
+        pooled = np.concatenate([Y2.mean(axis=0), Y2.std(axis=0)])
     
     # L2 normalize
     return pooled / (np.linalg.norm(pooled) + 1e-9)
@@ -205,11 +230,14 @@ dj_companion.py:ui()
 │
 └─ Calls: ui.run_ui()
    │
-   └─ Creates: App() instance
+   └─ Creates: ui.app.App() instance
       │
       └─ App.__init__()
-         ├─ Load all data: recommendations.load_all()
-         ├─ Create UI widgets (including sorting buttons)
+         ├─ Load all data: core.loader.load_all()
+         ├─ Create UI widgets (tabbed interface)
+         │  ├─ Recommendations tab (ui.recommendations_tab)
+         │  ├─ Set Creator tab (ui.set_creator_tab)
+         │  └─ Library tab (ui.library_tab)
          └─ Start mainloop()
 ```
 
@@ -217,7 +245,7 @@ dj_companion.py:ui()
 
 ```mermaid
 graph TD
-    A[App.__init__ starts] --> B[recommendations.load_all]
+    A[App.__init__ starts] --> B[core.loader.load_all]
     B --> C[Load meta.parquet]
     B --> D[Load embeddings.parquet] 
     B --> E[Load index.npy vectors]
@@ -225,26 +253,30 @@ graph TD
     
     C --> G[Create indexed DataFrames]
     D --> G
-    E --> H[Build FaissCosIndex]
+    E --> H[Build core.index_builder.FaissCosIndex]
     F --> H
     
     G --> I[Return loaded structures]
     H --> I
-    I --> J[UI ready for interaction]
+    I --> J[UI tabs created with mixins]
     J --> K[Initialize empty recommendations list]
 ```
 
-#### **recommendations.load_all() - Detailed Flow**
+#### **core.loader.load_all() - Detailed Flow**
 ```python
 def load_all():
+    from config import META_PQ, EMB_PQ, IDX_NPY, IDS_JSON
+    from core.index_builder import FaissCosIndex
+    
     # Load saved data files
     meta = pd.read_parquet(META_PQ)           # Track metadata
     emb = pd.read_parquet(EMB_PQ)             # Embeddings with track_ids
     V = np.load(IDX_NPY)                      # Vector matrix
-    ids = json.load(IDS_JSON)                 # Track ID list
+    with open(IDS_JSON) as f:
+        ids = json.load(f)                    # Track ID list
     
     # Build FAISS index with defensive normalization
-    idx = FaissCosIndex(V.shape[1])           # → indexing.py
+    idx = FaissCosIndex(V.shape[1])           # → core.index_builder
     for track_id, vector in zip(ids, V):
         idx.add(track_id, vector)             # Vectors normalized in add()
     
@@ -268,11 +300,11 @@ graph TD
     G --> H[set_current with track_id]
     H --> I[refresh_suggestions]
     
-    I --> J[recommendations.recommend_for]
+    I --> J[recommendations.engine.recommend_for]
     J --> K[Get track vector from embeddings]
-    K --> L[FAISS similarity search]
+    K --> L[core.index_builder.FaissCosIndex search]
     L --> M[Recompute cosine from stored vectors]
-    M --> N[Score results: cosine + key + BPM]
+    M --> N[recommendations.scoring: cosine + key + BPM]
     N --> O[Sort by final score]
     O --> P[Store in current_recommendations]
     P --> Q[update_listbox]
@@ -390,15 +422,17 @@ def refresh_suggestions(self):
     self.update_listbox()
 ```
 
-#### **recommendations.recommend_for() - Enhanced with Explicit Cosine**
+#### **recommendations.engine.recommend_for() - Enhanced with Explicit Cosine**
 ```python
 def recommend_for(track_id, meta_ix, emb_ix, idx, topk=200, final_top=15):
+    from recommendations.scoring import key_compat, bpm_compat, final_score
+    
     # Step 1: Get source track vector (normalized)
     src_vector = vector_for(track_id, emb_ix)     # Defensive normalization
     src_meta = meta_ix.loc[track_id]              # Source metadata
     
     # Step 2: FAISS similarity search
-    nbrs = idx.search(src_vector, k=topk+1)       # → indexing.py
+    nbrs = idx.search(src_vector, k=topk+1)       # → core.index_builder
     # Returns: [(track_id, faiss_inner_product), ...]
     
     # Step 3: Score each candidate with explicit cosine calculation
@@ -413,9 +447,9 @@ def recommend_for(track_id, meta_ix, emb_ix, idx, topk=200, final_top=15):
         cosine_similarity = np.dot(src_vector, target_vector)
         
         # Calculate compatibility scores
-        key_score = key_compat(src_meta.key, target_meta.key)        # → scoring.py
-        bmp_score = bpm_compat(src_meta.bpm, target_meta.bpm)        # → scoring.py
-        final_score = final_score(cosine_similarity, key_score, bmp_score) # → scoring.py
+        key_score = key_compat(src_meta.key, target_meta.key)
+        bpm_score = bpm_compat(src_meta.bpm, target_meta.bpm)
+        score = final_score(cosine_similarity, key_score, bpm_score)
         
         recommendations.append({
             "track_id": candidate_id,
@@ -423,10 +457,10 @@ def recommend_for(track_id, meta_ix, emb_ix, idx, topk=200, final_top=15):
             "title": target_meta.title,
             "bpm": target_meta.bpm,
             "key": target_meta.key,
-            "score": final_score,
+            "score": score,
             "cosine": cosine_similarity,  # Store explicit cosine
             "key_score": key_score,
-            "bmp_score": bmp_score,
+            "bpm_score": bpm_score,
         })
     
     # Step 4: Sort by final score and return top results
@@ -436,7 +470,7 @@ def recommend_for(track_id, meta_ix, emb_ix, idx, topk=200, final_top=15):
 
 ### Scoring Components Detail
 
-#### **scoring.py Functions Called:**
+#### **recommendations.scoring Functions Called:**
 
 1. **key_compat(src_key, dst_key)**
    ```python
@@ -481,55 +515,80 @@ def recommend_for(track_id, meta_ix, emb_ix, idx, topk=200, final_top=15):
           │                      │                      │
           ▼                      ▼                      ▼
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│ rekordbox.py    │    │ embeddings.py   │    │ ui.py           │
-│ XML parsing     │    │ Audio→Vectors   │    │ User interface  │
-│ URL decoding    │    │ Multi-decoder   │    │ Sorting logic   │
+│ processing/     │    │ processing/     │    │ ui/             │
+│ xml_parser.py   │    │ embeddings.py   │    │ app.py          │
+│ XML parsing     │    │ Audio→Vectors   │    │ Main window     │
+│ URL decoding    │    │ Essentia model  │    │ Tabbed UI       │
 └─────────┬───────┘    └─────────┬───────┘    └─────────┬───────┘
           │                      │                      │
           └──────────────────────┼──────────────────────┘
                                  │
                                  ▼
-                    ┌─────────────────┐
-                    │ pipeline.py     │
-                    │ Orchestration   │
-                    │ Incremental     │
-                    └─────────┬───────┘
+                    ┌─────────────────────────┐
+                    │ processing/pipeline.py  │
+                    │ Orchestration           │
+                    │ Incremental indexing    │
+                    └─────────┬───────────────┘
                               │
                               ▼
-                    ┌─────────────────┐
-                    │ Data Files      │
-                    │ (.parquet,      │
-                    │  .npy, .json)   │
-                    └─────────┬───────┘
+                    ┌─────────────────────────┐
+                    │ core/persistence.py     │
+                    │ Save data files         │
+                    │ (.parquet, .npy, .json) │
+                    └─────────┬───────────────┘
                               │
                               ▼
-                    ┌─────────────────┐
-                    │recommendations.py│
-                    │ Load & Search   │
-                    │ Explicit cosine │
-                    └─────────┬───────┘
+                    ┌─────────────────────────┐
+                    │ core/loader.py          │
+                    │ Load all data           │
+                    │ Build FAISS index       │
+                    └─────────┬───────────────┘
                               │
                               ▼
-         ┌─────────────────┐  │  ┌─────────────────┐
-         │ indexing.py     │  │  │ scoring.py      │
-         │ FAISS Search    │◄─┴─►│ Key/BPM Compat │
-         │ Defensive norm  │     │ Extended keys   │
-         └─────────────────┘     └─────────────────┘
+         ┌──────────────────────┴──────────────────────┐
+         │                                              │
+         ▼                                              ▼
+┌─────────────────┐                        ┌─────────────────┐
+│ core/           │                        │ recommendations/│
+│ index_builder.py│◄──────────────────────►│ engine.py       │
+│ FAISS Search    │                        │ recommend_for() │
+│ Defensive norm  │                        │ Explicit cosine │
+└─────────────────┘                        └────────┬────────┘
+                                                    │
+                                                    ▼
+                                           ┌─────────────────┐
+                                           │ recommendations/│
+                                           │ scoring.py      │
+                                           │ Key/BPM Compat  │
+                                           │ Extended keys   │
+                                           └─────────────────┘
 ```
 
 ## 📋 Component Responsibility Matrix
 
-| Component | Primary Role | Key Functions | Dependencies |
-|-----------|--------------|---------------|--------------|
-| **dj_companion.py** | CLI Entry Point | `index()`, `ui()` | pipeline, ui |
-| **pipeline.py** | Indexing Orchestration | `cmd_index()`, `merge_embeddings()` | rekordbox, embeddings, config |
-| **rekordbox.py** | XML Parsing | `read_rekordbox_xml()` | lxml, pandas, urllib |
-| **embeddings.py** | Audio Processing | `DiscogsEffnetEmbedder.embed_file()` | essentia, soundfile, librosa |
-| **indexing.py** | Similarity Search | `FaissCosIndex.search()` | faiss, numpy |
-| **scoring.py** | Compatibility Scoring | `key_compat()`, `bpm_compat()` | None |
-| **recommendations.py** | Data Loading & Recommendations | `load_all()`, `recommend_for()` | All above |
-| **ui.py** | User Interface | `App.sort_suggestions()`, `refresh_suggestions()` | tkinter, recommendations |
-| **config.py** | Configuration | File paths, constants | pathlib |
+| Package | Module | Primary Role | Key Functions | Dependencies |
+|---------|--------|--------------|---------------|--------------|
+| **root** | **dj_companion.py** | CLI Entry Point | `index()`, `ui()`, `clean_duplicates()` | processing, ui, core |
+| **config/** | **paths.py** | File Path Configuration | Path constants | pathlib |
+| **config/** | **defaults.py** | Default Parameters | Constants | None |
+| **core/** | **loader.py** | Data Loading | `load_all()`, `load_existing_data()`, `find_new_tracks()` | pandas, config |
+| **core/** | **persistence.py** | Data Saving | `save_index_data()`, `merge_embeddings()` | pandas, numpy, config |
+| **core/** | **index_builder.py** | Similarity Search | `FaissCosIndex.search()`, `build_faiss_index()` | faiss, numpy |
+| **core/** | **duplicates.py** | Duplicate Detection | `remove_simple_duplicates()` | pandas, os |
+| **processing/** | **pipeline.py** | Indexing Orchestration | `index_library()` | All core, processing modules |
+| **processing/** | **xml_parser.py** | XML Parsing | `read_rekordbox_xml()` | lxml, pandas, urllib |
+| **processing/** | **embeddings.py** | Audio Processing | `DiscogsEffnetEmbedder.embed_file()` | essentia, numpy |
+| **recommendations/** | **engine.py** | Recommendations | `recommend_for()`, `vector_for()` | core, scoring |
+| **recommendations/** | **scoring.py** | Compatibility Scoring | `key_compat()`, `bpm_compat()`, `final_score()` | None |
+| **recommendations/** | **set_generator.py** | DJ Set Generation | `generate_set()` | engine, transitions, models |
+| **recommendations/** | **models.py** | Data Models | `SetTrack` dataclass | dataclasses |
+| **recommendations/** | **transitions.py** | Transition Scoring | `calculate_transition_score()` | engine, numpy |
+| **recommendations/** | **search.py** | Track Search | `search_tracks()` | pandas |
+| **ui/** | **app.py** | Main Application | `App` class, mixins | core, tkinter |
+| **ui/** | **recommendations_tab.py** | Recommendations UI | Tab creation & logic | recommendations.engine |
+| **ui/** | **set_creator_tab.py** | Set Creator UI | Tab creation & logic | recommendations |
+| **ui/** | **library_tab.py** | Library Management | Tab creation & deletion | core |
+| **ui/** | **dialogs.py** | UI Dialogs | `SimplePicker`, `AddAnchorDialog` | tkinter, recommendations |
 
 ## ⚡ Performance Characteristics
 
@@ -551,10 +610,48 @@ def recommend_for(track_id, meta_ix, emb_ix, idx, topk=200, final_top=15):
 - **Metadata**: ~100 bytes per track
 - **UI State**: ~50KB for current recommendations list
 
-### New UI Features:
+### UI Features:
+- **Tabbed Interface**: Three main tabs (Explore, Set Creator, Library)
 - **Interactive Sorting**: Sort by Score, Cosine, Key, BPM, or Artist
 - **Persistent State**: Recommendations cached until track change
 - **Dual Score Display**: Both raw cosine (Cos XX.X%) and weighted score (Score YY.Y%)
-- **Larger Window**: 800x600 to accommodate sorting controls
+- **History Navigation**: Back button to navigate through track selections
+- **DJ Set Generation**: Anchor-based set creation with transition scoring
+- **Library Management**: Browse, search, and delete tracks with multi-select
+- **Modular Architecture**: Clean separation with tab-specific mixins
 
-This flow ensures efficient, scalable operation while maintaining clear separation of concerns between components and providing enhanced user interaction capabilities.
+## 🏛️ Architectural Principles
+
+The refactored codebase follows these key principles:
+
+1. **Separation of Concerns**: Each package has a single, well-defined responsibility
+   - `config/`: Configuration only
+   - `core/`: Data management and indexing
+   - `processing/`: Audio processing and pipeline orchestration
+   - `recommendations/`: Recommendation logic and scoring
+   - `ui/`: User interface components
+
+2. **Modularity**: Large files split into focused modules (90-270 lines each)
+   - Easier to understand, test, and maintain
+   - Clear interfaces between components
+   - Independent modules can be developed separately
+
+3. **Dependency Flow**: Clear hierarchy prevents circular dependencies
+   ```
+   config/ (no dependencies)
+     ↓
+   core/ (uses config)
+     ↓
+   processing/ (uses core, config)
+     ↓
+   recommendations/ (uses core, config)
+     ↓
+   ui/ (uses core, recommendations)
+   ```
+
+4. **Testability**: Isolated components with clear interfaces
+   - Each module can be tested independently
+   - Mock dependencies easily in unit tests
+   - Integration tests validate data flow
+
+This architecture ensures efficient, scalable operation while maintaining clear separation of concerns between components and providing enhanced user interaction capabilities.
