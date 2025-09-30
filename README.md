@@ -12,11 +12,22 @@ A tool for finding similar tracks based on audio content, key compatibility, and
 
 ## Installation
 
-### Prerequisites
+### Option 1: Standalone Application (Recommended for End Users)
+
+Download the pre-built application for your platform:
+- **macOS**: `DJ-Companion-Installer.dmg`
+- **Windows**: `DJ-Companion-Setup.exe`  
+- **Linux**: `DJ-Companion.AppImage`
+
+Simply install and run - no Python required!
+
+### Option 2: From Source (For Developers)
+
+#### Prerequisites
 - Python 3.8+
 - Conda (recommended) or pip
 
-### Install Dependencies
+#### Install Dependencies
 
 Using conda (recommended):
 ```bash
@@ -27,7 +38,13 @@ conda install -c conda-forge faiss-cpu
 
 Using pip:
 ```bash
-pip install numpy pandas lxml soundfile typer essentia-tensorflow faiss-cpu
+pip install -r requirements.txt
+```
+
+Or use the provided environment:
+```bash
+conda env create -f environment.yml
+conda activate dj-companion
 ```
 
 ## Model Setup
@@ -174,3 +191,37 @@ The indexing process creates these files in the `data/` directory:
 - `embeddings.parquet` - Audio embeddings with track IDs  
 - `index.npy` - Normalized embedding vectors for FAISS
 - `ids.json` - Track ID mapping for FAISS index
+- `settings.json` - User preferences and configuration
+
+## Building Standalone Application
+
+To create a distributable app that end users can install:
+
+```bash
+# Install build dependencies
+pip install pyinstaller
+
+# Build the application
+python build_app.py
+```
+
+The application will be created in the `dist/` directory. See [PACKAGING.md](PACKAGING.md) for detailed instructions on creating installers for each platform.
+
+## First-Run Experience
+
+When users launch the app for the first time:
+
+1. **Welcome Screen**: Explains what DJ Companion does
+2. **XML File Selection**: User chooses their Rekordbox XML export
+3. **Indexing Progress**: Shows real-time progress as library is indexed
+4. **Completion**: Automatically launches the main application
+
+Subsequent launches skip directly to the main interface.
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.

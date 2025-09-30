@@ -3,7 +3,7 @@
 
 from typing import Optional, List, Dict, Any
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 
 from core.loader import load_all
 from ui.recommendations_tab import RecommendationsTabMixin
@@ -29,6 +29,9 @@ class App(RecommendationsTabMixin, SetCreatorTabMixin, LibraryTabMixin, tk.Tk):
         self.history: List[Dict[str, Any]] = []  # List of {track_id, recommendations, sort_state}
         self.max_history = 20  # Limit history to prevent memory issues
 
+        # Create menu bar
+        self.create_menu_bar()
+        
         self.lbl_current = tk.Label(self, text="Current track: —", font=("Helvetica", 14, "bold"), anchor="w", justify="left")
         self.lbl_current.pack(fill="x")
 
@@ -94,3 +97,83 @@ class App(RecommendationsTabMixin, SetCreatorTabMixin, LibraryTabMixin, tk.Tk):
             self.status.config(text=self.get_hint_for_tab(tab_text), fg="gray")
         except Exception:
             self.status.config(text="💡 Tip: Double-click any suggestion to set it as current track", fg="gray")
+    
+    def create_menu_bar(self):
+        """Create the application menu bar."""
+        menubar = tk.Menu(self)
+        self.config(menu=menubar)
+        
+        # File menu
+        file_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="File", menu=file_menu)
+        file_menu.add_command(label="Settings...", command=self.open_settings)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self.quit)
+        
+        # Library menu
+        library_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Library", menu=library_menu)
+        library_menu.add_command(label="Update Library (Incremental)", command=self.update_library)
+        library_menu.add_command(label="Full Re-index...", command=self.full_reindex)
+        library_menu.add_separator()
+        library_menu.add_command(label="Library Statistics", command=self.open_settings)
+        
+        # Help menu
+        help_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Help", menu=help_menu)
+        help_menu.add_command(label="About", command=self.show_about)
+    
+    def open_settings(self):
+        """Open the settings window."""
+        from ui.settings_window import SettingsWindow
+        SettingsWindow(self)
+    
+    def update_library(self):
+        """Quick update library action."""
+        from ui.settings_window import SettingsWindow
+        from config import DATA
+        import json
+        
+        # Check if XML path is set
+        settings_file = DATA / "settings.json"
+        if not settings_file.exists():
+            messagebox.showinfo(
+                "Setup Required",
+                "Please configure your library settings first."
+            )
+            SettingsWindow(self)
+            return
+        
+        with open(settings_file, 'r') as f:
+            settings = json.load(f)
+            xml_path = settings.get("xml_path")
+        
+        if not xml_path:
+            messagebox.showinfo(
+                "Setup Required",
+                "Please configure your library settings first."
+            )
+            SettingsWindow(self)
+            return
+        
+        from ui.reindex_window import ReindexWindow
+        ReindexWindow(self, xml_path, force_full=False)
+    
+    def full_reindex(self):
+        """Full reindex action."""
+        from ui.settings_window import SettingsWindow
+        settings_window = SettingsWindow(self)
+        # The settings window has the full reindex button
+    
+    def show_about(self):
+        """Show about dialog."""
+        from tkinter import messagebox
+        messagebox.showinfo(
+            "About DJ Companion",
+            "DJ Companion v1.0\n\n"
+            "AI-powered DJ companion for finding similar tracks\n"
+            "and creating seamless sets.\n\n"
+            "Uses Essentia's Discogs-EffNet embeddings and FAISS\n"
+            "for efficient similarity search.\n\n"
+            "© 2024"
+        )
