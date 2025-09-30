@@ -37,6 +37,45 @@ def ui():
     run_ui()
 
 
+@cli.command()
+def clean_duplicates(
+    xml: str = typer.Argument(..., help="Path to Rekordbox XML export")
+):
+    """Analyze duplicate tracks in your collection using fast file-based detection."""
+    from pipeline import remove_simple_duplicates
+    from rekordbox import read_rekordbox_xml
+    
+    print("🧹 DJ Companion - Duplicate Analyzer")
+    print("=" * 50)
+    
+    # Read XML
+    print("📖 Reading Rekordbox XML...")
+    current_meta = read_rekordbox_xml(xml)
+    print(f"   Found {len(current_meta)} tracks in XML")
+    
+    if len(current_meta) < 2:
+        print("✅ Not enough tracks to check for duplicates.")
+        return
+    
+    print("🔍 Analyzing duplicates using file size and metadata...")
+    cleaned_meta, duplicates_info = remove_simple_duplicates(current_meta)
+    
+    if duplicates_info["removed_count"] > 0:
+        print(f"\n✨ Found {duplicates_info['removed_count']} duplicate tracks!")
+        print(f"   Your collection would have {len(cleaned_meta)} unique tracks after cleaning")
+        
+        if duplicates_info["details"]:
+            print("\n📋 Duplicates found:")
+            for detail in duplicates_info["details"]:
+                print(f"   • {detail}")
+        
+        print(f"\n💡 These duplicates will be automatically removed during indexing.")
+        print(f"   Just run: python src/dj_companion.py index {xml}")
+    else:
+        print("✅ No duplicates found in your collection!")
+        print("   Your collection is already clean.")
+
+
 if __name__ == "__main__":
     cli()
 

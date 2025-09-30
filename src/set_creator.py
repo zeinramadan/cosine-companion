@@ -24,7 +24,15 @@ class SetTrack:
         """Get display name for UI."""
         if self.artist and self.title:
             return f"{self.artist} – {self.title}"
-        return self.track_id
+        elif self.artist:
+            return f"{self.artist} – (Unknown Title)"
+        elif self.title:
+            return f"(Unknown Artist) – {self.title}"
+        else:
+            # Last resort: return track_id, but clean it up if it looks like a number
+            if self.track_id.isdigit():
+                return f"Track #{self.track_id}"
+            return self.track_id
     
     @property
     def icon(self) -> str:
@@ -163,9 +171,10 @@ def generate_set(
         
         # Filter out excluded tracks and already used tracks
         used_tracks = {track.track_id for track in set_slots if track is not None}
+        all_excluded = exclude_set.union(used_tracks)  # Combine both exclusion sets
         filtered_candidates = [
             c for c in candidates 
-            if c["track_id"] not in exclude_set and c["track_id"] not in used_tracks
+            if c["track_id"] not in all_excluded
         ]
         
         if not filtered_candidates:
@@ -201,17 +210,47 @@ def generate_set(
         
         # Add best candidate to set
         if best_candidate:
+            track_id = best_candidate["track_id"]
+            
+            # Get artist and title, with fallback to meta_ix if not in candidate
+            artist = best_candidate.get("artist", "")
+            title = best_candidate.get("title", "")
+            
+            # Fallback: get from meta_ix if not available in candidate
+            if (not artist or not title) and track_id in meta_ix.index:
+                row = meta_ix.loc[track_id]
+                artist = artist or row.get("artist", "")
+                title = title or row.get("title", "")
+            
             set_slots[i] = SetTrack(
-                track_id=best_candidate["track_id"],
+                track_id=track_id,
                 position=i + 1,
                 is_anchor=False,
                 score=best_score,
-                artist=best_candidate.get("artist", ""),
-                title=best_candidate.get("title", "")
+                artist=artist,
+                title=title
             )
-            exclude_set.add(best_candidate["track_id"])
+            # Add to exclude set to prevent reuse
+            exclude_set.add(track_id)
     
-    return [track for track in set_slots if track is not None]
+    # Final validation: ensure no duplicates
+    final_set = [track for track in set_slots if track is not None]
+    track_ids = [track.track_id for track in final_set]
+    
+    # Check for duplicates (excluding placeholder tracks)
+    real_tracks = [tid for tid in track_ids if not tid.startswith("empty_")]
+    if len(real_tracks) != len(set(real_tracks)):
+        print("⚠️  Warning: Duplicate tracks detected in generated set")
+        # Remove duplicates, keeping first occurrence
+        seen = set()
+        unique_set = []
+        for track in final_set:
+            if track.track_id not in seen or track.track_id.startswith("empty_"):
+                seen.add(track.track_id)
+                unique_set.append(track)
+        final_set = unique_set
+    
+    return final_set
 
 
 def search_tracks(query: str, meta_ix: pd.DataFrame, limit: int = 20) -> List[Dict[str, str]]:

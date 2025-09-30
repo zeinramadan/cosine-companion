@@ -37,7 +37,8 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Cosine Companion - Explore your taste")
-        self.geometry("800x600")
+        self.geometry("900x720")
+        self.minsize(820, 640)
         self.configure(padx=12, pady=12)
 
         self.meta, self.meta_ix, self.emb_ix, self.idx, self.V, self.ids = load_all()
@@ -59,33 +60,108 @@ class App(tk.Tk):
         self.create_recommendations_tab()
         self.create_set_creator_tab()
         self.create_library_tab()
+        
+        # Ensure all buttons are properly initialized
+        self.initialize_ui_state()
+        # Also re-apply after UI settles, on map, and at a few delays (macOS theme timing)
+        self.after_idle(self.initialize_ui_state)
+        self.after(300, self.initialize_ui_state)
+        self.after(1000, self.initialize_ui_state)
+        self.bind("<Map>", lambda e: self.initialize_ui_state())
+        self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
 
-        self.status = tk.Label(self, text="💡 Tip: Double-click any suggestion to set it as current track", anchor="w", font=("Helvetica", 9), fg="gray")
-        self.status.pack(fill="x")
+        self.status = tk.Label(self, text="💡 Choose a track to start using 'Set Current Track' button, double-click any suggestion to set it as current track", anchor="w", font=("Helvetica", 9), fg="gray")
+        # Keep status bar visible regardless of window height by sticking it to the bottom
+        self.status.pack(fill="x", side="bottom")
+        # Initialize bottom status hint for current tab
+        self.after(0, self.set_default_status_hint)
+
+    def initialize_ui_state(self):
+        """Ensure all UI elements are in the correct initial state."""
+        # Make sure the Add Anchor button is enabled and styled
+        if hasattr(self, 'add_anchor_btn'):
+            self.add_anchor_btn.config(state="normal", bg="lightgreen", font=("Helvetica", 10, "bold"))
+
+    def on_tab_changed(self, event=None):
+        """Re-apply styles when switching tabs to avoid platform/theme resets."""
+        try:
+            current_tab = self.notebook.select()
+            tab_text = self.notebook.tab(current_tab, "text")
+            if tab_text == "Set Creator" and hasattr(self, 'add_anchor_btn'):
+                # Force re-enable and restyle when the tab becomes visible
+                self.add_anchor_btn.config(state="normal", bg="lightgreen", font=("Helvetica", 10, "bold"))
+                self.update_idletasks()
+            # Update bottom hint based on active tab
+            self.set_default_status_hint()
+        except Exception:
+            pass
+
+    def get_hint_for_tab(self, tab_text: str) -> str:
+        """Return the default hint text for a given tab name."""
+        if tab_text == "Explore":
+            return "💡 Choose a track to start using 'Set Current Track' button, double-click any suggestion to set it as current track"
+        if tab_text == "Set Creator":
+            return ("💡 1) Click '+ Add Anchor' and choose a track + it's position in the set. "
+                    "2) Set 'Total Tracks'. 3) Click 'Generate Set'. 4) Adjust anchors and regenerate as needed.")
+        if tab_text == "Library":
+            return "💡 Ctrl+Click to multi-select • Shift+Click to select range • Double-click to set as current track in explore tab"
+
+    def set_default_status_hint(self):
+        """Set the bottom status label to the default hint for the active tab."""
+        try:
+            current_tab = self.notebook.select()
+            tab_text = self.notebook.tab(current_tab, "text")
+            self.status.config(text=self.get_hint_for_tab(tab_text), fg="gray")
+        except Exception:
+            self.status.config(text="💡 Tip: Double-click any suggestion to set it as current track", fg="gray")
 
     def create_recommendations_tab(self):
         """Create the recommendations tab with existing functionality."""
         rec_frame = ttk.Frame(self.notebook)
         self.notebook.add(rec_frame, text="Explore")
-        
-        # Main buttons
+
+        # Buttons row: left-aligned Back, centered actions
         btns = tk.Frame(rec_frame); btns.pack(fill="x", pady=8)
-        tk.Button(btns, text="Set Current Track", command=self.pick_current).pack(side="left")
-        tk.Button(btns, text="Copy Selected to Clipboard", command=self.copy_selected).pack(side="left", padx=8)
-        tk.Button(btns, text="Set Selected as Current", command=self.set_selected_as_current).pack(side="left", padx=8)
-        
-        # Back button
-        self.back_btn = tk.Button(btns, text="← Back", command=self.go_back, state="disabled")
+
+        # Left: Back button
+        left_btns = tk.Frame(btns)
+        left_btns.pack(side="left")
+        self.back_btn = tk.Button(left_btns, text="← Back", command=self.go_back, state="disabled")
         self.back_btn.pack(side="left", padx=8)
 
-        # Sorting buttons
+        # Center: action buttons (centered using expanding spacers)
+        center_btns = tk.Frame(btns)
+        center_btns.pack(side="left", expand=True, fill="x")
+        tk.Frame(center_btns).pack(side="left", expand=True)
+        tk.Button(center_btns, text="Set Current Track", command=self.pick_current).pack(side="left", padx=6)
+        tk.Button(center_btns, text="Copy Selected to Clipboard", command=self.copy_selected).pack(side="left", padx=6)
+        tk.Button(center_btns, text="Set Selected as Current", command=self.set_selected_as_current).pack(side="left", padx=6)
+        tk.Frame(center_btns).pack(side="left", expand=True)
+
+        # Right spacer to visually balance the left Back button and shift center group slightly left
+        tk.Frame(btns, width=90).pack(side="right")
+
+        # Sorting + Top-N container
         sort_frame = tk.Frame(rec_frame); sort_frame.pack(fill="x", pady=4)
-        tk.Label(sort_frame, text="Sort by:", font=("Helvetica", 10, "bold")).pack(side="left")
-        tk.Button(sort_frame, text="Score", command=lambda: self.sort_suggestions("score")).pack(side="left", padx=2)
-        tk.Button(sort_frame, text="Cosine", command=lambda: self.sort_suggestions("cosine")).pack(side="left", padx=2)
-        tk.Button(sort_frame, text="Key", command=lambda: self.sort_suggestions("key")).pack(side="left", padx=2)
-        tk.Button(sort_frame, text="BPM", command=lambda: self.sort_suggestions("bpm")).pack(side="left", padx=2)
-        tk.Button(sort_frame, text="Artist", command=lambda: self.sort_suggestions("artist")).pack(side="left", padx=2)
+
+        # Left: sorting buttons
+        sort_left = tk.Frame(sort_frame)
+        sort_left.pack(side="left")
+        tk.Label(sort_left, text="Sort by:", font=("Helvetica", 10, "bold")).pack(side="left")
+        tk.Button(sort_left, text="Score", command=lambda: self.sort_suggestions("score")).pack(side="left", padx=2)
+        tk.Button(sort_left, text="Cosine", command=lambda: self.sort_suggestions("cosine")).pack(side="left", padx=2)
+        tk.Button(sort_left, text="Key", command=lambda: self.sort_suggestions("key")).pack(side="left", padx=2)
+        tk.Button(sort_left, text="BPM", command=lambda: self.sort_suggestions("bpm")).pack(side="left", padx=2)
+        tk.Button(sort_left, text="Artist", command=lambda: self.sort_suggestions("artist")).pack(side="left", padx=2)
+
+        # Right: Top-N in bordered rectangle
+        sort_right = tk.Frame(sort_frame)
+        sort_right.pack(side="right")
+        tk.Label(sort_right, text="Top:", font=("Helvetica", 10, "bold")).pack(side="left", padx=(0, 6))
+        self.topn_var = tk.StringVar(value="50")
+        topn_box = ttk.Combobox(sort_right, textvariable=self.topn_var, values=["10", "20", "30", "50", "100"], width=5, state="readonly")
+        topn_box.pack(side="left")
+        topn_box.bind("<<ComboboxSelected>>", lambda e: self.refresh_suggestions())
 
         self.listbox = tk.Listbox(rec_frame, height=20)
         self.listbox.pack(fill="both", expand=True)
@@ -112,8 +188,12 @@ class App(tk.Tk):
         # Anchor tracks section
         anchor_frame = tk.Frame(set_frame); anchor_frame.pack(fill="x", pady=8)
         tk.Label(anchor_frame, text="Anchor Tracks:", font=("Helvetica", 10, "bold")).pack(side="left")
-        tk.Button(anchor_frame, text="+ Add Anchor", command=self.add_anchor_track).pack(side="left", padx=8)
+        self.add_anchor_btn = tk.Button(anchor_frame, text="+ Add Anchor", command=self.add_anchor_track, 
+                                       bg="lightgreen", font=("Helvetica", 10, "bold"), state="normal")
         
+        # Reduce right padding so the hint sits closer to the button
+        self.add_anchor_btn.pack(side="left", padx=(2, 2))
+    
         # Anchor tracks list
         self.anchor_listbox = tk.Listbox(anchor_frame, height=4)
         self.anchor_listbox.pack(fill="x", expand=True, padx=(0, 80))
@@ -127,6 +207,8 @@ class App(tk.Tk):
         # Set controls
         set_controls = tk.Frame(set_frame); set_controls.pack(fill="x", pady=4)
         tk.Button(set_controls, text="Export to Clipboard", command=self.export_set).pack(side="left")
+        
+        # (Removed inline footer hint; bottom status bar now reflects active tab)
         
         # Initialize data structures
         self.anchor_tracks: Dict[int, str] = {}  # position -> track_id
@@ -161,7 +243,7 @@ class App(tk.Tk):
         list_frame = tk.Frame(lib_frame)
         list_frame.pack(fill="both", expand=True)
         
-        self.library_listbox = tk.Listbox(list_frame, height=20, selectmode=tk.EXTENDED)
+        self.library_listbox = tk.Listbox(list_frame, height=20, selectmode=tk.EXTENDED, exportselection=False)
         scrollbar = tk.Scrollbar(list_frame, orient="vertical")
         scrollbar.config(command=self.library_listbox.yview)
         self.library_listbox.config(yscrollcommand=scrollbar.set)
@@ -171,6 +253,8 @@ class App(tk.Tk):
         
         # Double-click to set as current
         self.library_listbox.bind("<Double-Button-1>", self.on_library_double_click)
+        
+        # (Removed inline library hint; bottom status bar now reflects active tab)
         
         # Initialize library data
         self.library_tracks = []  # Full list of tracks
@@ -327,7 +411,11 @@ class App(tk.Tk):
             return
         
         # Get fresh recommendations
-        self.current_recommendations = recommend_for(self.current_id, self.meta_ix, self.emb_ix, self.idx, final_top=20)
+        try:
+            topn = int(getattr(self, 'topn_var', tk.StringVar(value="50")).get())
+        except Exception:
+            topn = 50
+        self.current_recommendations = recommend_for(self.current_id, self.meta_ix, self.emb_ix, self.idx, final_top=topn)
         self.update_listbox()
 
     def sort_suggestions(self, sort_by: str):
