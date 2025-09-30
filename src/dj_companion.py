@@ -12,7 +12,7 @@ import os
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
-from pipeline import cmd_index
+from processing.pipeline import index_library
 from ui import run_ui
 
 # --- CLI ---
@@ -28,7 +28,7 @@ def index(
     sample: int = typer.Option(None, "--sample", "-s", help="Limit number of new tracks to process (debug)")
 ):
     """Index your library: parses XML, embeds audio, builds FAISS (incremental by default)."""
-    cmd_index(xml, force_full=force, sample_size=sample)
+    index_library(xml, force_full=force, sample_size=sample)
 
 
 @cli.command()
@@ -42,8 +42,8 @@ def clean_duplicates(
     xml: str = typer.Argument(..., help="Path to Rekordbox XML export")
 ):
     """Analyze duplicate tracks in your collection using fast file-based detection."""
-    from pipeline import remove_simple_duplicates
-    from rekordbox import read_rekordbox_xml
+    from core.duplicates import remove_simple_duplicates
+    from processing.xml_parser import read_rekordbox_xml
     
     print("🧹 DJ Companion - Duplicate Analyzer")
     print("=" * 50)

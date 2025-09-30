@@ -99,5 +99,3 @@ class DiscogsEffnetEmbedder:
         except Exception as e:
             # If audio loading fails, return None (will be logged by caller)
             return None
-
-

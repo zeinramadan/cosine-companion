@@ -1,83 +1,13 @@
 #!/usr/bin/env python3
-"""Set Creator - Generate DJ sets with anchor tracks at specific positions."""
+"""DJ set generation with anchor tracks."""
 
-from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
-import numpy as np
+from typing import Dict, List, Optional
+
 import pandas as pd
 
-from recommendations import recommend_for, vector_for
-
-
-@dataclass
-class SetTrack:
-    """Represents a track in a generated set."""
-    track_id: str
-    position: int
-    is_anchor: bool
-    score: float = 0.0
-    artist: str = ""
-    title: str = ""
-    
-    @property
-    def display_name(self) -> str:
-        """Get display name for UI."""
-        if self.artist and self.title:
-            return f"{self.artist} – {self.title}"
-        elif self.artist:
-            return f"{self.artist} – (Unknown Title)"
-        elif self.title:
-            return f"(Unknown Artist) – {self.title}"
-        else:
-            # Last resort: return track_id, but clean it up if it looks like a number
-            if self.track_id.isdigit():
-                return f"Track #{self.track_id}"
-            return self.track_id
-    
-    @property
-    def icon(self) -> str:
-        """Return icon for UI display."""
-        return "🔒" if self.is_anchor else "🤖"
-
-
-def calculate_transition_score(
-    from_track_id: str, 
-    to_track_id: str, 
-    next_track_id: Optional[str],
-    emb_ix: pd.DataFrame
-) -> float:
-    """
-    Calculate how well tracks transition together.
-    
-    Args:
-        from_track_id: Source track ID
-        to_track_id: Candidate track ID  
-        next_track_id: Next track ID (if known)
-        emb_ix: Embeddings index DataFrame
-        
-    Returns:
-        Transition score (0.0 to 1.0)
-    """
-    # Get embedding vectors
-    from_vec = vector_for(from_track_id, emb_ix)
-    to_vec = vector_for(to_track_id, emb_ix)
-    
-    if from_vec is None or to_vec is None:
-        return 0.0
-    
-    # Base cosine similarity
-    cosine_score = float(np.dot(from_vec, to_vec))
-    
-    # Forward compatibility if next track is known
-    if next_track_id:
-        next_vec = vector_for(next_track_id, emb_ix)
-        if next_vec is not None:
-            forward_score = float(np.dot(to_vec, next_vec))
-            # Weight: 80% current transition + 20% forward compatibility
-            return 0.8 * cosine_score + 0.2 * forward_score
-    
-    # If no next track, use only cosine similarity
-    return cosine_score
+from recommendations.models import SetTrack
+from recommendations.engine import recommend_for
+from recommendations.transitions import calculate_transition_score
 
 
 def generate_set(
@@ -90,6 +20,11 @@ def generate_set(
 ) -> List[SetTrack]:
     """
     Generate a complete DJ set with anchor tracks at specified positions.
+    
+    This algorithm fills empty slots between and around anchor tracks by:
+    1. Using context from adjacent tracks (previous/next)
+    2. Scoring candidates based on transition quality
+    3. Preventing duplicate track selection
     
     Args:
         anchor_tracks: {position: track_id} mapping (1-indexed)
@@ -251,41 +186,3 @@ def generate_set(
         final_set = unique_set
     
     return final_set
-
-
-def search_tracks(query: str, meta_ix: pd.DataFrame, limit: int = 20) -> List[Dict[str, str]]:
-    """
-    Search for tracks by artist or title.
-    
-    Args:
-        query: Search query
-        meta_ix: Metadata index DataFrame
-        limit: Maximum results to return
-        
-    Returns:
-        List of track dictionaries with track_id, artist, title
-    """
-    if not query.strip():
-        return []
-    
-    query_lower = query.lower()
-    results = []
-    
-    for track_id, row in meta_ix.iterrows():
-        artist = str(row.get("artist", "")).lower()
-        title = str(row.get("title", "")).lower()
-        
-        if (query_lower in artist or 
-            query_lower in title or
-            query_lower in f"{artist} {title}"):
-            results.append({
-                "track_id": track_id,
-                "artist": row.get("artist", ""),
-                "title": row.get("title", ""),
-                "display_name": f"{row.get('artist', '')} – {row.get('title', '')}"
-            })
-            
-            if len(results) >= limit:
-                break
-    
-    return results

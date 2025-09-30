@@ -217,7 +217,7 @@ class RecommendationsTabMixin:
 
     def refresh_suggestions(self: "App"):
         """Refresh recommendations for the current track."""
-        from recommendations import recommend_for
+        from recommendations.engine import recommend_for
         
         if not self.current_id:
             self.current_recommendations = []

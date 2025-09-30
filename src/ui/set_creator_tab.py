@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Dict, List
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from set_creator import generate_set, SetTrack
+from recommendations import generate_set, SetTrack
 from ui.dialogs import AddAnchorDialog
 
 if TYPE_CHECKING:

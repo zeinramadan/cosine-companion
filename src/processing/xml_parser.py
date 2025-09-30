@@ -56,5 +56,3 @@ def read_rekordbox_xml(xml_path: str) -> pd.DataFrame:
         df["track_id"] = df["path"]
 
     return df
-
-

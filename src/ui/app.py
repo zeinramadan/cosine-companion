@@ -5,7 +5,7 @@ from typing import Optional, List, Dict, Any
 import tkinter as tk
 from tkinter import ttk
 
-from recommendations import load_all
+from core.loader import load_all
 from ui.recommendations_tab import RecommendationsTabMixin
 from ui.set_creator_tab import SetCreatorTabMixin
 from ui.library_tab import LibraryTabMixin

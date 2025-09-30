@@ -50,3 +50,25 @@ class FaissCosIndex:
         return out
 
 
+def build_faiss_index(vectors: np.ndarray, track_ids: List[str]) -> FaissCosIndex:
+    """
+    Build a FAISS index from vectors and track IDs.
+    
+    Args:
+        vectors: Array of embedding vectors (N x D)
+        track_ids: List of track IDs corresponding to vectors
+        
+    Returns:
+        Built FaissCosIndex ready for search
+    """
+    if len(vectors) == 0:
+        raise ValueError("Cannot build index from empty vectors")
+    
+    if len(vectors) != len(track_ids):
+        raise ValueError(f"Vector count ({len(vectors)}) must match track ID count ({len(track_ids)})")
+    
+    idx = FaissCosIndex(vectors.shape[1])
+    for tid, v in zip(track_ids, vectors):
+        idx.add(tid, v)
+    
+    return idx

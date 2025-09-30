@@ -5,7 +5,7 @@ import tkinter as tk
 from tkinter import messagebox
 import pandas as pd
 
-from set_creator import search_tracks
+from recommendations import search_tracks
 
 
 class SimplePicker(tk.Toplevel):

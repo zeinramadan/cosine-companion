@@ -1,34 +1,27 @@
 #!/usr/bin/env python3
-"""Track recommendation logic and data management."""
+"""Track recommendation engine and similarity search."""
 
-import json
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 
 import numpy as np
 import pandas as pd
 
-from config import META_PQ, EMB_PQ, IDX_NPY, IDS_JSON, DEFAULT_TOPK, DEFAULT_FINAL_TOP
-from indexing import FaissCosIndex
-from scoring import key_compat, bpm_compat, final_score
-
-
-def load_all() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, FaissCosIndex, np.ndarray, List[str]]:
-    meta = pd.read_parquet(META_PQ)
-    emb = pd.read_parquet(EMB_PQ)
-    V = np.load(IDX_NPY)
-    with open(IDS_JSON) as f:
-        ids = json.load(f)
-
-    idx = FaissCosIndex(V.shape[1])
-    for tid, v in zip(ids, V):
-        idx.add(tid, v)
-
-    meta_ix = meta.set_index("track_id")
-    emb_ix = emb.set_index("track_id")
-    return meta, meta_ix, emb_ix, idx, V, ids
+from config import DEFAULT_TOPK, DEFAULT_FINAL_TOP
+from core.index_builder import FaissCosIndex
+from recommendations.scoring import key_compat, bpm_compat, final_score
 
 
 def vector_for(track_id: str, emb_ix: pd.DataFrame) -> Optional[np.ndarray]:
+    """
+    Get normalized embedding vector for a track.
+    
+    Args:
+        track_id: Track ID to look up
+        emb_ix: Embeddings DataFrame indexed by track_id
+        
+    Returns:
+        Normalized embedding vector or None if not found
+    """
     if track_id not in emb_ix.index:
         return None
     row = emb_ix.loc[track_id]
@@ -46,6 +39,20 @@ def recommend_for(
     topk: int = DEFAULT_TOPK,
     final_top: int = DEFAULT_FINAL_TOP,
 ) -> List[Dict[str, Any]]:
+    """
+    Generate track recommendations based on similarity and compatibility.
+    
+    Args:
+        track_id: Source track ID
+        meta_ix: Metadata DataFrame indexed by track_id
+        emb_ix: Embeddings DataFrame indexed by track_id
+        idx: FAISS index for similarity search
+        topk: Number of candidates to retrieve from FAISS
+        final_top: Number of final recommendations to return
+        
+    Returns:
+        List of recommendation dictionaries with track info and scores
+    """
     v = vector_for(track_id, emb_ix)
     if v is None:
         return []
@@ -79,5 +86,3 @@ def recommend_for(
 
     out.sort(key=lambda x: x["score"], reverse=True)
     return out[:final_top]
-
-

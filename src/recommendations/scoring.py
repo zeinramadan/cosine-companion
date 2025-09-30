@@ -40,6 +40,7 @@ key_to_camelot = {
 
 
 def to_camelot(k: str | None) -> Optional[str]:
+    """Convert a musical key to Camelot notation."""
     if not k:
         return None
     k = k.strip()
@@ -49,6 +50,13 @@ def to_camelot(k: str | None) -> Optional[str]:
 
 
 def key_compat(src: Optional[str], dst: Optional[str]) -> float:
+    """
+    Calculate key compatibility score between two tracks.
+    
+    Returns:
+        1.0 for perfect match, 0.8 for adjacent keys, 0.6 for relative keys,
+        0.4 for 2-step keys, 0.0 for incompatible keys
+    """
     s = to_camelot(src)
     d = to_camelot(dst)
     if not s or not d:
@@ -67,6 +75,12 @@ def key_compat(src: Optional[str], dst: Optional[str]) -> float:
 
 
 def bpm_compat(sbpm: Optional[float], dbpm: Optional[float], pct: float = 0.06) -> float:
+    """
+    Calculate BPM compatibility score between two tracks.
+    
+    Returns:
+        1.0 for matching BPM (within tolerance), 0.7 for half/double time, 0.0 otherwise
+    """
     if not sbpm or not dbpm:
         return 0.0
     lo, hi = sbpm * (1 - pct), sbpm * (1 + pct)
@@ -82,7 +96,17 @@ def bpm_compat(sbpm: Optional[float], dbpm: Optional[float], pct: float = 0.06) 
 
 def final_score(cosine: float, key_score: float, bpm_score: float,
                weights: tuple = DEFAULT_SCORING_WEIGHTS) -> float:
+    """
+    Calculate final recommendation score from component scores.
+    
+    Args:
+        cosine: Cosine similarity score
+        key_score: Key compatibility score
+        bpm_score: BPM compatibility score
+        weights: Tuple of (cosine_weight, key_weight, bpm_weight)
+        
+    Returns:
+        Weighted final score
+    """
     a, b, c = weights
     return a * cosine + b * key_score + c * bpm_score
-
-

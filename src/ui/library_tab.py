@@ -213,7 +213,7 @@ class LibraryTabMixin:
     def perform_track_deletion(self: "App", tracks_to_delete):
         """Actually delete tracks from all data files."""
         from config import META_PQ, EMB_PQ, IDX_NPY, IDS_JSON
-        from indexing import FaissCosIndex
+        from core.index_builder import FaissCosIndex
         
         track_ids_to_delete = {track["track_id"] for track in tracks_to_delete}
         deleted_count = 0
