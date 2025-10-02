@@ -1,4 +1,4 @@
-"""DJ Companion UI package."""
+"""Cosine Companion UI package."""
 
 import tkinter as tk
 from ui.app import App
@@ -6,7 +6,7 @@ from ui.onboarding import OnboardingWindow, needs_onboarding
 
 
 def run_ui():
-    """Run the DJ Companion UI application."""
+    """Run the Cosine Companion UI application."""
     # Create root window (initially hidden)
     root = tk.Tk(className='Cosine Companion')
     root.withdraw()  # Hide until ready

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build script for creating standalone DJ Companion application."""
+"""Build script for creating standalone Cosine Companion application."""
 
 import sys
 import os
@@ -11,7 +11,7 @@ def build_with_pyinstaller():
     """Build the application using PyInstaller with spec file."""
     
     system = platform.system()
-    print(f"🔨 Building DJ Companion for {system}...")
+    print(f"🔨 Building Cosine Companion for {system}...")
     
     # Check if spec file exists
     spec_file = Path("dj-companion.spec")
@@ -41,28 +41,28 @@ def build_with_pyinstaller():
         print("=" * 60)
         
         if system == "Darwin":
-            app_path = Path("dist/DJ Companion.app")
+            app_path = Path("dist/Cosine Companion.app")
             if app_path.exists():
                 print("\n🍎 macOS Application Bundle Created:")
                 print(f"   {app_path}")
                 print("\nYou can now run:")
-                print("   open 'dist/DJ Companion.app'")
+                print("   open 'dist/Cosine Companion.app'")
                 print("\nTo distribute:")
                 print("   Zip the .app bundle or create a DMG installer")
         elif system == "Windows":
-            exe_path = Path("dist/DJ Companion.exe")
+            exe_path = Path("dist/Cosine Companion.exe")
             if exe_path.exists():
                 print("\n🪟 Windows Executable Created:")
                 print(f"   {exe_path}")
                 print("\nYou can now run:")
-                print("   .\\dist\\\"DJ Companion.exe\"")
+                print("   .\\dist\\\"Cosine Companion.exe\"")
         elif system == "Linux":
-            bin_path = Path("dist/DJ Companion")
+            bin_path = Path("dist/Cosine Companion")
             if bin_path.exists():
                 print("\n🐧 Linux Executable Created:")
                 print(f"   {bin_path}")
                 print("\nYou can now run:")
-                print("   ./dist/\"DJ Companion\"")
+                print("   ./dist/\"Cosine Companion\"")
     else:
         print("\n❌ Build failed!")
         print("Check the error messages above for details.")
@@ -83,7 +83,7 @@ def check_dependencies():
 def main():
     """Main build script."""
     print("=" * 60)
-    print("DJ Companion - Application Builder")
+    print("Cosine Companion - Application Builder")
     print("=" * 60)
     print()
     

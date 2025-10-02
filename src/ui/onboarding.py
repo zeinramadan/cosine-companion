@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""First-run onboarding flow for DJ Companion."""
+"""First-run onboarding flow for Cosine Companion."""
 
 import os
 import queue
@@ -66,7 +66,7 @@ class OnboardingWindow(tk.Toplevel):
         desc_frame = tk.Frame(self)
         desc_frame.pack(pady=20, padx=40)
         
-        description = """DJ Companion helps you discover tracks that mix well together.
+        description = """Cosine Companion helps you discover tracks that mix well together.
 
 To get started, we need to index your music library.
 

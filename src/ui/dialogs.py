@@ -1,4 +1,4 @@
-"""Dialog windows for DJ Companion UI."""
+"""Dialog windows for Cosine Companion UI."""
 
 from typing import Optional, Dict
 import tkinter as tk

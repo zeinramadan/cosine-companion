@@ -15,7 +15,7 @@ class SettingsWindow(tk.Toplevel):
     
     def __init__(self, parent):
         super().__init__(parent)
-        self.title("Settings - DJ Companion")
+        self.title("Settings - Cosine Companion")
         self.geometry("600x600")
         self.resizable(False, False)
         

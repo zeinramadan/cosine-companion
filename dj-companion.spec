@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec file for DJ Companion."""
+"""PyInstaller spec file for Cosine Companion."""
 
 import sys
 import os
@@ -99,7 +99,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='DJ Companion',
+    name='Cosine Companion',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -119,15 +119,15 @@ exe = EXE(
 if sys.platform == 'darwin':
     app = BUNDLE(
         exe,
-        name='DJ Companion.app',
+        name='Cosine Companion.app',
         icon='assets/coco_logo.icns',
-        bundle_identifier='com.djcompanion.app',
+        bundle_identifier='com.cosinecompanion.app',
         info_plist={
             'NSPrincipalClass': 'NSApplication',
             'NSAppleScriptEnabled': False,
-            'CFBundleName': 'DJ Companion',
-            'CFBundleDisplayName': 'DJ Companion',
-            'CFBundleGetInfoString': "AI-powered DJ companion",
+            'CFBundleName': 'Cosine Companion',
+            'CFBundleDisplayName': 'Cosine Companion',
+            'CFBundleGetInfoString': "AI-powered music companion for DJs",
             'CFBundleVersion': "1.0.0",
             'CFBundleShortVersionString': "1.0.0",
             'NSHumanReadableCopyright': "Copyright © 2024",

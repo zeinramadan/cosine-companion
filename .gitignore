@@ -93,3 +93,6 @@ models/*.pb
 models/*.h5
 models/*.onnx
 data_backup/
+*.dmg
+dist/
+build/

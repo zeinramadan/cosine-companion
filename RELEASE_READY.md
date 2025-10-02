@@ -1,4 +1,4 @@
-# 🚀 DJ Companion - Ready for Build & Release
+# 🚀 Cosine Companion - Ready for Build & Release
 
 ## ✅ Build Preparation Complete
 
@@ -93,9 +93,9 @@ pyinstaller --clean --noconfirm dj-companion.spec
 ### Expected Output
 
 **macOS:**
-- Output: `dist/DJ Companion.app`
+- Output: `dist/Cosine Companion.app`
 - Size: ~500-800 MB (includes Python runtime, all dependencies, ML models)
-- Test: `open 'dist/DJ Companion.app'`
+- Test: `open 'dist/Cosine Companion.app'`
 
 ---
 
@@ -108,7 +108,7 @@ pyinstaller --clean --noconfirm dj-companion.spec
    ```bash
    codesign --deep --force --verify --verbose \
      --sign "Developer ID Application: Your Name" \
-     'dist/DJ Companion.app'
+     'dist/Cosine Companion.app'
    ```
 3. **Create DMG** (optional, for easier distribution)
 4. **Notarize** (required for macOS 10.15+)

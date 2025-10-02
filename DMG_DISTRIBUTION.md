@@ -13,7 +13,7 @@ Your DMG installer is ready for distribution: **DJ-Companion-Installer.dmg**
 ## 🎯 What's Included
 
 The DMG provides a standard macOS drag-and-drop installer experience:
-- DJ Companion.app (ready to drag to Applications folder)
+- Cosine Companion.app (ready to drag to Applications folder)
 - Applications folder shortcut for easy installation
 - Custom volume icon (coco_logo.icns)
 - Formatted window with proper layout
@@ -28,13 +28,13 @@ open DJ-Companion-Installer.dmg
 ```
 
 This will mount the disk image and show the installer window with:
-- DJ Companion.app icon on the left
+- Cosine Companion.app icon on the left
 - Applications folder shortcut on the right
 - Users can simply drag the app to Applications
 
 ### 2. Test Installation
 From the mounted DMG:
-1. Drag DJ Companion.app to Applications
+1. Drag Cosine Companion.app to Applications
 2. Open from Applications folder
 3. Verify the app launches and works correctly
 4. Test all major features:
@@ -46,7 +46,7 @@ From the mounted DMG:
 
 ### 3. Unmount
 ```bash
-hdiutil detach "/Volumes/DJ Companion"
+hdiutil detach "/Volumes/Cosine Companion"
 ```
 
 ---
@@ -63,8 +63,8 @@ hdiutil detach "/Volumes/DJ Companion"
 # Create a new release
 gh release create v1.0.0 \
   DJ-Companion-Installer.dmg \
-  --title "DJ Companion v1.0.0" \
-  --notes "Initial release of DJ Companion"
+  --title "Cosine Companion v1.0.0" \
+  --notes "Initial release of Cosine Companion"
 ```
 
 Or manually:
@@ -97,14 +97,14 @@ Before creating the DMG:
 codesign --deep --force --verify --verbose \
   --sign "Developer ID Application: Your Name (TEAM_ID)" \
   --options runtime \
-  'dist/DJ Companion.app'
+  'dist/Cosine Companion.app'
 ```
 
 ### 2. Notarize the App
 
 ```bash
 # Create a zip for notarization
-ditto -c -k --keepParent 'dist/DJ Companion.app' DJ-Companion.zip
+ditto -c -k --keepParent 'dist/Cosine Companion.app' DJ-Companion.zip
 
 # Submit for notarization
 xcrun notarytool submit DJ-Companion.zip \
@@ -114,7 +114,7 @@ xcrun notarytool submit DJ-Companion.zip \
   --wait
 
 # Staple the notarization ticket
-xcrun stapler staple 'dist/DJ Companion.app'
+xcrun stapler staple 'dist/Cosine Companion.app'
 ```
 
 ### 3. Then Create the DMG
@@ -132,7 +132,7 @@ After code signing and notarization, create the DMG with the signed app.
 
 If you distribute without code signing/notarization, users will see:
 
-> "DJ Companion.app can't be opened because it is from an unidentified developer."
+> "Cosine Companion.app can't be opened because it is from an unidentified developer."
 
 **Users can bypass this:**
 1. Right-click the app → Open
@@ -153,7 +153,7 @@ For public release, code signing is strongly recommended.
 
 Provide these instructions to your users:
 
-### Installing DJ Companion
+### Installing Cosine Companion
 
 1. **Download** `DJ-Companion-Installer.dmg`
 
@@ -162,19 +162,19 @@ Provide these instructions to your users:
    - A new window will open
 
 3. **Install** the application
-   - Drag the **DJ Companion** icon to the **Applications** folder
+   - Drag the **Cosine Companion** icon to the **Applications** folder
    - Wait for the copy to complete
 
 4. **Launch** the app
    - Open your Applications folder
-   - Double-click **DJ Companion**
+   - Double-click **Cosine Companion**
    - If you see a security warning, right-click → Open
 
 5. **First Launch**
    - Follow the onboarding wizard
    - Select your Rekordbox XML library file
    - Wait for initial indexing (this may take a few minutes)
-   - Start using DJ Companion!
+   - Start using Cosine Companion!
 
 ---
 
@@ -227,16 +227,16 @@ When you release an update:
 3. Create new DMG:
    ```bash
    create-dmg \
-     --volname "DJ Companion" \
+     --volname "Cosine Companion" \
      --volicon "assets/coco_logo.icns" \
      --window-pos 200 120 \
      --window-size 800 450 \
      --icon-size 100 \
-     --icon "DJ Companion.app" 200 190 \
-     --hide-extension "DJ Companion.app" \
+     --icon "Cosine Companion.app" 200 190 \
+     --hide-extension "Cosine Companion.app" \
      --app-drop-link 600 185 \
      "DJ-Companion-v1.0.1-Installer.dmg" \
-     "dist/DJ Companion.app"
+     "dist/Cosine Companion.app"
    ```
 
 4. Distribute the new version
@@ -245,7 +245,7 @@ When you release an update:
 
 ## 🎉 You're Ready to Distribute!
 
-Your DJ Companion DMG installer is ready for users. Test it thoroughly, and when ready, share it with your audience!
+Your Cosine Companion DMG installer is ready for users. Test it thoroughly, and when ready, share it with your audience!
 
 For questions about distribution, refer to:
 - Apple's Distribution Guide: https://developer.apple.com/distribution/

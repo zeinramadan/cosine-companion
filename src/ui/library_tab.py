@@ -1,4 +1,4 @@
-"""Library tab functionality for DJ Companion UI."""
+"""Library tab functionality for Cosine Companion UI."""
 
 from typing import TYPE_CHECKING
 import json

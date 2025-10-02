@@ -1,4 +1,4 @@
-# DJ Companion - Python Dependencies
+# Cosine Companion - Python Dependencies
 
 # Core data processing
 numpy>=1.20.0

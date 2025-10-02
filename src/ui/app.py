@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Main application class for DJ Companion UI."""
+"""Main application class for Cosine Companion UI."""
 
 from typing import Optional, List, Dict, Any
 import tkinter as tk
@@ -12,7 +12,7 @@ from ui.library_tab import LibraryTabMixin
 
 
 class App(RecommendationsTabMixin, SetCreatorTabMixin, LibraryTabMixin, tk.Tk):
-    """Main application window for DJ Companion."""
+    """Main application window for Cosine Companion."""
     
     def __init__(self):
         super().__init__(className='Cosine Companion')
@@ -179,10 +179,10 @@ class App(RecommendationsTabMixin, SetCreatorTabMixin, LibraryTabMixin, tk.Tk):
         """Show about dialog."""
         from tkinter import messagebox
         messagebox.showinfo(
-            "About DJ Companion",
-            "DJ Companion v1.0\n\n"
-            "AI-powered DJ companion for finding similar tracks\n"
-            "and creating seamless sets.\n\n"
+            "About Cosine Companion",
+            "Cosine Companion v1.0\n\n"
+            "AI-powered music companion for finding similar tracks\n"
+            "and creating seamless DJ sets.\n\n"
             "Uses Essentia's Discogs-EffNet embeddings and FAISS\n"
             "for efficient similarity search.\n\n"
             "© 2024"

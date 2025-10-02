@@ -1,6 +1,6 @@
-# DJ Companion - Build & Release Instructions
+# Cosine Companion - Build & Release Instructions
 
-This guide covers how to build and distribute DJ Companion as a standalone application.
+This guide covers how to build and distribute Cosine Companion as a standalone application.
 
 ## Prerequisites
 
@@ -73,18 +73,18 @@ pyinstaller --clean --noconfirm dj-companion.spec
 ## Build Output
 
 ### macOS
-- **Output**: `dist/DJ Companion.app`
-- **Test**: `open 'dist/DJ Companion.app'`
+- **Output**: `dist/Cosine Companion.app`
+- **Test**: `open 'dist/Cosine Companion.app'`
 - **Size**: ~500-800 MB (includes all dependencies and models)
 
 ### Windows
-- **Output**: `dist/DJ Companion.exe`
+- **Output**: `dist/Cosine Companion.exe`
 - **Test**: Run the executable
 - **Size**: ~400-700 MB
 
 ### Linux
-- **Output**: `dist/DJ Companion`
-- **Test**: `./dist/'DJ Companion'`
+- **Output**: `dist/Cosine Companion`
+- **Test**: `./dist/'Cosine Companion'`
 - **Size**: ~400-700 MB
 
 ## Distribution
@@ -93,7 +93,7 @@ pyinstaller --clean --noconfirm dj-companion.spec
 
 #### 1. Test the Application
 ```bash
-open 'dist/DJ Companion.app'
+open 'dist/Cosine Companion.app'
 ```
 
 Verify:
@@ -108,7 +108,7 @@ For wider distribution, sign the app:
 
 ```bash
 codesign --deep --force --verify --verbose --sign "Developer ID Application: Your Name" \
-  'dist/DJ Companion.app'
+  'dist/Cosine Companion.app'
 ```
 
 #### 3. Create DMG Installer (Optional)
@@ -117,16 +117,16 @@ Using `create-dmg` (install via `brew install create-dmg`):
 
 ```bash
 create-dmg \
-  --volname "DJ Companion" \
+  --volname "Cosine Companion" \
   --volicon "assets/coco_logo.icns" \
   --window-pos 200 120 \
   --window-size 800 400 \
   --icon-size 100 \
-  --icon "DJ Companion.app" 200 190 \
-  --hide-extension "DJ Companion.app" \
+  --icon "Cosine Companion.app" 200 190 \
+  --hide-extension "Cosine Companion.app" \
   --app-drop-link 600 185 \
   "DJ-Companion-Installer.dmg" \
-  "dist/DJ Companion.app"
+  "dist/Cosine Companion.app"
 ```
 
 #### 4. Notarization (For macOS 10.15+)

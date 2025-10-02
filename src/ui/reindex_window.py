@@ -20,7 +20,7 @@ class ReindexWindow(tk.Toplevel):
         self.cancel_requested = False  # Flag for cancellation
         
         title = "Full Re-index" if force_full else "Update Library"
-        self.title(f"{title} - DJ Companion")
+        self.title(f"{title} - Cosine Companion")
         self.geometry("600x400")
         self.resizable(False, False)
         
@@ -307,7 +307,7 @@ class ReindexWindow(tk.Toplevel):
         result = messagebox.askyesno(
             "Restart Required",
             "Library has been updated!\n\n"
-            "To see new tracks in the UI, you should restart DJ Companion.\n\n"
+            "To see new tracks in the UI, you should restart Cosine Companion.\n\n"
             "Restart now?"
         )
         

@@ -1,4 +1,4 @@
-"""Set Creator tab functionality for DJ Companion UI."""
+"""Set Creator tab functionality for Cosine Companion UI."""
 
 from typing import TYPE_CHECKING, Dict, List
 import tkinter as tk
