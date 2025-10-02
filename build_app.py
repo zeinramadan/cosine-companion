@@ -8,91 +8,64 @@ import subprocess
 from pathlib import Path
 
 def build_with_pyinstaller():
-    """Build the application using PyInstaller."""
+    """Build the application using PyInstaller with spec file."""
     
     system = platform.system()
     print(f"🔨 Building DJ Companion for {system}...")
     
-    # Base PyInstaller command
+    # Check if spec file exists
+    spec_file = Path("dj-companion.spec")
+    if not spec_file.exists():
+        print("❌ Error: dj-companion.spec file not found!")
+        print("   The spec file is required for building.")
+        sys.exit(1)
+    
+    # Build using spec file
     cmd = [
         "pyinstaller",
-        "--name=DJ Companion",
-        "--windowed",  # No console window
-        "--onefile",   # Single executable
         "--clean",     # Clean cache
         "--noconfirm", # Overwrite without asking
+        str(spec_file)
     ]
-    
-    # Add icon based on platform
-    if system == "Darwin":  # macOS
-        if Path("assets/icon.icns").exists():
-            cmd.extend(["--icon=assets/icon.icns"])
-    elif system == "Windows":
-        if Path("assets/icon.ico").exists():
-            cmd.extend(["--icon=assets/icon.ico"])
-    elif system == "Linux":
-        if Path("assets/icon.png").exists():
-            cmd.extend(["--icon=assets/icon.png"])
-    
-    # Add hidden imports for dynamic imports
-    hidden_imports = [
-        "core",
-        "core.loader",
-        "core.persistence",
-        "core.index_builder",
-        "core.duplicates",
-        "processing",
-        "processing.pipeline",
-        "processing.embeddings",
-        "processing.xml_parser",
-        "recommendations",
-        "recommendations.engine",
-        "recommendations.scoring",
-        "recommendations.set_generator",
-        "recommendations.models",
-        "recommendations.transitions",
-        "recommendations.search",
-        "ui",
-        "ui.app",
-        "ui.onboarding",
-        "ui.recommendations_tab",
-        "ui.set_creator_tab",
-        "ui.library_tab",
-        "ui.dialogs",
-        "config",
-        "config.paths",
-        "config.defaults",
-    ]
-    
-    for module in hidden_imports:
-        cmd.extend(["--hidden-import", module])
-    
-    # Add data files (models directory)
-    if Path("models").exists():
-        cmd.extend(["--add-data", f"models{os.pathsep}models"])
-    
-    # Entry point
-    cmd.append("src/dj_companion.py")
     
     # Run PyInstaller
     print(f"Running: {' '.join(cmd)}")
+    print(f"Using spec file: {spec_file}")
+    print()
+    
     result = subprocess.run(cmd)
     
     if result.returncode == 0:
-        print("\n✅ Build successful!")
-        print(f"📦 Application built in: dist/DJ Companion")
+        print("\n" + "=" * 60)
+        print("✅ Build successful!")
+        print("=" * 60)
         
         if system == "Darwin":
-            print("\n🍎 macOS: You can now run:")
-            print("   open 'dist/DJ Companion.app'")
+            app_path = Path("dist/DJ Companion.app")
+            if app_path.exists():
+                print("\n🍎 macOS Application Bundle Created:")
+                print(f"   {app_path}")
+                print("\nYou can now run:")
+                print("   open 'dist/DJ Companion.app'")
+                print("\nTo distribute:")
+                print("   Zip the .app bundle or create a DMG installer")
         elif system == "Windows":
-            print("\n🪟 Windows: You can now run:")
-            print("   .\\dist\\DJ Companion.exe")
+            exe_path = Path("dist/DJ Companion.exe")
+            if exe_path.exists():
+                print("\n🪟 Windows Executable Created:")
+                print(f"   {exe_path}")
+                print("\nYou can now run:")
+                print("   .\\dist\\\"DJ Companion.exe\"")
         elif system == "Linux":
-            print("\n🐧 Linux: You can now run:")
-            print("   ./dist/DJ Companion")
+            bin_path = Path("dist/DJ Companion")
+            if bin_path.exists():
+                print("\n🐧 Linux Executable Created:")
+                print(f"   {bin_path}")
+                print("\nYou can now run:")
+                print("   ./dist/\"DJ Companion\"")
     else:
         print("\n❌ Build failed!")
+        print("Check the error messages above for details.")
         sys.exit(1)
 
 def check_dependencies():
