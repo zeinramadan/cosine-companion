@@ -16,8 +16,12 @@ class SettingsWindow(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.title("Settings - DJ Companion")
-        self.geometry("600x500")
+        self.geometry("600x600")
         self.resizable(False, False)
+        
+        # Set window icon
+        from utils.icon import set_window_icon
+        set_window_icon(self)
         
         # Make it modal
         self.transient(parent)
@@ -26,8 +30,8 @@ class SettingsWindow(tk.Toplevel):
         # Center window
         self.update_idletasks()
         x = (self.winfo_screenwidth() // 2) - (300)
-        y = (self.winfo_screenheight() // 2) - (250)
-        self.geometry(f"600x500+{x}+{y}")
+        y = (self.winfo_screenheight() // 2) - (300)
+        self.geometry(f"600x600+{x}+{y}")
         
         self.create_ui()
         self.load_settings()
@@ -61,6 +65,12 @@ class SettingsWindow(tk.Toplevel):
         
         # Index Statistics Section
         self.create_stats_section(content)
+        
+        # Separator
+        ttk.Separator(content, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=20)
+        
+        # Deleted Tracks Section
+        self.create_deleted_tracks_section(content)
         
         # Separator
         ttk.Separator(content, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=20)
@@ -159,6 +169,57 @@ class SettingsWindow(tk.Toplevel):
         )
         self.size_label.pack(anchor=tk.W, pady=2)
     
+    def create_deleted_tracks_section(self, parent):
+        """Create deleted tracks management section."""
+        section = tk.Frame(parent)
+        section.pack(fill=tk.X, pady=5)
+        
+        tk.Label(
+            section,
+            text="Deleted Tracks",
+            font=("Helvetica", 13, "bold")
+        ).pack(anchor=tk.W, pady=(0, 10))
+        
+        # Deleted tracks info
+        self.deleted_tracks_label = tk.Label(
+            section,
+            text="Deleted Tracks: Loading...",
+            font=("Helvetica", 10),
+            anchor=tk.W
+        )
+        self.deleted_tracks_label.pack(anchor=tk.W, pady=2)
+        
+        # Description
+        tk.Label(
+            section,
+            text="Deleted tracks won't be re-added during re-indexing",
+            font=("Helvetica", 9),
+            fg="gray",
+            anchor=tk.W
+        ).pack(anchor=tk.W, pady=(0, 10))
+        
+        # Manage buttons
+        manage_frame = tk.Frame(section)
+        manage_frame.pack(fill=tk.X, pady=5)
+        
+        tk.Button(
+            manage_frame,
+            text="Manage Deleted Tracks...",
+            command=self.manage_deleted_tracks,
+            font=("Helvetica", 10),
+            padx=15,
+            pady=6
+        ).pack(side=tk.LEFT, padx=(0, 10))
+        
+        tk.Button(
+            manage_frame,
+            text="Clear All",
+            command=self.clear_all_deleted_tracks,
+            font=("Helvetica", 10),
+            padx=15,
+            pady=6
+        ).pack(side=tk.LEFT)
+    
     def create_actions_section(self, parent):
         """Create actions section."""
         section = tk.Frame(parent)
@@ -178,9 +239,7 @@ class SettingsWindow(tk.Toplevel):
             update_frame,
             text="🔄 Update Library (Incremental)",
             command=self.update_library,
-            font=("Helvetica", 10, "bold"),
-            bg="#4CAF50",
-            fg="white",
+            font=("Helvetica", 11, "bold"),
             padx=15,
             pady=8
         ).pack(side=tk.LEFT)
@@ -260,6 +319,12 @@ class SettingsWindow(tk.Toplevel):
             size_mb = total_size / (1024 * 1024)
             self.size_label.config(text=f"Index Size: {size_mb:.1f} MB")
             
+            # Load deleted tracks count
+            from core.deleted_tracks import load_deleted_tracks_with_info
+            deleted_tracks = load_deleted_tracks_with_info()
+            deleted_count = len(deleted_tracks)
+            self.deleted_tracks_label.config(text=f"Deleted Tracks: {deleted_count:,}")
+            
         except Exception as e:
             print(f"Error loading statistics: {e}")
     
@@ -293,6 +358,47 @@ class SettingsWindow(tk.Toplevel):
                 "XML Path Updated",
                 "XML file path has been updated. Click 'Update Library' to process any new tracks."
             )
+    
+    def manage_deleted_tracks(self):
+        """Open dialog to manage deleted tracks."""
+        from ui.dialogs import DeletedTracksDialog
+        
+        dialog = DeletedTracksDialog(self)
+        self.wait_window(dialog)
+        # Reload statistics in case tracks were removed
+        self.load_statistics()
+    
+    def clear_all_deleted_tracks(self):
+        """Clear all deleted tracks at once."""
+        from core.deleted_tracks import load_deleted_tracks_with_info, save_deleted_tracks_with_info
+        
+        deleted_tracks = load_deleted_tracks_with_info()
+        
+        if not deleted_tracks:
+            messagebox.showinfo(
+                "No Deleted Tracks",
+                "There are no deleted tracks to clear."
+            )
+            return
+        
+        # Confirm
+        result = messagebox.askyesno(
+            "Clear All Deleted Tracks",
+            f"This will clear ALL {len(deleted_tracks)} deleted track(s) from the list.\n\n"
+            "After clearing, running 'Update Library' will re-add these tracks if they're in your Rekordbox XML.\n\n"
+            "Continue?"
+        )
+        
+        if result:
+            # Clear the list
+            save_deleted_tracks_with_info({})
+            messagebox.showinfo(
+                "Deleted Tracks Cleared",
+                f"Cleared {len(deleted_tracks)} deleted track(s).\n\n"
+                "Run 'Update Library' to restore these tracks."
+            )
+            # Reload statistics to update display
+            self.load_statistics()
     
     def update_library(self):
         """Trigger incremental library update."""

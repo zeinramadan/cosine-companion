@@ -11,11 +11,12 @@ from config import DATA
 from core.loader import load_existing_data, find_new_tracks
 from core.persistence import merge_embeddings, save_index_data
 from core.duplicates import remove_simple_duplicates
+from core.deleted_tracks import filter_deleted_tracks
 from processing.embeddings import DiscogsEffnetEmbedder
 from processing.xml_parser import read_rekordbox_xml
 
 
-def index_library(rb_xml: str, force_full: bool = False, sample_size: int | None = None):
+def index_library(rb_xml: str, force_full: bool = False, sample_size: int | None = None, cancel_check=None):
     """
     Incremental indexing pipeline: parse XML, generate embeddings for new tracks, build index.
     
@@ -26,6 +27,7 @@ def index_library(rb_xml: str, force_full: bool = False, sample_size: int | None
         rb_xml: Path to Rekordbox XML export file
         force_full: If True, ignore existing data and reprocess all tracks
         sample_size: If provided, limit processing to this many new tracks (for testing)
+        cancel_check: Optional callable that returns True if cancellation is requested
     """
     mode = "Full Reindex" if force_full else "Incremental Indexing"
     print(f"🎵 DJ Companion - {mode}")
@@ -58,6 +60,10 @@ def index_library(rb_xml: str, force_full: bool = False, sample_size: int | None
     else:
         print("   No duplicates found")
     
+    # Filter out tracks that user has manually deleted
+    print("🔍 Checking for previously deleted tracks...")
+    current_meta = filter_deleted_tracks(current_meta)
+    
     # Find new tracks to process
     new_tracks = find_new_tracks(current_meta, existing_meta)
 
@@ -77,6 +83,12 @@ def index_library(rb_xml: str, force_full: bool = False, sample_size: int | None
     new_track_ids = []
     
     for i, (_, row) in enumerate(new_tracks.iterrows(), 1):
+        # Check for cancellation
+        if cancel_check and cancel_check():
+            print("⚠️ Cancellation detected, stopping...")
+            sys.stdout.flush()
+            raise KeyboardInterrupt("User cancelled indexing")
+        
         pl = str(row.get("path_local", ""))
         print(f"   [{i:3d}/{len(new_tracks)}] {row.get('artist','')} - {row.get('title','')}")
         sys.stdout.flush()  # Ensure message appears immediately
@@ -126,8 +138,40 @@ def index_library(rb_xml: str, force_full: bool = False, sample_size: int | None
         existing_emb, new_emb_df, new_track_ids, new_vectors_array
     )
     
+    # Merge metadata properly - keep existing metadata + add new metadata
+    # This ensures we don't lose metadata for tracks that might not be in current XML
+    if existing_meta is not None:
+        # Update existing metadata with current XML data (for tracks that are in the XML)
+        # Keep all existing tracks, update with new values where available
+        print("🔄 Merging metadata...")
+        
+        # Create a dict from current_meta for fast lookup
+        current_meta_dict = {row['track_id']: row for _, row in current_meta.iterrows()}
+        
+        # Build combined metadata by merging existing and new
+        combined_meta_rows = []
+        seen_ids = set()
+        
+        # First, add/update all tracks from current XML
+        for tid in combined_track_ids:
+            if tid in current_meta_dict:
+                combined_meta_rows.append(current_meta_dict[tid])
+                seen_ids.add(tid)
+        
+        # Then add any tracks from existing_meta that weren't in current XML
+        # (these are tracks that were previously indexed but removed from Rekordbox)
+        for _, row in existing_meta.iterrows():
+            tid = row['track_id']
+            if tid in combined_track_ids and tid not in seen_ids:
+                combined_meta_rows.append(row.to_dict())
+                seen_ids.add(tid)
+        
+        combined_meta = pd.DataFrame(combined_meta_rows)
+    else:
+        combined_meta = current_meta
+    
     # Save all data
-    save_index_data(current_meta, combined_emb, combined_vectors, combined_track_ids)
+    save_index_data(combined_meta, combined_emb, combined_vectors, combined_track_ids)
     
     print("=" * 50)
     print(f"✅ Indexing complete!")

@@ -214,9 +214,13 @@ class LibraryTabMixin:
         """Actually delete tracks from all data files."""
         from config import META_PQ, EMB_PQ, IDX_NPY, IDS_JSON
         from core.index_builder import FaissCosIndex
+        from core.deleted_tracks import add_deleted_tracks_with_metadata
         
         track_ids_to_delete = {track["track_id"] for track in tracks_to_delete}
         deleted_count = 0
+        
+        # Record these tracks as deleted with their metadata so we can display them later
+        add_deleted_tracks_with_metadata(tracks_to_delete)
         
         # Update metadata
         original_meta_count = len(self.meta_ix)

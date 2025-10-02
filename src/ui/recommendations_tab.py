@@ -58,9 +58,10 @@ class RecommendationsTabMixin:
         sort_right.pack(side="right")
         tk.Label(sort_right, text="Top:", font=("Helvetica", 10, "bold")).pack(side="left", padx=(0, 6))
         self.topn_var = tk.StringVar(value="50")
-        topn_box = ttk.Combobox(sort_right, textvariable=self.topn_var, values=["10", "20", "30", "50", "100"], width=5, state="readonly")
+        topn_box = ttk.Combobox(sort_right, textvariable=self.topn_var, values=["10", "20", "30", "50", "100", "200"], width=5, state="readonly")
         topn_box.pack(side="left")
-        topn_box.bind("<<ComboboxSelected>>", lambda e: self.refresh_suggestions())
+        # Only update display, don't regenerate recommendations
+        topn_box.bind("<<ComboboxSelected>>", lambda e: self.update_listbox())
 
         self.listbox = tk.Listbox(rec_frame, height=20)
         self.listbox.pack(fill="both", expand=True)
@@ -224,12 +225,16 @@ class RecommendationsTabMixin:
             self.update_listbox()
             return
         
-        # Get fresh recommendations
-        try:
-            topn = int(getattr(self, 'topn_var', tk.StringVar(value="50")).get())
-        except Exception:
-            topn = 50
-        self.current_recommendations = recommend_for(self.current_id, self.meta_ix, self.emb_ix, self.idx, final_top=topn)
+        # Always compute more recommendations than we might display
+        # This ensures consistency - top 10 stays the same when showing top 20, etc.
+        self.current_recommendations = recommend_for(
+            self.current_id, 
+            self.meta_ix, 
+            self.emb_ix, 
+            self.idx, 
+            topk=500,  # Get more FAISS candidates for better results
+            final_top=200  # Compute up to 200 final recommendations
+        )
         self.update_listbox()
 
     def sort_suggestions(self: "App", sort_by: str):
@@ -264,7 +269,16 @@ class RecommendationsTabMixin:
         """Update the listbox with current recommendations."""
         self.listbox.delete(0, tk.END)
         
-        for r in self.current_recommendations:
+        # Get the number of tracks to display from the Top-N selector
+        try:
+            topn = int(self.topn_var.get())
+        except (ValueError, AttributeError):
+            topn = 50  # Default fallback
+        
+        # Only display up to topn tracks from the computed recommendations
+        recommendations_to_show = self.current_recommendations[:topn]
+        
+        for r in recommendations_to_show:
             cosine = float(r.get('cosine', 0))
             score = float(r.get('score', 0))
             cos_pct = cosine * 100.0
@@ -272,10 +286,13 @@ class RecommendationsTabMixin:
             line = f"{r['artist']} – {r['title']}   [Key {r['key'] or '?'}  BPM {r['bpm'] or '?'}  Cos {cos_pct:.1f}%  Score {score_pct:.1f}%]"
             self.listbox.insert(tk.END, line)
         
-        suggestion_count = self.listbox.size()
-        if suggestion_count > 0:
+        displayed_count = self.listbox.size()
+        total_computed = len(self.current_recommendations)
+        
+        if displayed_count > 0:
             history_info = f" ({len(self.history)} in history)" if self.history else ""
-            self.status.config(text=f"{suggestion_count} suggestions{history_info} - 💡 Tip: Double-click any suggestion to set it as current track", fg="gray")
+            count_info = f"Showing {displayed_count} of {total_computed} recommendations" if total_computed > displayed_count else f"{displayed_count} suggestions"
+            self.status.config(text=f"{count_info}{history_info} - 💡 Tip: Double-click any suggestion to set it as current track", fg="gray")
         else:
             self.status.config(text="No suggestions available", fg="gray")
 

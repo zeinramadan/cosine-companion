@@ -21,3 +21,4 @@ META_PQ = DATA / "meta.parquet"
 EMB_PQ = DATA / "embeddings.parquet"
 IDX_NPY = DATA / "index.npy"  # stores vectors
 IDS_JSON = DATA / "ids.json"  # track_id order
+DELETED_TRACKS_JSON = DATA / "deleted_tracks.json"  # tracks manually deleted by user

@@ -14,10 +14,11 @@ def run_ui():
     if needs_onboarding():
         # Show onboarding for first-time users
         def on_onboarding_complete():
-            root.deiconify()  # Show main window
+            # Destroy the onboarding window and root to clean up
+            root.quit()  # Exit the mainloop
+            root.destroy()  # Destroy the root window
+            # Create and run the main app
             app = App()
-            # Transfer control to the new app window
-            root.withdraw()
             app.mainloop()
         
         # Show onboarding window

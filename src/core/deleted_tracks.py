@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+"""Management of manually deleted tracks to prevent re-indexing."""
+
+import json
+from typing import Set, Dict, List
+from pathlib import Path
+
+from config import DELETED_TRACKS_JSON
+
+
+def load_deleted_tracks() -> Set[str]:
+    """
+    Load the set of track IDs that have been manually deleted.
+    
+    Returns:
+        Set of deleted track IDs
+    """
+    data = load_deleted_tracks_with_info()
+    return set(data.keys())
+
+
+def load_deleted_tracks_with_info() -> Dict[str, Dict[str, str]]:
+    """
+    Load deleted tracks with their metadata.
+    
+    Returns:
+        Dict mapping track_id to {artist, title}
+    """
+    if not DELETED_TRACKS_JSON.exists():
+        return {}
+    
+    try:
+        with open(DELETED_TRACKS_JSON, 'r') as f:
+            data = json.load(f)
+            
+            # Handle old format (list of track IDs)
+            if isinstance(data, list):
+                # Convert old format to new format
+                return {track_id: {"artist": "Unknown", "title": track_id} for track_id in data}
+            
+            # New format (dict with metadata)
+            return data
+    except Exception as e:
+        print(f"Warning: Could not load deleted tracks list ({e})")
+        return {}
+
+
+def save_deleted_tracks_with_info(deleted_tracks: Dict[str, Dict[str, str]]) -> None:
+    """
+    Save deleted tracks with their metadata to disk.
+    
+    Args:
+        deleted_tracks: Dict mapping track_id to {artist, title}
+    """
+    try:
+        with open(DELETED_TRACKS_JSON, 'w') as f:
+            json.dump(deleted_tracks, f, indent=2)
+    except Exception as e:
+        print(f"Warning: Could not save deleted tracks list ({e})")
+
+
+def save_deleted_tracks(deleted_ids: Set[str]) -> None:
+    """
+    Save the set of deleted track IDs to disk (without metadata).
+    Used when clearing tracks.
+    
+    Args:
+        deleted_ids: Set of track IDs that have been deleted
+    """
+    # Convert to dict format
+    deleted_tracks = {track_id: {"artist": "Unknown", "title": track_id} for track_id in deleted_ids}
+    save_deleted_tracks_with_info(deleted_tracks)
+
+
+def add_deleted_tracks_with_metadata(tracks_info: List[Dict[str, str]]) -> None:
+    """
+    Add tracks to the deleted list with their metadata.
+    
+    Args:
+        tracks_info: List of dicts with keys: track_id, artist, title
+    """
+    existing_deleted = load_deleted_tracks_with_info()
+    
+    for track in tracks_info:
+        track_id = track["track_id"]
+        existing_deleted[track_id] = {
+            "artist": track.get("artist", "Unknown"),
+            "title": track.get("title", "Unknown")
+        }
+    
+    save_deleted_tracks_with_info(existing_deleted)
+
+
+def add_deleted_tracks(track_ids: Set[str]) -> None:
+    """
+    Add track IDs to the deleted tracks list (without metadata).
+    
+    Args:
+        track_ids: Set of track IDs to mark as deleted
+    """
+    existing_deleted = load_deleted_tracks_with_info()
+    
+    for track_id in track_ids:
+        if track_id not in existing_deleted:
+            existing_deleted[track_id] = {"artist": "Unknown", "title": track_id}
+    
+    save_deleted_tracks_with_info(existing_deleted)
+
+
+def remove_from_deleted_tracks(track_ids: Set[str]) -> None:
+    """
+    Remove track IDs from the deleted tracks list (if user wants to re-add them).
+    
+    Args:
+        track_ids: Set of track IDs to remove from deleted list
+    """
+    existing_deleted = load_deleted_tracks_with_info()
+    
+    for track_id in track_ids:
+        existing_deleted.pop(track_id, None)
+    
+    save_deleted_tracks_with_info(existing_deleted)
+
+
+def filter_deleted_tracks(df, track_id_column: str = 'track_id'):
+    """
+    Filter out tracks that have been manually deleted by the user.
+    
+    Args:
+        df: DataFrame with track data
+        track_id_column: Name of the column containing track IDs
+        
+    Returns:
+        Filtered DataFrame without deleted tracks
+    """
+    deleted_ids = load_deleted_tracks()
+    
+    if not deleted_ids:
+        return df
+    
+    original_count = len(df)
+    filtered_df = df[~df[track_id_column].isin(deleted_ids)]
+    filtered_count = original_count - len(filtered_df)
+    
+    if filtered_count > 0:
+        print(f"   Filtered out {filtered_count} previously deleted tracks")
+    
+    return filtered_df
+

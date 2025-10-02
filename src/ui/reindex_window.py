@@ -17,11 +17,16 @@ class ReindexWindow(tk.Toplevel):
         self.indexing_complete = False
         self.parent_app = parent
         self.message_queue = queue.Queue()
+        self.cancel_requested = False  # Flag for cancellation
         
         title = "Full Re-index" if force_full else "Update Library"
         self.title(f"{title} - DJ Companion")
         self.geometry("600x400")
         self.resizable(False, False)
+        
+        # Set window icon
+        from utils.icon import set_window_icon
+        set_window_icon(self)
         
         # Make it modal
         self.transient(parent)
@@ -96,6 +101,17 @@ class ReindexWindow(tk.Toplevel):
         # Button frame (initially empty, filled after completion)
         self.button_frame = tk.Frame(self)
         self.button_frame.pack(pady=10)
+        
+        # Add Cancel button during processing
+        self.cancel_btn = tk.Button(
+            self.button_frame,
+            text="Cancel",
+            command=self.cancel_indexing,
+            font=("Helvetica", 11, "bold"),
+            padx=30,
+            pady=8
+        )
+        self.cancel_btn.pack()
     
     def log_message(self, message):
         """Add a message to the log."""
@@ -113,6 +129,12 @@ class ReindexWindow(tk.Toplevel):
         
         # Check for completion
         self.check_indexing_status()
+    
+    def cancel_indexing(self):
+        """Cancel the indexing process."""
+        if messagebox.askyesno("Cancel Indexing", "Are you sure you want to cancel? Progress will be lost."):
+            self.cancel_requested = True
+            self.message_queue.put(('log', "\n⚠️ Cancellation requested..."))
     
     def run_indexing(self):
         """Run the indexing process (in background thread)."""
@@ -143,15 +165,29 @@ class ReindexWindow(tk.Toplevel):
         sys.stdout = QueueWriter(self.message_queue)
         
         try:
-            # Run indexing
-            index_library(self.xml_path, force_full=self.force_full, sample_size=None)
-            self.message_queue.put(('complete', True))
-            self.message_queue.put(('log', "\n✅ Indexing completed successfully!"))
+            # Run indexing with cancellation callback
+            index_library(
+                self.xml_path, 
+                force_full=self.force_full, 
+                sample_size=None,
+                cancel_check=lambda: self.cancel_requested
+            )
+            
+            if self.cancel_requested:
+                self.message_queue.put(('cancelled', True))
+                self.message_queue.put(('log', "\n⚠️ Indexing cancelled by user"))
+            else:
+                self.message_queue.put(('complete', True))
+                self.message_queue.put(('log', "\n✅ Indexing completed successfully!"))
         except Exception as e:
-            self.message_queue.put(('complete', False))
-            self.message_queue.put(('log', f"\n❌ Error during indexing: {str(e)}"))
-            import traceback
-            self.message_queue.put(('log', traceback.format_exc()))
+            if self.cancel_requested:
+                self.message_queue.put(('cancelled', True))
+                self.message_queue.put(('log', "\n⚠️ Indexing cancelled"))
+            else:
+                self.message_queue.put(('complete', False))
+                self.message_queue.put(('log', f"\n❌ Error during indexing: {str(e)}"))
+                import traceback
+                self.message_queue.put(('log', traceback.format_exc()))
         finally:
             # Restore stdout
             sys.stdout.flush()
@@ -174,6 +210,9 @@ class ReindexWindow(tk.Toplevel):
                         self.log_text.see(tk.END)
                 elif msg_type == 'complete':
                     self.indexing_complete = msg_data
+                elif msg_type == 'cancelled':
+                    self.indexing_complete = False
+                    self.cancel_requested = True
                 messages_processed += 1
         except queue.Empty:
             pass  # No more messages
@@ -192,12 +231,21 @@ class ReindexWindow(tk.Toplevel):
                             self.log_text.see(tk.END)
                     elif msg_type == 'complete':
                         self.indexing_complete = msg_data
+                    elif msg_type == 'cancelled':
+                        self.indexing_complete = False
+                        self.cancel_requested = True
             except queue.Empty:
                 pass
             
             self.progress_bar.stop()
             
-            if self.indexing_complete:
+            # Remove cancel button
+            if hasattr(self, 'cancel_btn'):
+                self.cancel_btn.destroy()
+            
+            if self.cancel_requested:
+                self.show_cancelled()
+            elif self.indexing_complete:
                 self.show_completion()
             else:
                 self.show_error()
@@ -214,11 +262,26 @@ class ReindexWindow(tk.Toplevel):
             self.button_frame,
             text="Done",
             command=self.finish,
-            font=("Helvetica", 11, "bold"),
-            bg="#4CAF50",
-            fg="white",
+            font=("Helvetica", 12, "bold"),
             padx=30,
-            pady=8
+            pady=10
+        ).pack()
+    
+    def show_cancelled(self):
+        """Show cancelled state."""
+        self.status_label.config(
+            text="⚠️ Indexing cancelled",
+            font=("Helvetica", 12, "bold"),
+            fg="orange"
+        )
+        
+        tk.Button(
+            self.button_frame,
+            text="Close",
+            command=self.destroy,
+            font=("Helvetica", 12),
+            padx=30,
+            pady=10
         ).pack()
     
     def show_error(self):
@@ -233,9 +296,9 @@ class ReindexWindow(tk.Toplevel):
             self.button_frame,
             text="Close",
             command=self.destroy,
-            font=("Helvetica", 11),
+            font=("Helvetica", 12),
             padx=30,
-            pady=8
+            pady=10
         ).pack()
     
     def finish(self):

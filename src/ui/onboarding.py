@@ -20,6 +20,10 @@ class OnboardingWindow(tk.Toplevel):
         self.geometry("600x400")
         self.resizable(False, False)
         
+        # Set window icon
+        from utils.icon import set_window_icon
+        set_window_icon(self)
+        
         # Make it modal
         self.transient(parent)
         self.grab_set()
@@ -609,6 +613,7 @@ You only need to do this once. After that, you can add new tracks incrementally.
         """Quit the application."""
         if messagebox.askokcancel("Exit", "Are you sure you want to exit?"):
             self.master.quit()
+            self.master.destroy()
 
 
 def needs_onboarding():

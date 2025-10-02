@@ -120,3 +120,172 @@ class AddAnchorDialog(tk.Toplevel):
         selected_result = self.search_results[sel[0]]
         self.result = (position, selected_result["track_id"])
         self.destroy()
+
+
+class DeletedTracksDialog(tk.Toplevel):
+    """Dialog for managing deleted tracks."""
+    
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("Manage Deleted Tracks")
+        self.geometry("700x500")
+        self.resizable(True, True)
+        self.transient(parent)
+        self.grab_set()
+        
+        # Set window icon
+        from utils.icon import set_window_icon
+        set_window_icon(self)
+        
+        # Load deleted tracks and metadata
+        self.load_data()
+        
+        # Create UI
+        self.create_ui()
+        
+        # Center window
+        self.update_idletasks()
+        x = (self.winfo_screenwidth() // 2) - (350)
+        y = (self.winfo_screenheight() // 2) - (250)
+        self.geometry(f"700x500+{x}+{y}")
+        
+        # Force window to show on macOS
+        self.deiconify()
+        self.lift()
+        self.focus_force()
+    
+    def load_data(self):
+        """Load deleted tracks with their stored metadata."""
+        from core.deleted_tracks import load_deleted_tracks_with_info
+        
+        # Load deleted tracks with metadata already stored
+        self.track_info = load_deleted_tracks_with_info()
+        self.deleted_track_ids = set(self.track_info.keys())
+    
+    def create_ui(self):
+        """Create the dialog UI."""
+        # Header
+        header = tk.Label(
+            self,
+            text=f"Deleted Tracks ({len(self.deleted_track_ids)})",
+            font=("Helvetica", 14, "bold"),
+            pady=10
+        )
+        header.pack()
+        
+        # Info label
+        tk.Label(
+            self,
+            text="Select tracks to restore (they'll be re-added during next library update)",
+            font=("Helvetica", 10),
+            fg="gray"
+        ).pack(pady=(0, 10))
+        
+        # Listbox frame with scrollbar
+        list_frame = tk.Frame(self)
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        
+        scrollbar = tk.Scrollbar(list_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.listbox = tk.Listbox(
+            list_frame,
+            selectmode=tk.EXTENDED,  # Allow multi-select
+            yscrollcommand=scrollbar.set,
+            font=("Helvetica", 10)
+        )
+        self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=self.listbox.yview)
+        
+        # Populate listbox
+        self.track_id_list = []  # Keep track of order
+        for track_id in sorted(self.deleted_track_ids):
+            info = self.track_info[track_id]
+            display = f"{info['artist']} – {info['title']}"
+            self.listbox.insert(tk.END, display)
+            self.track_id_list.append(track_id)
+        
+        # Selection info
+        self.selection_label = tk.Label(
+            self,
+            text="Select tracks using Ctrl+Click or Shift+Click",
+            font=("Helvetica", 9),
+            fg="gray"
+        )
+        self.selection_label.pack(pady=(0, 10))
+        
+        # Buttons
+        button_frame = tk.Frame(self)
+        button_frame.pack(pady=10)
+        
+        tk.Button(
+            button_frame,
+            text="Remove Selected from Deleted List",
+            command=self.remove_selected,
+            font=("Helvetica", 11, "bold"),
+            padx=20,
+            pady=8
+        ).pack(side=tk.LEFT, padx=5)
+        
+        tk.Button(
+            button_frame,
+            text="Close",
+            command=self.destroy,
+            font=("Helvetica", 11),
+            padx=20,
+            pady=8
+        ).pack(side=tk.LEFT, padx=5)
+    
+    def remove_selected(self):
+        """Remove selected tracks from the deleted list."""
+        from core.deleted_tracks import remove_from_deleted_tracks
+        
+        selected_indices = self.listbox.curselection()
+        
+        if not selected_indices:
+            messagebox.showwarning(
+                "No Selection",
+                "Please select one or more tracks to remove from the deleted list."
+            )
+            return
+        
+        # Get selected track IDs
+        selected_track_ids = {self.track_id_list[i] for i in selected_indices}
+        
+        # Confirm
+        result = messagebox.askyesno(
+            "Remove from Deleted List",
+            f"Remove {len(selected_track_ids)} track(s) from the deleted list?\n\n"
+            "These tracks will be re-added during the next library update."
+        )
+        
+        if result:
+            # Remove selected tracks
+            remove_from_deleted_tracks(selected_track_ids)
+            
+            messagebox.showinfo(
+                "Tracks Removed",
+                f"Removed {len(selected_track_ids)} track(s) from deleted list.\n\n"
+                "Run 'Update Library' to restore these tracks."
+            )
+            
+            # Reload and refresh display
+            self.load_data()
+            self.refresh_list()
+    
+    def refresh_list(self):
+        """Refresh the listbox display."""
+        self.listbox.delete(0, tk.END)
+        self.track_id_list = []
+        
+        for track_id in sorted(self.deleted_track_ids):
+            info = self.track_info[track_id]
+            display = f"{info['artist']} – {info['title']}"
+            self.listbox.insert(tk.END, display)
+            self.track_id_list.append(track_id)
+        
+        # Update header
+        for widget in self.winfo_children():
+            if isinstance(widget, tk.Label) and "Deleted Tracks" in widget.cget("text"):
+                widget.config(text=f"Deleted Tracks ({len(self.deleted_track_ids)})")
+                break

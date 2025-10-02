@@ -20,6 +20,10 @@ class App(RecommendationsTabMixin, SetCreatorTabMixin, LibraryTabMixin, tk.Tk):
         self.geometry("900x720")
         self.minsize(820, 640)
         self.configure(padx=12, pady=12)
+        
+        # Set window icon
+        from utils.icon import set_window_icon
+        set_window_icon(self)
 
         self.meta, self.meta_ix, self.emb_ix, self.idx, self.V, self.ids = load_all()
         self.current_id: Optional[str] = None
