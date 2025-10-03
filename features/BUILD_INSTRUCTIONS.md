@@ -21,7 +21,7 @@ Before building, verify these files exist:
 - ✅ `assets/coco_logo_small.png` - Small logo for window icons
 - ✅ `assets/coco_logo.icns` - macOS app icon
 - ✅ `models/discogs_*_embeddings-effnet-bs64-1.pb` - Embedding models
-- ✅ `dj-companion.spec` - PyInstaller configuration
+- ✅ `cosine-companion.spec` - PyInstaller configuration
 
 ### 3. Verify Icon Files
 
@@ -67,7 +67,7 @@ This script will:
 ### Option 2: Using PyInstaller Directly
 
 ```bash
-pyinstaller --clean --noconfirm dj-companion.spec
+pyinstaller --clean --noconfirm cosine-companion.spec
 ```
 
 ## Build Output
@@ -166,7 +166,7 @@ xcrun stapler staple "DJ-Companion-Installer.dmg"
 
 ### Build Fails with Missing Modules
 
-If PyInstaller can't find certain modules, add them to `hiddenimports` in `dj-companion.spec`:
+If PyInstaller can't find certain modules, add them to `hiddenimports` in `cosine-companion.spec`:
 
 ```python
 hiddenimports=[
@@ -206,7 +206,7 @@ To reduce size:
 
 Before building a release:
 
-1. Update version in `dj-companion.spec`:
+1. Update version in `cosine-companion.spec`:
    ```python
    'CFBundleVersion': "1.0.1",
    'CFBundleShortVersionString': "1.0.1",

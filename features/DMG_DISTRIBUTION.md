@@ -213,7 +213,7 @@ This is normal for a self-contained macOS application with machine learning capa
 
 When you release an update:
 
-1. Update version number in `dj-companion.spec`:
+1. Update version number in `cosine-companion.spec`:
    ```python
    'CFBundleVersion': "1.0.1",
    'CFBundleShortVersionString': "1.0.1",

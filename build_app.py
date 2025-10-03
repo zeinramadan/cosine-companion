@@ -14,9 +14,9 @@ def build_with_pyinstaller():
     print(f"🔨 Building Cosine Companion for {system}...")
     
     # Check if spec file exists
-    spec_file = Path("dj-companion.spec")
+    spec_file = Path("cosine-companion.spec")
     if not spec_file.exists():
-        print("❌ Error: dj-companion.spec file not found!")
+        print("❌ Error: cosine-companion.spec file not found!")
         print("   The spec file is required for building.")
         sys.exit(1)
     
