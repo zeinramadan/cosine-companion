@@ -13,7 +13,7 @@ src_dir = project_root / "src"
 
 # Collect all package data
 a = Analysis(
-    [str(src_dir / 'dj_companion.py')],
+    [str(src_dir / 'cosine_companion.py')],
     pathex=[str(src_dir)],
     binaries=[],
     datas=[

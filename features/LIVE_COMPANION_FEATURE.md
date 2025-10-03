@@ -147,7 +147,7 @@ current = "db"   # db | prolink | file | off
 interval = 1.5
 ```
 
-Then wire `--auto current=db` in `dj_companion.py` and pass to `ui.run_ui(auto_provider=...)`.
+Then wire `--auto current=db` in `cosine_companion.py` and pass to `ui.run_ui(auto_provider=...)`.
 
 ---
 

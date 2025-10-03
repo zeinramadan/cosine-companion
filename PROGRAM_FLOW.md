@@ -8,7 +8,7 @@ This document provides a comprehensive overview of how the Cosine Companion syst
 ┌─────────────────────────────────────────────────────────────────┐
 │                        COSINE COMPANION SYSTEM                      │
 ├─────────────────────────────────────────────────────────────────┤
-│  CLI Entry Point: dj_companion.py                               │
+│  CLI Entry Point: cosine_companion.py                               │
 │  ├── index command → processing.pipeline                        │
 │  └── ui command → ui.App                                        │
 └─────────────────────────────────────────────────────────────────┘
@@ -46,7 +46,7 @@ This document provides a comprehensive overview of how the Cosine Companion syst
 
 ## 🚀 Program Entry Points
 
-### Command Line Interface (dj_companion.py)
+### Command Line Interface (cosine_companion.py)
 
 ```python
 # Entry point structure
@@ -55,20 +55,20 @@ if __name__ == "__main__":
 ```
 
 **Available Commands:**
-1. `python src/dj_companion.py index <xml_file> [--force] [--sample N]`
-2. `python src/dj_companion.py ui`
-3. `python src/dj_companion.py clean_duplicates <xml_file>`
+1. `python src/cosine_companion.py index <xml_file> [--force] [--sample N]`
+2. `python src/cosine_companion.py ui`
+3. `python src/cosine_companion.py clean_duplicates <xml_file>`
 
 ---
 
 ## 📊 INDEXING FLOW (Detailed)
 
-When you run: `python dj_companion.py index rekordbox_export.xml`
+When you run: `python cosine_companion.py index rekordbox_export.xml`
 
 ### Phase 1: CLI Command Parsing
 
 ```
-dj_companion.py:index()
+cosine_companion.py:index()
 │
 ├─ Argument: xml (Rekordbox XML file path)
 ├─ Option: --force (boolean, default False)
@@ -221,12 +221,12 @@ data/
 
 ## 🎵 UI/APPLICATION FLOW (Detailed)
 
-When you run: `python dj_companion.py ui`
+When you run: `python cosine_companion.py ui`
 
 ### Phase 1: Application Startup
 
 ```
-dj_companion.py:ui()
+cosine_companion.py:ui()
 │
 └─ Calls: ui.run_ui()
    │
@@ -568,7 +568,7 @@ def recommend_for(track_id, meta_ix, emb_ix, idx, topk=200, final_top=15):
 
 | Package | Module | Primary Role | Key Functions | Dependencies |
 |---------|--------|--------------|---------------|--------------|
-| **root** | **dj_companion.py** | CLI Entry Point | `index()`, `ui()`, `clean_duplicates()` | processing, ui, core |
+| **root** | **cosine_companion.py** | CLI Entry Point | `index()`, `ui()`, `clean_duplicates()` | processing, ui, core |
 | **config/** | **paths.py** | File Path Configuration | Path constants | pathlib |
 | **config/** | **defaults.py** | Default Parameters | Constants | None |
 | **core/** | **loader.py** | Data Loading | `load_all()`, `load_existing_data()`, `find_new_tracks()` | pandas, config |

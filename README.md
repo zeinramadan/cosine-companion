@@ -7,8 +7,8 @@ A tool for finding similar tracks based on audio content, key compatibility, and
 1. **Install dependencies** (see [Installation](#installation))
 2. **Download the required model** (see [Model Setup](#model-setup))
 3. **Export your library from Rekordbox** as XML
-4. **Index your library:** `python src/dj_companion.py index /path/to/rekordbox_export.xml`
-5. **Launch the UI:** `python src/dj_companion.py ui`
+4. **Index your library:** `python src/cosine_companion.py index /path/to/rekordbox_export.xml`
+5. **Launch the UI:** `python src/cosine_companion.py ui`
 
 ## Installation
 
@@ -69,7 +69,7 @@ See [models/README.md](models/README.md) for detailed instructions and troublesh
 ```
 dj-cosine/
 ├── src/                       # Source code
-│   ├── dj_companion.py        # Main CLI entry point
+│   ├── cosine_companion.py        # Main CLI entry point
 │   │
 │   ├── config/                # Configuration management
 │   │   ├── paths.py           # File paths
@@ -127,34 +127,34 @@ Each package contains focused modules (90-270 lines each) for better maintainabi
 
 **First time (full index):**
 ```bash
-python src/dj_companion.py index /path/to/rekordbox_export.xml
+python src/cosine_companion.py index /path/to/rekordbox_export.xml
 ```
 
 **Update with new tracks (incremental):**
 ```bash
-python src/dj_companion.py index /path/to/rekordbox_export.xml
+python src/cosine_companion.py index /path/to/rekordbox_export.xml
 ```
 
 **Force full reindex:**
 ```bash
-python src/dj_companion.py index /path/to/rekordbox_export.xml --force
+python src/cosine_companion.py index /path/to/rekordbox_export.xml --force
 ```
 
 **Debug with sample size:**
 ```bash
-python src/dj_companion.py index /path/to/rekordbox_export.xml --sample 50
+python src/cosine_companion.py index /path/to/rekordbox_export.xml --sample 50
 ```
 
 ### Check for Duplicates (Optional)
 ```bash
-python src/dj_companion.py clean-duplicates /path/to/rekordbox_export.xml
+python src/cosine_companion.py clean-duplicates /path/to/rekordbox_export.xml
 ```
 
 This analyzes your collection for duplicate tracks without modifying any files. Duplicates are automatically removed during indexing.
 
 ### Launch the UI
 ```bash
-python src/dj_companion.py ui
+python src/cosine_companion.py ui
 ```
 
 The UI features three tabs:

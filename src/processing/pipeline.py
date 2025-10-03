@@ -179,4 +179,4 @@ def index_library(rb_xml: str, force_full: bool = False, sample_size: int | None
     print(f"   • New tracks added: {len(new_track_ids)}")
     print(f"   • Data saved to: {DATA}/")
     print()
-    print("🚀 Ready to use! Run 'python dj_companion.py ui' to start the application.")
+    print("🚀 Ready to use! Run 'python cosine_companion.py ui' to start the application.")

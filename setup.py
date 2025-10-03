@@ -8,11 +8,11 @@ from pathlib import Path
 readme = Path("README.md").read_text(encoding="utf-8")
 
 setup(
-    name="dj-companion",
+    name="cosine-companion",
     version="1.0.0",
     author="Zein Ramadan",
     author_email="zeinbassemramadan@gmail.com",
-    description="AI-powered DJ companion for finding similar tracks and creating seamless sets",
+    description="AI-powered music companion for DJs - find similar tracks and create seamless sets",
     long_description=readme,
     long_description_content_type="text/markdown",
     url="https://github.com/zeinramadan/cosine-companion",
@@ -38,10 +38,10 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            "dj-companion=dj_companion:cli",
+            "cosine-companion=cosine_companion:cli",
         ],
         "gui_scripts": [
-            "dj-companion-ui=dj_companion:ui",
+            "cosine-companion-ui=cosine_companion:ui",
         ],
     },
     classifiers=[

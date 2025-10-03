@@ -88,7 +88,7 @@ def main():
     print()
     
     # Check if running from project root
-    if not Path("src/dj_companion.py").exists():
+    if not Path("src/cosine_companion.py").exists():
         print("❌ Error: Must run this script from the project root directory")
         sys.exit(1)
     
