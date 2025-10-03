@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Icon utility for DJ Companion application."""
+"""Icon utility for Cosine Companion application."""
 
 import sys
 import tkinter as tk

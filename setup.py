@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Setup script for DJ Companion."""
+"""Setup script for Cosine Companion."""
 
 from setuptools import setup, find_packages
 from pathlib import Path
@@ -10,8 +10,8 @@ readme = Path("README.md").read_text(encoding="utf-8")
 setup(
     name="dj-companion",
     version="1.0.0",
-    author="Your Name",
-    author_email="your.email@example.com",
+    author="Zein Ramadan",
+    author_email="zeinbassemramadan@gmail.com",
     description="AI-powered DJ companion for finding similar tracks and creating seamless sets",
     long_description=readme,
     long_description_content_type="text/markdown",

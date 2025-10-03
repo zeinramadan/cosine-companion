@@ -1,6 +1,6 @@
 # App Icons
 
-This directory contains the application icons for DJ Companion.
+This directory contains the application icons for Cosine Companion.
 
 ## Required Files
 

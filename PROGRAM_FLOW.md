@@ -1,12 +1,12 @@
-# DJ Companion - Complete Program Flow Documentation
+# Cosine Companion - Complete Program Flow Documentation
 
-This document provides a comprehensive overview of how the DJ Companion system works, including exact execution flow, component interactions, and data flow diagrams.
+This document provides a comprehensive overview of how the Cosine Companion system works, including exact execution flow, component interactions, and data flow diagrams.
 
 ## 🏗️ System Architecture Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        DJ COMPANION SYSTEM                      │
+│                        COSINE COMPANION SYSTEM                      │
 ├─────────────────────────────────────────────────────────────────┤
 │  CLI Entry Point: dj_companion.py                               │
 │  ├── index command → processing.pipeline                        │

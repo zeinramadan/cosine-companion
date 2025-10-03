@@ -30,7 +30,7 @@ def index_library(rb_xml: str, force_full: bool = False, sample_size: int | None
         cancel_check: Optional callable that returns True if cancellation is requested
     """
     mode = "Full Reindex" if force_full else "Incremental Indexing"
-    print(f"🎵 DJ Companion - {mode}")
+    print(f"🎵 Cosine Companion - {mode}")
     print("=" * 50)
     
     # Load existing data (unless forcing full reindex)

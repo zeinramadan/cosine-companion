@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DJ Companion - Main application entry point.
+Cosine Companion - Main application entry point.
 
 A tool for finding similar tracks based on audio content, key compatibility,
 and BPM matching. Uses Essentia's Discogs-EffNet embeddings and FAISS for
@@ -45,7 +45,7 @@ def clean_duplicates(
     from core.duplicates import remove_simple_duplicates
     from processing.xml_parser import read_rekordbox_xml
     
-    print("🧹 DJ Companion - Duplicate Analyzer")
+    print("🧹 Cosine Companion - Duplicate Analyzer")
     print("=" * 50)
     
     # Read XML

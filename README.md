@@ -1,4 +1,4 @@
-# DJ Cosine Companion
+# Cosine Companion
 
 A tool for finding similar tracks based on audio content, key compatibility, and BPM matching. Uses Essentia's Discogs-EffNet embeddings and FAISS for efficient similarity search.
 
@@ -211,7 +211,7 @@ The application will be created in the `dist/` directory. See [PACKAGING.md](PAC
 
 When users launch the app for the first time:
 
-1. **Welcome Screen**: Explains what DJ Companion does
+1. **Welcome Screen**: Explains what Cosine Companion does
 2. **XML File Selection**: User chooses their Rekordbox XML export
 3. **Indexing Progress**: Shows real-time progress as library is indexed
 4. **Completion**: Automatically launches the main application

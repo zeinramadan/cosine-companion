@@ -1,6 +1,6 @@
 # Auto Current Track – Implementation Plan
 
-This document lays out clean, incremental steps to add **automatic current track detection** to the DJ Companion app. Start with **Option A (SQLite polling)** on laptop setups; later you can swap or extend to Pro DJ Link (CDJs/XDJ) or file-based history watchers.
+This document lays out clean, incremental steps to add **automatic current track detection** to the Cosine Companion app. Start with **Option A (SQLite polling)** on laptop setups; later you can swap or extend to Pro DJ Link (CDJs/XDJ) or file-based history watchers.
 
 ---
 
