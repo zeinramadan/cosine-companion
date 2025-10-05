@@ -8,9 +8,18 @@ efficient similarity search.
 """
 
 import os
+import sys
 # Avoid OpenMP duplicate runtime crash on macOS when multiple libs are present.
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
+
+# Check if running as frozen executable with no CLI args (GUI mode)
+if getattr(sys, 'frozen', False) and len(sys.argv) == 1:
+    # Running as bundled app with no arguments - launch UI directly
+    print("Launching Cosine Companion UI...")
+    from ui import run_ui
+    run_ui()
+    sys.exit(0)
 
 # --- CLI ---
 import typer

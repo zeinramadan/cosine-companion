@@ -53,6 +53,8 @@ a = Analysis(
         'ui.dialogs',
         'ui.settings_window',
         'ui.reindex_window',
+        'ui.playlist_export_tab',
+        'ui.track_selector_dialog',
         # Utils modules
         'utils',
         'utils.icon',
@@ -60,6 +62,8 @@ a = Analysis(
         'config',
         'config.paths',
         'config.defaults',
+        # Recommendations - playlist export
+        'recommendations.playlist_exporter',
         # Common dependencies
         'numpy',
         'pandas',
@@ -68,6 +72,7 @@ a = Analysis(
         'essentia',
         'faiss',
         'typer',
+        'click',  # Required by typer
         'tkinter',
         'PIL',
         'PIL.Image',
