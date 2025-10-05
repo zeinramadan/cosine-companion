@@ -147,7 +147,7 @@ class LibraryTabMixin:
         track_id = selected_track["track_id"]
         
         self.current_id = track_id
-        self.lbl_current.config(text=f"Current track: {selected_track['display_name']}")
+        self.update_current_track_display()  # Use the proper display method with key/BPM
         self.refresh_suggestions()
         
         # Switch to recommendations tab to see suggestions

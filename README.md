@@ -90,6 +90,7 @@ dj-cosine/
 │   │   ├── engine.py          # Main recommendation logic
 │   │   ├── scoring.py         # Key/BPM compatibility
 │   │   ├── set_generator.py   # DJ set generation
+│   │   ├── playlist_exporter.py    # M3U playlist export
 │   │   ├── models.py          # Data models
 │   │   ├── transitions.py     # Transition scoring
 │   │   └── search.py          # Track search
@@ -98,6 +99,7 @@ dj-cosine/
 │   │   ├── app.py             # Main application
 │   │   ├── recommendations_tab.py  # Track exploration
 │   │   ├── set_creator_tab.py      # DJ set creation
+│   │   ├── playlist_export_tab.py  # Playlist export
 │   │   ├── library_tab.py          # Library management
 │   │   └── dialogs.py         # UI dialogs
 │   │
@@ -157,9 +159,10 @@ This analyzes your collection for duplicate tracks without modifying any files. 
 python src/cosine_companion.py ui
 ```
 
-The UI features three tabs:
+The UI features four tabs:
 - **Explore**: Find similar tracks with interactive sorting
 - **Set Creator**: Generate DJ sets with anchor tracks at specific positions
+- **Playlist Export**: Export recommendation playlists as .m3u files for Rekordbox
 - **Library**: Browse, search, and manage your indexed tracks
 
 ## Features
@@ -169,6 +172,7 @@ The UI features three tabs:
 - 🥁 **BPM Matching**: Automatic tempo compatibility detection (including half/double time)
 - 🎛️ **Interactive Sorting**: Sort recommendations by score, cosine similarity, key, BPM, or artist
 - 🎚️ **DJ Set Generation**: Create complete sets with anchor tracks at specific positions
+- 📋 **Playlist Export**: Generate .m3u playlists with recommendations that import directly into Rekordbox
 - 📚 **Library Management**: Browse, search, and delete tracks with multi-select support
 - ⚡ **Incremental Indexing**: Only process new tracks, saving time on library updates
 - 🔍 **Duplicate Detection**: Automatic identification and removal of duplicate tracks

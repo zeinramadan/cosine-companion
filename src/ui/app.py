@@ -9,9 +9,10 @@ from core.loader import load_all
 from ui.recommendations_tab import RecommendationsTabMixin
 from ui.set_creator_tab import SetCreatorTabMixin
 from ui.library_tab import LibraryTabMixin
+from ui.playlist_export_tab import PlaylistExportTabMixin
 
 
-class App(RecommendationsTabMixin, SetCreatorTabMixin, LibraryTabMixin, tk.Tk):
+class App(RecommendationsTabMixin, SetCreatorTabMixin, LibraryTabMixin, PlaylistExportTabMixin, tk.Tk):
     """Main application window for Cosine Companion."""
     
     def __init__(self):
@@ -46,6 +47,7 @@ class App(RecommendationsTabMixin, SetCreatorTabMixin, LibraryTabMixin, tk.Tk):
         # Create tabs (methods from mixins)
         self.create_recommendations_tab()
         self.create_set_creator_tab()
+        self.create_playlist_export_tab()
         self.create_library_tab()
         
         # Ensure all buttons are properly initialized
@@ -84,6 +86,9 @@ class App(RecommendationsTabMixin, SetCreatorTabMixin, LibraryTabMixin, tk.Tk):
                 # Force re-enable and restyle when the tab becomes visible
                 self.add_anchor_btn.config(state="normal", bg="lightgreen", font=("Helvetica", 10, "bold"))
                 self.update_idletasks()
+            # Update playlist export info when switching to that tab
+            if tab_text == "Playlist Export" and hasattr(self, 'update_export_selection_info'):
+                self.update_export_selection_info()
             # Update bottom hint based on active tab
             self.set_default_status_hint()
         except Exception:
@@ -96,6 +101,8 @@ class App(RecommendationsTabMixin, SetCreatorTabMixin, LibraryTabMixin, tk.Tk):
         if tab_text == "Set Creator":
             return ("💡 1) Click '+ Add Anchor' and choose a track + it's position in the set. "
                     "2) Set 'Total Tracks'. 3) Click 'Generate Set'. 4) Adjust anchors and regenerate as needed.")
+        if tab_text == "Playlist Export":
+            return "💡 Click '+ Add Tracks' to select tracks → Configure settings → Generate .m3u playlists that import into Rekordbox"
         if tab_text == "Library":
             return "💡 Ctrl+Click to multi-select • Shift+Click to select range • Double-click to set as current track in explore tab"
 

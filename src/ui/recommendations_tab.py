@@ -212,7 +212,13 @@ class RecommendationsTabMixin:
         """Update the current track display label."""
         if self.current_id:
             m = self.meta_ix.loc[self.current_id]
-            self.lbl_current.config(text=f"Current track: {m.get('artist','')} – {m.get('title','')}  [Key {m.get('key','?')}  BPM {m.get('bpm','?')}]")
+            # Format key and BPM display
+            key_text = f"[{m.get('key', '?')}]" if m.get('key') else "[?]"
+            bpm_text = f"({m.get('bpm', '?')} BPM)" if m.get('bpm') else "(?)"
+            
+            self.lbl_current.config(
+                text=f"Current track: {m.get('artist','')} – {m.get('title','')} {key_text} {bpm_text}"
+            )
         else:
             self.lbl_current.config(text="Current track: —")
 
@@ -235,6 +241,11 @@ class RecommendationsTabMixin:
             topk=500,  # Get more FAISS candidates for better results
             final_top=200  # Compute up to 200 final recommendations
         )
+        
+        # Sort by cosine similarity by default (pure audio similarity)
+        # Users can still re-sort using the sort buttons if they want
+        self.current_recommendations.sort(key=lambda x: x['cosine'], reverse=True)
+        
         self.update_listbox()
 
     def sort_suggestions(self: "App", sort_by: str):
