@@ -1,0 +1,87 @@
+name: Build macOS
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+    
+    - name: Download Essentia model
+      run: |
+        mkdir -p models
+        cd models
+        if [ ! -f "discogs_multi_embeddings-effnet-bs64-1.pb" ]; then
+          curl -O https://essentia.upf.edu/models/feature-extractors/discogs-effnet/discogs_multi_embeddings-effnet-bs64-1.pb
+        fi
+        cd ..
+    
+    - name: Build macOS app
+      run: python build_app.py
+    
+    - name: Create DMG
+      run: |
+        # Install create-dmg
+        brew install create-dmg
+        
+        # Create DMG
+        create-dmg \
+          --volname "Cosine Companion" \
+          --volicon "assets/coco_logo.icns" \
+          --window-pos 200 120 \
+          --window-size 800 400 \
+          --icon-size 100 \
+          --icon "Cosine Companion.app" 200 190 \
+          --hide-extension "Cosine Companion.app" \
+          --app-drop-link 600 185 \
+          "Cosine-Companion-Installer.dmg" \
+          "dist/Cosine Companion.app" || true
+    
+    - name: Upload macOS app bundle
+      uses: actions/upload-artifact@v4
+      with:
+        name: Cosine-Companion-macOS-${{ github.sha }}
+        path: dist/Cosine Companion.app
+        retention-days: 30
+    
+    - name: Upload DMG installer
+      uses: actions/upload-artifact@v4
+      with:
+        name: Cosine-Companion-DMG-${{ github.sha }}
+        path: Cosine-Companion-Installer.dmg
+        retention-days: 30
+        if-no-files-found: warn
+    
+    - name: Create Release (on tags)
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          Cosine-Companion-Installer.dmg
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
