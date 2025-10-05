@@ -94,7 +94,7 @@ a = Analysis(
     ] + numpy_hiddenimports + pandas_hiddenimports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=['hooks/rthook_sdl_env.py'],  # Set SDL env vars BEFORE any imports
     excludes=[
         'matplotlib',
         'scipy',
