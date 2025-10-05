@@ -12,11 +12,23 @@ project_root = Path.cwd()
 src_dir = project_root / "src"
 
 # Collect data files for numpy and other packages
-from PyInstaller.utils.hooks import collect_all, collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_submodules, copy_metadata
 
-# Use collect_all to get everything from numpy (data, binaries, submodules)
+# Use collect_all to get everything from numpy/pandas (data, binaries, submodules)
+print("Collecting numpy...")
 numpy_datas, numpy_binaries, numpy_hiddenimports = collect_all('numpy')
+print(f"  Found {len(numpy_datas)} data files, {len(numpy_binaries)} binaries, {len(numpy_hiddenimports)} hidden imports")
+
+print("Collecting pandas...")
 pandas_datas, pandas_binaries, pandas_hiddenimports = collect_all('pandas')
+print(f"  Found {len(pandas_datas)} data files, {len(pandas_binaries)} binaries, {len(pandas_hiddenimports)} hidden imports")
+
+# Also collect metadata (important for version detection)
+numpy_metadata = copy_metadata('numpy')
+pandas_metadata = copy_metadata('pandas')
+
+print(f"Total data files to include: {len(numpy_datas + pandas_datas + numpy_metadata + pandas_metadata)}")
+print(f"Total binaries to include: {len(numpy_binaries + pandas_binaries)}")
 
 # Collect all package data
 a = Analysis(
@@ -28,8 +40,15 @@ a = Analysis(
         (str(project_root / 'models'), 'models'),
         # Include assets directory (icons, etc.)
         (str(project_root / 'assets'), 'assets'),
-    ] + numpy_datas + pandas_datas,
+    ] + numpy_datas + pandas_datas + numpy_metadata + pandas_metadata,
     hiddenimports=[
+        # Critical packages - must be explicitly included
+        'numpy',
+        'numpy.core',
+        'numpy.core._multiarray_umath',
+        'pandas',
+        'pandas._libs',
+        'pandas._libs.tslibs',
         # Core modules
         'core',
         'core.loader',
