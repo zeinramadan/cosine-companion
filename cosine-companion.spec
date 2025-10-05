@@ -11,6 +11,12 @@ block_cipher = None
 project_root = Path.cwd()
 src_dir = project_root / "src"
 
+# Collect data files for numpy and other packages
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+
+numpy_datas = collect_data_files('numpy')
+pandas_datas = collect_data_files('pandas')
+
 # Collect all package data
 a = Analysis(
     [str(src_dir / 'cosine_companion.py')],
@@ -21,7 +27,7 @@ a = Analysis(
         (str(project_root / 'models'), 'models'),
         # Include assets directory (icons, etc.)
         (str(project_root / 'assets'), 'assets'),
-    ],
+    ] + numpy_datas + pandas_datas,
     hiddenimports=[
         # Core modules
         'core',
@@ -66,8 +72,15 @@ a = Analysis(
         'recommendations.playlist_exporter',
         # Common dependencies
         'numpy',
+        'numpy.core',
+        'numpy.core._multiarray_umath',
+        'numpy.random',
+        'numpy.linalg',
         'pandas',
+        'pandas.core',
+        'pandas.io',
         'lxml',
+        'lxml.etree',
         'soundfile',
         'essentia',
         'faiss',
