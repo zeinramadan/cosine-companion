@@ -30,12 +30,15 @@ jobs:
     - name: Download Essentia model
       run: |
         cd models
-        curl -O https://essentia.upf.edu/models/feature-extractors/discogs_multi_embeddings/discogs_multi_embeddings-effnet-bs64-1.pb
+        curl -O https://essentia.upf.edu/models/feature-extractors/discogs-effnet/discogs_multi_embeddings-effnet-bs64-1.pb
         cd ..
       shell: bash
     
     - name: Create Windows icon
-      run: python create_windows_icon.py
+      run: |
+        pip install Pillow
+        python create_windows_icon.py
+      continue-on-error: true
     
     - name: Build Windows executable
       run: python build_app.py
