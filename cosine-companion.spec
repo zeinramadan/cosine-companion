@@ -111,28 +111,63 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
-exe = EXE(
-    pyz,
-    a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    [],
-    name='Cosine Companion',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    runtime_tmpdir=None,
-    console=False,  # Windowed application
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-    icon='assets/coco_logo.icns' if sys.platform == 'darwin' else ('assets/coco_logo.ico' if Path('assets/coco_logo.ico').exists() else None),
-)
+# Use different build modes for different platforms
+# Windows: onedir (more reliable with numpy/pandas)
+# macOS/Linux: onefile for simplicity
+if sys.platform == 'win32':
+    # Windows: Create directory-based distribution
+    exe = EXE(
+        pyz,
+        a.scripts,
+        [],
+        exclude_binaries=True,  # Keep binaries separate for onedir
+        name='Cosine Companion',
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=True,
+        console=False,
+        disable_windowed_traceback=False,
+        argv_emulation=False,
+        target_arch=None,
+        codesign_identity=None,
+        entitlements_file=None,
+        icon='assets/coco_logo.ico' if Path('assets/coco_logo.ico').exists() else None,
+    )
+    coll = COLLECT(
+        exe,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        strip=False,
+        upx=True,
+        upx_exclude=[],
+        name='Cosine Companion',
+    )
+else:
+    # macOS/Linux: Create single-file application
+    exe = EXE(
+        pyz,
+        a.scripts,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        [],
+        name='Cosine Companion',
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=True,
+        upx_exclude=[],
+        runtime_tmpdir=None,
+        console=False,
+        disable_windowed_traceback=False,
+        argv_emulation=False,
+        target_arch=None,
+        codesign_identity=None,
+        entitlements_file=None,
+        icon='assets/coco_logo.icns' if sys.platform == 'darwin' else None,
+    )
 
 # macOS app bundle
 if sys.platform == 'darwin':
