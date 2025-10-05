@@ -111,68 +111,42 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
-# Use different build modes for different platforms
-# Windows: onedir (more reliable with numpy/pandas)
-# macOS/Linux: onefile for simplicity
-if sys.platform == 'win32':
-    # Windows: Create directory-based distribution
-    exe = EXE(
-        pyz,
-        a.scripts,
-        [],
-        exclude_binaries=True,  # Keep binaries separate for onedir
-        name='Cosine Companion',
-        debug=False,
-        bootloader_ignore_signals=False,
-        strip=False,
-        upx=False,  # Disable UPX - can cause issues and inconsistent builds
-        console=False,
-        disable_windowed_traceback=False,
-        argv_emulation=False,
-        target_arch=None,
-        codesign_identity=None,
-        entitlements_file=None,
-        icon='assets/coco_logo.ico' if Path('assets/coco_logo.ico').exists() else None,
-    )
-    coll = COLLECT(
-        exe,
-        a.binaries,
-        a.zipfiles,
-        a.datas,
-        strip=False,
-        upx=False,  # Disable UPX - can cause issues and inconsistent builds
-        upx_exclude=[],
-        name='Cosine Companion',
-    )
-else:
-    # macOS/Linux: Create single-file application
-    exe = EXE(
-        pyz,
-        a.scripts,
-        a.binaries,
-        a.zipfiles,
-        a.datas,
-        [],
-        name='Cosine Companion',
-        debug=False,
-        bootloader_ignore_signals=False,
-        strip=False,
-        upx=False,  # Disable UPX - can cause issues and inconsistent builds
-        upx_exclude=[],
-        runtime_tmpdir=None,
-        console=False,
-        disable_windowed_traceback=False,
-        argv_emulation=False,
-        target_arch=None,
-        codesign_identity=None,
-        entitlements_file=None,
-        icon='assets/coco_logo.icns' if sys.platform == 'darwin' else None,
-    )
+# Use onedir mode for all platforms for better reliability
+# Onedir avoids bootloader extraction issues and gives faster startup
+exe = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,  # Keep binaries separate for onedir
+    name='Cosine Companion',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,  # Disable UPX - can cause issues and inconsistent builds
+    console=False,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+    icon='assets/coco_logo.ico' if sys.platform == 'win32' and Path('assets/coco_logo.ico').exists() else None,
+)
 
-# macOS app bundle
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=False,  # Disable UPX - can cause issues and inconsistent builds
+    upx_exclude=[],
+    name='Cosine Companion',
+)
+
+# macOS app bundle (wraps onedir distribution)
 if sys.platform == 'darwin':
     app = BUNDLE(
-        exe,
+        coll,  # Use COLLECT output for onedir mode
         name='Cosine Companion.app',
         icon='assets/coco_logo.icns',
         bundle_identifier='com.cosinecompanion.app',
