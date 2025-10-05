@@ -12,16 +12,17 @@ project_root = Path.cwd()
 src_dir = project_root / "src"
 
 # Collect data files for numpy and other packages
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
-numpy_datas = collect_data_files('numpy')
-pandas_datas = collect_data_files('pandas')
+# Use collect_all to get everything from numpy (data, binaries, submodules)
+numpy_datas, numpy_binaries, numpy_hiddenimports = collect_all('numpy')
+pandas_datas, pandas_binaries, pandas_hiddenimports = collect_all('pandas')
 
 # Collect all package data
 a = Analysis(
     [str(src_dir / 'cosine_companion.py')],
     pathex=[str(src_dir)],
-    binaries=[],
+    binaries=numpy_binaries + pandas_binaries,
     datas=[
         # Include models directory if it exists
         (str(project_root / 'models'), 'models'),
@@ -90,7 +91,7 @@ a = Analysis(
         'PIL',
         'PIL.Image',
         'PIL.ImageTk',
-    ],
+    ] + numpy_hiddenimports + pandas_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
