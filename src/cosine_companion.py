@@ -9,6 +9,13 @@ efficient similarity search.
 
 import os
 import sys
+
+# SDL configuration - MUST be set before any SDL-using libraries load
+# Prevents SDL from trying to create GUI dialogs during initialization
+os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+os.environ.setdefault("SDL_RENDER_DRIVER", "software")
+
 # Avoid OpenMP duplicate runtime crash on macOS when multiple libs are present.
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
