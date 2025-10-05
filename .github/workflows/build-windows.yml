@@ -49,17 +49,17 @@ jobs:
     
     - name: Verify Windows build
       run: |
-        echo "📦 Checking Windows build..."
+        Write-Host "Checking Windows build..."
         Get-ChildItem "dist\Cosine Companion" -Recurse | Measure-Object -Property Length -Sum | Select-Object @{Name="Size(MB)";Expression={[math]::Round($_.Sum / 1MB, 2)}}
         if (Test-Path "dist\Cosine Companion\_internal\numpy") {
-          echo "✅ numpy found"
+          Write-Host "[OK] numpy found"
         } else {
-          echo "⚠️ numpy not found"
+          Write-Host "[WARNING] numpy not found"
         }
         if (Test-Path "dist\Cosine Companion\_internal\pandas") {
-          echo "✅ pandas found"
+          Write-Host "[OK] pandas found"
         } else {
-          echo "⚠️ pandas not found"
+          Write-Host "[WARNING] pandas not found"
         }
       shell: powershell
     

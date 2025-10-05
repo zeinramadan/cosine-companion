@@ -35,11 +35,11 @@ jobs:
     
     - name: Verify macOS build
       run: |
-        echo "📦 Checking macOS build..."
+        echo "Checking macOS build..."
         APP_SIZE=$(du -sh "dist/Cosine Companion.app" | cut -f1)
-        echo "✅ App size: $APP_SIZE"
-        find "dist/Cosine Companion.app" -name "numpy" -type d | head -1 || echo "⚠️ numpy not found"
-        find "dist/Cosine Companion.app" -name "pandas" -type d | head -1 || echo "⚠️ pandas not found"
+        echo "[OK] App size: $APP_SIZE"
+        find "dist/Cosine Companion.app" -name "numpy" -type d | head -1 || echo "[WARNING] numpy not found"
+        find "dist/Cosine Companion.app" -name "pandas" -type d | head -1 || echo "[WARNING] pandas not found"
     
     - name: Create DMG
       run: |
@@ -118,17 +118,17 @@ jobs:
     
     - name: Verify Windows build
       run: |
-        echo "📦 Checking Windows build..."
+        Write-Host "Checking Windows build..."
         Get-ChildItem "dist\Cosine Companion" -Recurse | Measure-Object -Property Length -Sum | Select-Object @{Name="Size(MB)";Expression={[math]::Round($_.Sum / 1MB, 2)}}
         if (Test-Path "dist\Cosine Companion\_internal\numpy") {
-          echo "✅ numpy found"
+          Write-Host "[OK] numpy found"
         } else {
-          echo "⚠️ numpy not found"
+          Write-Host "[WARNING] numpy not found"
         }
         if (Test-Path "dist\Cosine Companion\_internal\pandas") {
-          echo "✅ pandas found"
+          Write-Host "[OK] pandas found"
         } else {
-          echo "⚠️ pandas not found"
+          Write-Host "[WARNING] pandas not found"
         }
       shell: powershell
     
