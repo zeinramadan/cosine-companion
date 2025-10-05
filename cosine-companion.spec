@@ -112,7 +112,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='assets/coco_logo.icns' if sys.platform == 'darwin' else 'assets/coco_logo.ico',
+    icon='assets/coco_logo.icns' if sys.platform == 'darwin' else ('assets/coco_logo.ico' if Path('assets/coco_logo.ico').exists() else None),
 )
 
 # macOS app bundle
