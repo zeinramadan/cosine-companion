@@ -12,16 +12,28 @@ project_root = Path.cwd()
 src_dir = project_root / "src"
 
 # Collect data files for numpy and other packages
-from PyInstaller.utils.hooks import collect_all, collect_submodules, copy_metadata
+from PyInstaller.utils.hooks import (
+    collect_all, collect_submodules, copy_metadata, 
+    collect_data_files, collect_dynamic_libs
+)
 
-# Use collect_all to get everything from numpy/pandas (data, binaries, submodules)
+# Use collect_all for numpy - it works well with numpy
 print("Collecting numpy...")
 numpy_datas, numpy_binaries, numpy_hiddenimports = collect_all('numpy')
 print(f"  Found {len(numpy_datas)} data files, {len(numpy_binaries)} binaries, {len(numpy_hiddenimports)} hidden imports")
 
+# For pandas, try collect_all but fall back to manual collection if it fails
 print("Collecting pandas...")
-pandas_datas, pandas_binaries, pandas_hiddenimports = collect_all('pandas')
-print(f"  Found {len(pandas_datas)} data files, {len(pandas_binaries)} binaries, {len(pandas_hiddenimports)} hidden imports")
+try:
+    pandas_datas, pandas_binaries, pandas_hiddenimports = collect_all('pandas')
+    print(f"  Found {len(pandas_datas)} data files, {len(pandas_binaries)} binaries, {len(pandas_hiddenimports)} hidden imports")
+except Exception as e:
+    print(f"  collect_all failed: {e}, trying manual collection...")
+    # Manual collection as fallback
+    pandas_hiddenimports = collect_submodules('pandas')
+    pandas_datas = collect_data_files('pandas', include_py_files=True)
+    pandas_binaries = collect_dynamic_libs('pandas')
+    print(f"  Manual: {len(pandas_datas)} data files, {len(pandas_binaries)} binaries, {len(pandas_hiddenimports)} hidden imports")
 
 # Also collect metadata (important for version detection)
 numpy_metadata = copy_metadata('numpy')
