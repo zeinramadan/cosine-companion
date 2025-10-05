@@ -33,6 +33,14 @@ jobs:
     - name: Build macOS app
       run: python build_app.py
     
+    - name: Verify macOS build
+      run: |
+        echo "📦 Checking macOS build..."
+        APP_SIZE=$(du -sh "dist/Cosine Companion.app" | cut -f1)
+        echo "✅ App size: $APP_SIZE"
+        find "dist/Cosine Companion.app" -name "numpy" -type d | head -1 || echo "⚠️ numpy not found"
+        find "dist/Cosine Companion.app" -name "pandas" -type d | head -1 || echo "⚠️ pandas not found"
+    
     - name: Create DMG
       run: |
         # Install create-dmg
@@ -107,6 +115,22 @@ jobs:
       run: python build_app.py
       env:
         PYTHONIOENCODING: utf-8
+    
+    - name: Verify Windows build
+      run: |
+        echo "📦 Checking Windows build..."
+        Get-ChildItem "dist\Cosine Companion" -Recurse | Measure-Object -Property Length -Sum | Select-Object @{Name="Size(MB)";Expression={[math]::Round($_.Sum / 1MB, 2)}}
+        if (Test-Path "dist\Cosine Companion\_internal\numpy") {
+          echo "✅ numpy found"
+        } else {
+          echo "⚠️ numpy not found"
+        }
+        if (Test-Path "dist\Cosine Companion\_internal\pandas") {
+          echo "✅ pandas found"
+        } else {
+          echo "⚠️ pandas not found"
+        }
+      shell: powershell
     
     - name: Create Windows ZIP
       run: |

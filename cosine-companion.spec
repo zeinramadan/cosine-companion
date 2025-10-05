@@ -125,7 +125,7 @@ if sys.platform == 'win32':
         debug=False,
         bootloader_ignore_signals=False,
         strip=False,
-        upx=True,
+        upx=False,  # Disable UPX - can cause issues and inconsistent builds
         console=False,
         disable_windowed_traceback=False,
         argv_emulation=False,
@@ -140,7 +140,7 @@ if sys.platform == 'win32':
         a.zipfiles,
         a.datas,
         strip=False,
-        upx=True,
+        upx=False,  # Disable UPX - can cause issues and inconsistent builds
         upx_exclude=[],
         name='Cosine Companion',
     )
@@ -157,7 +157,7 @@ else:
         debug=False,
         bootloader_ignore_signals=False,
         strip=False,
-        upx=True,
+        upx=False,  # Disable UPX - can cause issues and inconsistent builds
         upx_exclude=[],
         runtime_tmpdir=None,
         console=False,

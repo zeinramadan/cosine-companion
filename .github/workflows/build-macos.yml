@@ -41,6 +41,27 @@ jobs:
     - name: Build macOS app
       run: python build_app.py
     
+    - name: Verify build
+      run: |
+        echo "📦 Checking build output..."
+        ls -lh "dist/Cosine Companion.app"
+        
+        # Check app size
+        APP_SIZE=$(du -sh "dist/Cosine Companion.app" | cut -f1)
+        echo "✅ App size: $APP_SIZE"
+        
+        # Check for critical dependencies
+        echo "🔍 Checking for numpy..."
+        find "dist/Cosine Companion.app" -name "numpy" -type d | head -1
+        
+        echo "🔍 Checking for pandas..."
+        find "dist/Cosine Companion.app" -name "pandas" -type d | head -1
+        
+        echo "🔍 Checking for faiss..."
+        find "dist/Cosine Companion.app" -name "*faiss*" | head -5
+        
+        echo "✅ Build verification complete"
+    
     - name: Create DMG
       run: |
         # Install create-dmg
