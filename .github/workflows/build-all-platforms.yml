@@ -100,9 +100,13 @@ jobs:
         pip install Pillow
         python create_windows_icon.py
       continue-on-error: true
+      env:
+        PYTHONIOENCODING: utf-8
     
     - name: Build Windows executable
       run: python build_app.py
+      env:
+        PYTHONIOENCODING: utf-8
     
     - name: Upload Windows executable
       uses: actions/upload-artifact@v4
