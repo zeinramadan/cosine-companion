@@ -45,21 +45,26 @@ jobs:
     - name: Create DMG
       run: |
         brew install create-dmg
-        create-dmg "dist/Cosine Companion.app" "dist" || true
-        # Rename to a consistent name
-        mv dist/*.dmg "dist/Cosine-Companion-macOS.dmg" 2>/dev/null || true
+        create-dmg \
+          --volname "Cosine Companion" \
+          --window-pos 200 120 \
+          --window-size 800 400 \
+          --icon-size 100 \
+          --app-drop-link 600 185 \
+          "Cosine-Companion-macOS.dmg" \
+          "dist/Cosine Companion.app"
     
     - name: Upload DMG
       uses: actions/upload-artifact@v4
       with:
         name: Cosine-Companion-macOS
-        path: dist/Cosine-Companion-macOS.dmg
+        path: Cosine-Companion-macOS.dmg
         retention-days: 90
     
     - name: Create Release (if tag)
       if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v1
       with:
-        files: dist/Cosine-Companion-macOS.dmg
+        files: Cosine-Companion-macOS.dmg
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
