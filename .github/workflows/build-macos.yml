@@ -42,6 +42,25 @@ jobs:
     - name: Build app
       run: python build_app.py
     
+    - name: Verify wrapper was installed
+      run: |
+        echo "Checking for wrapper script..."
+        if [ -f "dist/Cosine Companion.app/Contents/MacOS/Cosine Companion" ]; then
+          echo "[OK] Wrapper script found"
+          file "dist/Cosine Companion.app/Contents/MacOS/Cosine Companion"
+        else
+          echo "[ERROR] Wrapper script NOT found!"
+          ls -la "dist/Cosine Companion.app/Contents/MacOS/"
+          exit 1
+        fi
+        
+        if [ -f "dist/Cosine Companion.app/Contents/MacOS/Cosine Companion.bin" ]; then
+          echo "[OK] Binary found"
+        else
+          echo "[ERROR] Binary NOT found!"
+          exit 1
+        fi
+    
     - name: Create DMG
       run: |
         brew install create-dmg
