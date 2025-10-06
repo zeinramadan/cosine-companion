@@ -26,6 +26,7 @@ faiss_hidden = collect_submodules('faiss')
 essentia_hidden = collect_submodules('essentia')
 dateutil_hidden = collect_submodules('dateutil')
 pytz_hidden = collect_submodules('pytz')
+pyarrow_hidden = collect_submodules('pyarrow')
 
 # Collect everything from pandas and numpy (modules, data files, binaries)
 pandas_all_datas, pandas_all_bins, pandas_all_hidden = collect_all('pandas')
@@ -34,22 +35,24 @@ numpy_all_datas, numpy_all_bins, numpy_all_hidden = collect_all('numpy')
 pandas_datas = collect_data_files('pandas')
 pil_datas = collect_data_files('PIL')
 lxml_datas = collect_data_files('lxml')
+pyarrow_datas = collect_data_files('pyarrow')
 
 faiss_bins = collect_dynamic_libs('faiss')
 soundfile_bins = collect_dynamic_libs('soundfile')
 essentia_bins = collect_dynamic_libs('essentia')
+pyarrow_bins = collect_dynamic_libs('pyarrow')
 numpy_bins = collect_dynamic_libs('numpy')
 pandas_bins = collect_dynamic_libs('pandas')
 a = Analysis(
     [str(src_dir / 'cosine_companion.py')],
     pathex=[str(src_dir)],
-    binaries=faiss_bins + soundfile_bins + essentia_bins + numpy_bins + pandas_bins + numpy_all_bins + pandas_all_bins,
+    binaries=faiss_bins + soundfile_bins + essentia_bins + numpy_bins + pandas_bins + numpy_all_bins + pandas_all_bins + pyarrow_bins,
     datas=[
         # Include models directory if it exists
         (str(project_root / 'models'), 'models'),
         # Include assets directory (icons, etc.)
         (str(project_root / 'assets'), 'assets'),
-    ] + pandas_datas + pil_datas + lxml_datas + pandas_all_datas + numpy_all_datas,
+    ] + pandas_datas + pil_datas + lxml_datas + pandas_all_datas + numpy_all_datas + pyarrow_datas,
     hiddenimports=[
         # Core modules
         'core',
@@ -109,7 +112,8 @@ a = Analysis(
         'essentia',
         'dateutil',
         'pytz',
-    ] + pandas_hidden + numpy_hidden + lxml_hidden + pil_hidden + faiss_hidden + essentia_hidden + dateutil_hidden + pytz_hidden + pandas_all_hidden + numpy_all_hidden,
+        'pyarrow',
+    ] + pandas_hidden + numpy_hidden + lxml_hidden + pil_hidden + faiss_hidden + essentia_hidden + dateutil_hidden + pytz_hidden + pyarrow_hidden + pandas_all_hidden + numpy_all_hidden,
     hookspath=[str(project_root / 'hooks')],
     hooksconfig={},
     runtime_hooks=[str(project_root / 'hooks' / 'rthook_macos_env.py')],
