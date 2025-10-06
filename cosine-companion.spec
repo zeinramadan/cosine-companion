@@ -168,6 +168,7 @@ if sys.platform == 'darwin':
             'NSAppleScriptEnabled': False,
             'CFBundleName': 'Cosine Companion',
             'CFBundleDisplayName': 'Cosine Companion',
+            'CFBundleIconFile': 'coco_logo.icns',
             'CFBundleGetInfoString': "AI-powered music companion for DJs",
             'CFBundleVersion': "1.0.0",
             'CFBundleShortVersionString': "1.0.0",
