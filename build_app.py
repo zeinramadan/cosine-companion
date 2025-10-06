@@ -41,8 +41,24 @@ def build_with_pyinstaller():
         print("=" * 60)
         
         if system == "Darwin":
+            # Install launcher script for macOS
             app_path = Path("dist/Cosine Companion.app")
             if app_path.exists():
+                print("\n🔧 Installing SDL environment wrapper...")
+                macos_dir = app_path / "Contents" / "MacOS"
+                launcher_src = Path("macos_launcher.sh")
+                launcher_dst = macos_dir / "Cosine Companion"
+                
+                if launcher_src.exists():
+                    import shutil
+                    # Copy launcher script
+                    shutil.copy2(launcher_src, launcher_dst)
+                    # Make it executable
+                    os.chmod(launcher_dst, 0o755)
+                    print(f"   ✅ Installed launcher at {launcher_dst}")
+                else:
+                    print(f"   ⚠️  Warning: {launcher_src} not found")
+                
                 print("\n🍎 macOS Application Bundle Created:")
                 print(f"   {app_path}")
                 print("\nYou can now run:")

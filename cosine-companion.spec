@@ -149,7 +149,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,  # Keep binaries separate for onedir
-    name='Cosine Companion',
+    name='Cosine Companion.bin' if sys.platform == 'darwin' else 'Cosine Companion',  # Rename on macOS for wrapper
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
