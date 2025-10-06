@@ -19,6 +19,13 @@ jobs:
       with:
         python-version: '3.11'
     
+    - name: Cache Essentia model
+      id: cache-model
+      uses: actions/cache@v4
+      with:
+        path: models/discogs_multi_embeddings-effnet-bs64-1.pb
+        key: essentia-model-v1
+    
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
@@ -26,6 +33,7 @@ jobs:
         pip install pyinstaller
     
     - name: Download Essentia model
+      if: steps.cache-model.outputs.cache-hit != 'true'
       run: |
         mkdir -p models
         cd models
