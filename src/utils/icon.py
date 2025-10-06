@@ -38,15 +38,20 @@ def set_window_icon(window: tk.Tk | tk.Toplevel):
         return
     
     try:
-        # For macOS and Linux, use iconphoto with PNG
+        # For macOS and Linux, use iconphoto with pre-scaled sizes for crisp, consistent icon
         if sys.platform in ('darwin', 'linux'):
-            # Load the image (already sized appropriately)
-            img = Image.open(icon_path)
-            photo = ImageTk.PhotoImage(img)
-            window.iconphoto(True, photo)
-            # Keep a reference to prevent garbage collection
-            window._icon_photo = photo
-            
+            base_img = Image.open(icon_path)
+            # Choose a small, consistent size to avoid large icon flashes on startup
+            target_sizes = [16, 32, 64] if sys.platform == 'darwin' else [16, 32]
+            photos = []
+            for sz in target_sizes:
+                resized = base_img.resize((sz, sz), Image.LANCZOS)
+                photos.append(ImageTk.PhotoImage(resized))
+            # Pass multiple sizes; Tk will pick best fit per scale factor
+            window.iconphoto(True, *photos)
+            # Keep references to prevent garbage collection
+            window._icon_photos = photos
+        
         # For Windows, try iconbitmap (requires .ico file)
         elif sys.platform == 'win32':
             ico_path = icon_path.parent / "coco_logo_small.ico"
