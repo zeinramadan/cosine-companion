@@ -41,31 +41,8 @@ def build_with_pyinstaller():
         print("=" * 60)
         
         if system == "Darwin":
-            # Install launcher script for macOS
             app_path = Path("dist/Cosine Companion.app")
             if app_path.exists():
-                print("\n🔧 Installing SDL environment wrapper...")
-                macos_dir = app_path / "Contents" / "MacOS"
-                binary_path = macos_dir / "Cosine Companion"
-                binary_renamed = macos_dir / "Cosine Companion.bin"
-                launcher_src = Path("macos_launcher.sh")
-                
-                # Step 1: Rename the PyInstaller binary if it exists
-                if binary_path.exists() and not binary_renamed.exists():
-                    print(f"   📝 Renaming binary to 'Cosine Companion.bin'...")
-                    binary_path.rename(binary_renamed)
-                
-                # Step 2: Copy launcher script as main executable
-                if launcher_src.exists():
-                    import shutil
-                    shutil.copy2(launcher_src, binary_path)
-                    # Make it executable
-                    os.chmod(binary_path, 0o755)
-                    print(f"   ✅ Installed wrapper at {binary_path}")
-                    print(f"   ✅ Binary at {binary_renamed}")
-                else:
-                    print(f"   ⚠️  Warning: {launcher_src} not found")
-                
                 print("\n🍎 macOS Application Bundle Created:")
                 print(f"   {app_path}")
                 print("\nYou can now run:")
@@ -100,7 +77,29 @@ def check_dependencies():
         print("❌ PyInstaller not found")
         print("Install it with: pip install pyinstaller")
         return False
-    
+    # Verify core runtime deps are present in this interpreter
+    required = [
+        ("pandas", "pip install pandas"),
+        ("numpy", "pip install numpy"),
+        ("PIL", "pip install Pillow"),
+        ("lxml", "pip install lxml"),
+        ("soundfile", "pip install soundfile"),
+        ("faiss", "pip install faiss-cpu"),
+        ("essentia", "pip install essentia-tensorflow"),
+        ("typer", "pip install typer"),
+    ]
+    ok = True
+    for mod, hint in required:
+        try:
+            __import__(mod)
+            print(f"✅ {mod} found")
+        except Exception as e:
+            print(f"❌ {mod} missing in current Python ({sys.executable}): {e}")
+            print(f"   Try: {hint}")
+            ok = False
+    if not ok:
+        print("\nPlease install missing dependencies in this environment and re-run the build.")
+        return False
     return True
 
 def main():
@@ -109,6 +108,8 @@ def main():
     print("Cosine Companion - Application Builder")
     print("=" * 60)
     print()
+    print(f"Python: {sys.executable}")
+    print(f"CWD: {os.getcwd()}")
     
     # Check if running from project root
     if not Path("src/cosine_companion.py").exists():

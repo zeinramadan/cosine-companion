@@ -21,8 +21,12 @@ if not getattr(sys, 'frozen', False) or (getattr(sys, 'frozen', False) and sys.p
     os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
     os.environ.setdefault("OMP_NUM_THREADS", "1")
 
-# Check if running as frozen executable with no CLI args (GUI mode)
-if getattr(sys, 'frozen', False) and len(sys.argv) == 1:
+# Check if running as frozen executable in GUI mode
+# On macOS when launched from Finder, LaunchServices passes a '-psn_*' arg.
+# Treat that the same as no-arg GUI launch.
+if getattr(sys, 'frozen', False) and (
+    len(sys.argv) == 1 or (sys.platform == 'darwin' and len(sys.argv) == 2 and sys.argv[1].startswith('-psn_'))
+):
     # Running as bundled app with no arguments - launch UI directly
     print("Launching Cosine Companion UI...")
     from ui import run_ui
