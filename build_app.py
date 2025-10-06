@@ -46,16 +46,23 @@ def build_with_pyinstaller():
             if app_path.exists():
                 print("\n🔧 Installing SDL environment wrapper...")
                 macos_dir = app_path / "Contents" / "MacOS"
+                binary_path = macos_dir / "Cosine Companion"
+                binary_renamed = macos_dir / "Cosine Companion.bin"
                 launcher_src = Path("macos_launcher.sh")
-                launcher_dst = macos_dir / "Cosine Companion"
                 
+                # Step 1: Rename the PyInstaller binary if it exists
+                if binary_path.exists() and not binary_renamed.exists():
+                    print(f"   📝 Renaming binary to 'Cosine Companion.bin'...")
+                    binary_path.rename(binary_renamed)
+                
+                # Step 2: Copy launcher script as main executable
                 if launcher_src.exists():
                     import shutil
-                    # Copy launcher script
-                    shutil.copy2(launcher_src, launcher_dst)
+                    shutil.copy2(launcher_src, binary_path)
                     # Make it executable
-                    os.chmod(launcher_dst, 0o755)
-                    print(f"   ✅ Installed launcher at {launcher_dst}")
+                    os.chmod(binary_path, 0o755)
+                    print(f"   ✅ Installed wrapper at {binary_path}")
+                    print(f"   ✅ Binary at {binary_renamed}")
                 else:
                     print(f"   ⚠️  Warning: {launcher_src} not found")
                 

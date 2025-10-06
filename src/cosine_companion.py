@@ -10,9 +10,11 @@ efficient similarity search.
 import os
 import sys
 
-# Note: SDL and OpenMP env vars are set by PyInstaller runtime hook (hooks/rthook_sdl_env.py)
-# for frozen executables. For development, set them here:
-if not getattr(sys, 'frozen', False):
+# Note: For frozen executables on macOS, SDL and OpenMP env vars are set by the
+# wrapper script (macos_launcher.sh) BEFORE the binary is loaded, which is necessary
+# to prevent SDL from initializing GUI components that cause crashes.
+# For development and non-macOS frozen builds, set them here:
+if not getattr(sys, 'frozen', False) or (getattr(sys, 'frozen', False) and sys.platform != 'darwin'):
     os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
     os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
     os.environ.setdefault("SDL_RENDER_DRIVER", "software")
