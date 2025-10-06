@@ -9,6 +9,12 @@ def run_ui():
     """Run the Cosine Companion UI application."""
     # Create root window (initially hidden)
     root = tk.Tk(className='Cosine Companion')
+    # Set icon on the root immediately to avoid initial oversized icon before UI is shown
+    try:
+        from utils.icon import set_window_icon
+        set_window_icon(root)
+    except Exception:
+        pass
     root.withdraw()  # Hide until ready
     
     if needs_onboarding():
