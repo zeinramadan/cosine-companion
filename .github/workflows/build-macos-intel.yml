@@ -42,9 +42,24 @@ jobs:
         cd models
         curl -L -O "https://essentia.upf.edu/models/feature-extractors/discogs_multi_embeddings/discogs_multi_embeddings-effnet-bs64-1.pb"
 
+    - name: Prepare Intel-specific spec (avoid scanning all essentia submodules)
+      run: |
+        python - << 'PY'
+        import io, sys
+        p = 'cosine-companion.spec'
+        out = 'cosine-companion-intel.spec'
+        s = open(p, 'r').read()
+        s = s.replace("essentia_hidden = collect_submodules('essentia')", "essentia_hidden = []")
+        if "essentia.standard" not in s:
+            s = s.replace("'essentia',", "'essentia',\n        'essentia.standard',")
+        with open(out, 'w') as f:
+            f.write(s)
+        print('Wrote', out)
+        PY
+
     - name: Build app (Intel x86_64)
       run: |
-        python build_app.py
+        pyinstaller --clean --noconfirm --log-level INFO cosine-companion-intel.spec
         test -f "dist/Cosine Companion.app/Contents/MacOS/Cosine Companion"
         file "dist/Cosine Companion.app/Contents/MacOS/Cosine Companion" || true
 
