@@ -28,12 +28,17 @@ def read_rekordbox_xml(xml_path: str) -> pd.DataFrame:
         parsed = urlparse(loc)
         path_local = ""
         if parsed.scheme == "file":
+            # Preserve literal '#' characters that may appear in filenames.
+            # urlparse treats '#' as a fragment separator, so we need to stitch
+            # it back into the path for correct local filesystem resolution.
+            path_with_fragment = parsed.path + ("#" + parsed.fragment if parsed.fragment else "")
+
             # handle file:// and file://localhost
             if parsed.netloc and parsed.netloc != "localhost":
                 # Rare case: remote file host; mount specifics may vary
-                path_local = "/" + parsed.netloc + unquote(parsed.path)
+                path_local = "/" + parsed.netloc + unquote(path_with_fragment)
             else:
-                path_local = unquote(parsed.path)
+                path_local = unquote(path_with_fragment)
 
         rows.append({
             "track_id": t.get("TrackID") or t.get("TrackID", ""),
