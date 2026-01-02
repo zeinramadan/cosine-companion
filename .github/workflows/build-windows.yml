@@ -1,12 +1,10 @@
 name: Build Windows Executable
 
 on:
-  # Trigger on version tags
-  push:
-    tags:
-      - 'v*'
-  # Or trigger manually
-  workflow_dispatch:
+  workflow_dispatch:  # Manual trigger only
+
+permissions:
+  contents: write
 
 jobs:
   build-windows:
@@ -153,13 +151,3 @@ jobs:
         path: dist/Cosine-Companion-Windows.zip
         retention-days: 90
     
-    - name: Create Release (if tag)
-      if: startsWith(github.ref, 'refs/tags/')
-      uses: softprops/action-gh-release@v1
-      with:
-        files: dist/Cosine-Companion-Windows.zip
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-

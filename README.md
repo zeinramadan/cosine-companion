@@ -27,7 +27,7 @@ Simply install and run - no Python required. Please note only the Apple Silicon 
 ### Option 2: Run from Source
 
 #### Prerequisites
-- Python 3.8 or higher
+- Python 3.10 or higher
 - Rekordbox (for exporting your library as XML)
 
 #### Install Dependencies
@@ -41,10 +41,10 @@ pip install -r requirements.txt
 
 **Using conda (recommended for Apple Silicon):**
 ```bash
-conda create -n cosine-companion python=3.11
-conda activate cosine-companion
-conda install -c conda-forge numpy pandas lxml soundfile typer pillow
-pip install essentia-tensorflow faiss-cpu pyarrow
+git clone https://github.com/yourusername/dj-cosine.git
+cd dj-cosine
+conda env create -f environment.yml
+conda activate dj-companion
 ```
 
 #### Download the ML Model
@@ -156,7 +156,7 @@ dj-cosine/
 
 ## Requirements
 
-- Python 3.8+
+- Python 3.10+
 - ~300 MB disk space for ML model
 - ~50 MB per 1,000 indexed tracks
 
@@ -182,7 +182,8 @@ Contributions are welcome! Here's how to help:
 ```bash
 git clone https://github.com/yourusername/dj-cosine.git
 cd dj-cosine
-pip install -r requirements.txt
+conda env create -f environment.yml
+conda activate dj-companion
 # Download the model (see Installation)
 python src/cosine_companion.py ui
 ```
