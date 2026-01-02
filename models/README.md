@@ -8,7 +8,7 @@ This directory contains the machine learning models required for audio similarit
 
 **File:** `discogs_multi_embeddings-effnet-bs64-1.pb`
 
-**Download Link:** [Essentia Models Repository](https://essentia.upf.edu/models/feature-extractors/discogs_multi_embeddings/discogs_multi_embeddings-effnet-bs64-1.pb)
+**Download Link:** [Essentia Models Repository](https://essentia.upf.edu/models/feature-extractors/discogs_multi_embeddings/)
 
 **Direct Download:**
 ```bash
@@ -22,12 +22,15 @@ curl -O https://essentia.upf.edu/models/feature-extractors/discogs_multi_embeddi
 
 ### Model Information
 
-- **Purpose:** Generates high-dimensional embeddings from audio content for similarity analysis
-- **Architecture:** EfficientNet-based model trained on Discogs dataset
-- **Input:** 16kHz mono audio
-- **Output:** 128-dimensional embedding vector
-- **File Size:** ~23MB
-- **License:** Check Essentia's licensing terms
+| Attribute | Value |
+|-----------|-------|
+| **Purpose** | Generates embeddings from audio for similarity analysis |
+| **Architecture** | EfficientNet-based model trained on Discogs dataset |
+| **Input** | 32kHz mono audio |
+| **Raw Output** | Frame-wise embeddings (variable length) |
+| **Pooled Output** | 256-dimensional vector (mean + std pooling) |
+| **File Size** | ~300 MB |
+| **License** | See [Essentia licensing terms](https://essentia.upf.edu/licensing_information.html) |
 
 ### Installation Steps
 
@@ -49,14 +52,23 @@ models/
 **Model not found error:**
 - Verify the file is in the `models/` directory
 - Check the filename matches exactly (case-sensitive)
-- Ensure the file downloaded completely (~23MB)
+- Ensure the file downloaded completely (~300 MB)
 
 **TensorFlow prediction errors:**
 - Make sure you have `essentia-tensorflow` installed: `pip install essentia-tensorflow`
 - Try reinstalling essentia: `conda install -c mtg essentia-tensorflow`
 
-### Alternative Models
+### How Embeddings Work
 
-This application currently supports only the Discogs-EffNet model. Future versions may support additional embedding models from the Essentia collection.
+The embedding process:
+1. Audio is loaded and resampled to 32kHz mono
+2. The model processes the audio in frames
+3. Frame embeddings are pooled using mean + standard deviation
+4. The result is L2-normalized for cosine similarity search
 
-For more information about Essentia models, visit: https://essentia.upf.edu/models.html
+For technical details, see [docs/EMBEDDINGS_GUIDE.md](../docs/EMBEDDINGS_GUIDE.md).
+
+### More Information
+
+- [Essentia Models Documentation](https://essentia.upf.edu/models.html)
+- [Discogs-EffNet Paper](https://essentia.upf.edu/models/feature-extractors/discogs_multi_embeddings/)

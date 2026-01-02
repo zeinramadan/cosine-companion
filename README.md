@@ -1,231 +1,208 @@
 # Cosine Companion
 
-A tool for finding similar tracks based on audio content, key compatibility, and BPM matching. Uses Essentia's Discogs-EffNet embeddings and FAISS for efficient similarity search.
+A DJ music recommendation tool that helps you find similar tracks and create seamless DJ sets. Uses deep learning audio analysis to find tracks that sound alike, combined with harmonic (key) and tempo (BPM) compatibility scoring.
 
-## Quick Start
+## What It Does
 
-1. **Install dependencies** (see [Installation](#installation))
-2. **Download the required model** (see [Model Setup](#model-setup))
-3. **Export your library from Rekordbox** as XML
-4. **Index your library:** `python src/cosine_companion.py index /path/to/rekordbox_export.xml`
-5. **Launch the UI:** `python src/cosine_companion.py ui`
+Cosine Companion analyzes your music library and helps you:
+
+- **Find Similar Tracks** - Select any track and instantly get recommendations based on how it actually sounds, not just metadata
+- **Mix Harmonically** - Recommendations are scored for key compatibility using the Camelot wheel system
+- **Match Tempos** - BPM matching with support for half-time and double-time detection
+- **Build DJ Sets** - Create complete sets with anchor tracks at specific positions, auto-filled with compatible tracks
+- **Export Playlists** - Generate M3U playlists that import directly into Rekordbox
 
 ## Installation
 
-### Option 1: Standalone Application (Recommended for End Users)
+### Option 1: Standalone Application (Recommended)
 
-Download the pre-built application for your platform:
-- **macOS**: `DJ-Companion-Installer.dmg`
-- **Windows**: `DJ-Companion-Setup.exe`  
-- **Linux**: `DJ-Companion.AppImage`
+Download the pre-built application for your platform from the [Releases](https://github.com/yourusername/dj-cosine/releases) page:
 
-Simply install and run - no Python required!
+| Platform | Download |
+|----------|----------|
+| macOS (Apple Silicon) | `Cosine-Companion-macOS-arm64.dmg` |
 
-### Option 2: From Source (For Developers)
+Simply install and run - no Python required. Please note only the Apple Silicon build is tested and working. Intel Mac and Windows need to be sorted, I just don't have the time so contributions are more than welcome!
+
+### Option 2: Run from Source
 
 #### Prerequisites
-- Python 3.8+
-- Conda (recommended) or pip
+- Python 3.8 or higher
+- Rekordbox (for exporting your library as XML)
 
 #### Install Dependencies
 
-Using conda (recommended):
+**Using pip:**
 ```bash
-conda install -c conda-forge numpy pandas lxml soundfile typer
-conda install -c mtg essentia-tensorflow
-conda install -c conda-forge faiss-cpu
-```
-
-Using pip:
-```bash
+git clone https://github.com/yourusername/dj-cosine.git
+cd dj-cosine
 pip install -r requirements.txt
 ```
 
-Or use the provided environment:
+**Using conda (recommended for Apple Silicon):**
 ```bash
-conda env create -f environment.yml
-conda activate dj-companion
+conda create -n cosine-companion python=3.11
+conda activate cosine-companion
+conda install -c conda-forge numpy pandas lxml soundfile typer pillow
+pip install essentia-tensorflow faiss-cpu pyarrow
 ```
 
-## Model Setup
+#### Download the ML Model
 
-**Required:** Download the Discogs-EffNet model for audio embeddings.
+The application requires the Discogs-EffNet model (~300 MB):
 
 ```bash
-# Navigate to the models directory
 cd models/
-
-# Download the model (choose one method):
-wget https://essentia.upf.edu/models/feature-extractors/discogs_multi_embeddings/discogs_multi_embeddings-effnet-bs64-1.pb
-
-# OR using curl:
 curl -O https://essentia.upf.edu/models/feature-extractors/discogs_multi_embeddings/discogs_multi_embeddings-effnet-bs64-1.pb
+cd ..
 ```
 
-See [models/README.md](models/README.md) for detailed instructions and troubleshooting.
+## Quick Start
+
+Please note the rekordbox collection MUST be local, **NOT** on a USB device.
+
+### 1. Export Your Library from Rekordbox
+
+In Rekordbox: `File` → `Export Collection in xml format`
+
+### 2. Index Your Library
+
+```bash
+python src/cosine_companion.py index /path/to/rekordbox.xml
+```
+
+This analyzes your audio files and builds a searchable index. Re-run when you add more tracks to your rekordbox collection and want to index them.
+
+### 3. Launch the Application
+
+```bash
+python src/cosine_companion.py ui
+```
+
+### 4. Start Exploring
+
+1. Click **"Set Current Track"** and search for a track
+2. View recommendations sorted by similarity score
+3. Double-click any recommendation to explore from that track
+4. Use the **Set Creator** tab to build complete DJ sets
+
+## Features
+
+| Feature | Description |
+|---------|-------------|
+| **Audio Similarity** | Deep learning embeddings capture how tracks actually sound |
+| **Key Compatibility** | Camelot wheel scoring for harmonic mixing |
+| **BPM Matching** | Tempo compatibility with half/double time detection |
+| **DJ Set Generator** | Place anchor tracks, auto-fill the rest |
+| **Playlist Export** | M3U export for Rekordbox and other DJ software |
+| **Library Management** | Browse, search, and manage indexed tracks |
+| **Incremental Updates** | Only process new tracks when re-indexing |
+
+## CLI Commands
+
+```bash
+# Index your library (first time or to add new tracks)
+python src/cosine_companion.py index /path/to/rekordbox.xml
+
+# Force full re-index (rebuilds everything)
+python src/cosine_companion.py index /path/to/rekordbox.xml --force
+
+# Launch the graphical interface
+python src/cosine_companion.py ui
+
+# Check for duplicate tracks
+python src/cosine_companion.py clean-duplicates /path/to/rekordbox.xml
+```
+
+## How It Works
+
+1. **Audio Analysis**: Each track is processed through a neural network (Discogs-EffNet) trained on millions of songs, producing a 256-dimensional "fingerprint" of how the track sounds
+
+2. **Similarity Search**: When you select a track, FAISS (Facebook AI Similarity Search) quickly finds the most similar fingerprints in your library
+
+3. **Compatibility Scoring**: Results are ranked using a weighted formula:
+   - 70% audio similarity (cosine distance)
+   - 20% key compatibility (Camelot wheel)
+   - 10% BPM compatibility
+
+You may choose to ignore the weighted score and just rely on the cosine similarity to sort the tracks. This is done via the UI by clicking on the sort buttons.
+
+## Documentation
+
+Detailed technical documentation is available in the [`docs/`](docs/) folder:
+
+| Document | Description |
+|----------|-------------|
+| [System Architecture](docs/SYSTEM_ARCHITECTURE.md) | Complete system design and component overview |
+| [Embeddings Guide](docs/EMBEDDINGS_GUIDE.md) | How audio analysis and similarity search works |
+| [Program Flow](docs/PROGRAM_FLOW.md) | Detailed execution flow and data pipelines |
+| [Build Instructions](docs/BUILD_INSTRUCTIONS.md) | Building standalone applications |
 
 ## Project Structure
 
 ```
 dj-cosine/
-├── src/                       # Source code
-│   ├── cosine_companion.py        # Main CLI entry point
-│   │
-│   ├── config/                # Configuration management
-│   │   ├── paths.py           # File paths
-│   │   └── defaults.py        # Default parameters
-│   │
-│   ├── core/                  # Core data management
-│   │   ├── loader.py          # Data loading
-│   │   ├── persistence.py     # Data saving
-│   │   ├── index_builder.py   # FAISS index management
-│   │   └── duplicates.py      # Duplicate detection
-│   │
-│   ├── processing/            # Audio processing & pipeline
-│   │   ├── embeddings.py      # Audio embedding generation
-│   │   ├── xml_parser.py      # Rekordbox XML parsing
-│   │   └── pipeline.py        # Indexing orchestration
-│   │
-│   ├── recommendations/       # Recommendation engine
-│   │   ├── engine.py          # Main recommendation logic
-│   │   ├── scoring.py         # Key/BPM compatibility
-│   │   ├── set_generator.py   # DJ set generation
-│   │   ├── playlist_exporter.py    # M3U playlist export
-│   │   ├── models.py          # Data models
-│   │   ├── transitions.py     # Transition scoring
-│   │   └── search.py          # Track search
-│   │
-│   ├── ui/                    # User interface
-│   │   ├── app.py             # Main application
-│   │   ├── recommendations_tab.py  # Track exploration
-│   │   ├── set_creator_tab.py      # DJ set creation
-│   │   ├── playlist_export_tab.py  # Playlist export
-│   │   ├── library_tab.py          # Library management
-│   │   └── dialogs.py         # UI dialogs
-│   │
-│   └── features/              # Feature specifications
-│
-├── models/                    # ML models (download required)
-├── data/                      # Generated data files (gitignored)
-├── README.md
-└── PROGRAM_FLOW.md           # Detailed system documentation
+├── src/                    # Source code
+│   ├── config/             # Configuration and constants
+│   ├── core/               # Data loading, persistence, indexing
+│   ├── processing/         # Audio analysis and XML parsing
+│   ├── recommendations/    # Recommendation engine and scoring
+│   └── ui/                 # Tkinter GUI
+├── models/                 # ML models (download required)
+├── data/                   # Generated index files (gitignored)
+├── docs/                   # Documentation
+└── assets/                 # Application icons
 ```
 
-### Architecture
+## Requirements
 
-The codebase follows a modular package structure with clear separation of concerns:
+- Python 3.8+
+- ~300 MB disk space for ML model
+- ~50 MB per 1,000 indexed tracks
 
-- **config/**: Configuration and constants (no dependencies)
-- **core/**: Data management, loading, persistence, and indexing
-- **processing/**: Audio processing and indexing pipeline
-- **recommendations/**: Recommendation engine with scoring and set generation
-- **ui/**: Tabbed user interface with mixin architecture
+### Dependencies
 
-Each package contains focused modules (90-270 lines each) for better maintainability and testability. See [PROGRAM_FLOW.md](PROGRAM_FLOW.md) for detailed documentation.
-
-## Usage
-
-### Indexing Your Library
-
-**First time (full index):**
-```bash
-python src/cosine_companion.py index /path/to/rekordbox_export.xml
-```
-
-**Update with new tracks (incremental):**
-```bash
-python src/cosine_companion.py index /path/to/rekordbox_export.xml
-```
-
-**Force full reindex:**
-```bash
-python src/cosine_companion.py index /path/to/rekordbox_export.xml --force
-```
-
-**Debug with sample size:**
-```bash
-python src/cosine_companion.py index /path/to/rekordbox_export.xml --sample 50
-```
-
-### Check for Duplicates (Optional)
-```bash
-python src/cosine_companion.py clean-duplicates /path/to/rekordbox_export.xml
-```
-
-This analyzes your collection for duplicate tracks without modifying any files. Duplicates are automatically removed during indexing.
-
-### Launch the UI
-```bash
-python src/cosine_companion.py ui
-```
-
-The UI features four tabs:
-- **Explore**: Find similar tracks with interactive sorting
-- **Set Creator**: Generate DJ sets with anchor tracks at specific positions
-- **Playlist Export**: Export recommendation playlists as .m3u files for Rekordbox
-- **Library**: Browse, search, and manage your indexed tracks
-
-## Features
-
-- 🎵 **Audio Similarity Search**: Find tracks that sound similar using deep learning embeddings
-- 🎹 **Key Compatibility**: Harmonic mixing support with Camelot wheel notation
-- 🥁 **BPM Matching**: Automatic tempo compatibility detection (including half/double time)
-- 🎛️ **Interactive Sorting**: Sort recommendations by score, cosine similarity, key, BPM, or artist
-- 🎚️ **DJ Set Generation**: Create complete sets with anchor tracks at specific positions
-- 📋 **Playlist Export**: Generate .m3u playlists with recommendations that import directly into Rekordbox
-- 📚 **Library Management**: Browse, search, and delete tracks with multi-select support
-- ⚡ **Incremental Indexing**: Only process new tracks, saving time on library updates
-- 🔍 **Duplicate Detection**: Automatic identification and removal of duplicate tracks
-
-## Dependencies
-
+- `essentia-tensorflow` - Audio analysis
+- `faiss-cpu` - Similarity search
 - `numpy`, `pandas` - Data processing
-- `lxml` - XML parsing  
-- `soundfile` - Audio file reading
-- `essentia-tensorflow` - Audio analysis and embeddings (Discogs-EffNet model)
-- `faiss-cpu` - Fast similarity search with HNSW indexing
-- `typer` - CLI interface
+- `lxml` - XML parsing
+- `typer` - CLI
 - `tkinter` - GUI (included with Python)
-
-## Data Files
-
-The indexing process creates these files in the `data/` directory:
-
-- `meta.parquet` - Track metadata from Rekordbox XML
-- `embeddings.parquet` - Audio embeddings with track IDs  
-- `index.npy` - Normalized embedding vectors for FAISS
-- `ids.json` - Track ID mapping for FAISS index
-- `settings.json` - User preferences and configuration
-
-## Building Standalone Application
-
-To create a distributable app that end users can install:
-
-```bash
-# Install build dependencies
-pip install pyinstaller
-
-# Build the application
-python build_app.py
-```
-
-The application will be created in the `dist/` directory. See [PACKAGING.md](PACKAGING.md) for detailed instructions on creating installers for each platform.
-
-## First-Run Experience
-
-When users launch the app for the first time:
-
-1. **Welcome Screen**: Explains what Cosine Companion does
-2. **XML File Selection**: User chooses their Rekordbox XML export
-3. **Indexing Progress**: Shows real-time progress as library is indexed
-4. **Completion**: Automatically launches the main application
-
-Subsequent launches skip directly to the main interface.
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome! Here's how to help:
+
+1. **Report Bugs** - Open an issue describing the problem
+2. **Suggest Features** - Open an issue with your idea
+3. **Submit PRs** - Fork the repo, make changes, submit a pull request
+
+### Development Setup
+
+```bash
+git clone https://github.com/yourusername/dj-cosine.git
+cd dj-cosine
+pip install -r requirements.txt
+# Download the model (see Installation)
+python src/cosine_companion.py ui
+```
+
+### Code Style
+
+- Follow existing code patterns
+- Keep functions focused and documented
+- Test changes with your own library before submitting
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the GNU Affero General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+
+- [Essentia](https://essentia.upf.edu/) for audio analysis and the Discogs-EffNet model
+- [FAISS](https://github.com/facebookresearch/faiss) for efficient similarity search
+- [r/ProperTechno](https://www.reddit.com/r/ProperTechno/) for remaining true to Techno.
+
+---
+
+**Note**: This tool analyzes your local music files. No audio data is uploaded or shared.

@@ -97,3 +97,6 @@ data_backup/
 *.dmg
 dist/
 build/
+
+# Claude
+.claude

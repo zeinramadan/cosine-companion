@@ -48,6 +48,8 @@ a = Analysis(
     pathex=[str(src_dir)],
     binaries=faiss_bins + soundfile_bins + essentia_bins + numpy_bins + pandas_bins + numpy_all_bins + pandas_all_bins + pyarrow_bins,
     datas=[
+        # Include LICENSE for distributions (AGPL compliance)
+        (str(project_root / 'LICENSE'), '.'),
         # Include models directory if it exists
         (str(project_root / 'models'), 'models'),
         # Include assets directory (icons, etc.)
