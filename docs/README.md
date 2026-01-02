@@ -24,8 +24,6 @@ Technical documentation for developers and contributors.
 | Document | Description |
 |----------|-------------|
 | [Playlist Export](PLAYLIST_EXPORT.md) | M3U playlist export functionality |
-| [Track Associations](TRACK_ASSOCIATIONS.md) | Track relationship and association features |
-| [Live Companion](LIVE_COMPANION_FEATURE.md) | Live performance companion feature spec |
 
 ## Quick Links
 
