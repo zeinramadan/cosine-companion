@@ -1,4 +1,6 @@
-# Track Associations Feature
+# Track Associations Feature (Proposal)
+
+**Status**: Proposed / not implemented in the current codebase.
 
 ## Overview
 
@@ -93,34 +95,33 @@ Store associations in a JSON file: `data/track_associations.json`
 ```
 
 ### Track ID System
-Use a consistent track identifier across the system:
-- Format: `{artist}___{title}` (sanitized, lowercase, spaces to underscores)
-- Example: `"deadmau5___strobe_original_mix"` 
-- Fallback to file path hash if metadata is missing
+Use the existing `track_id` values from Rekordbox XML (strings), consistent with
+`src/processing/xml_parser.py`. If Rekordbox TrackID is missing, the current
+pipeline falls back to the track `path`.
 
 ## Implementation Plan
 
 ### Phase 1: Data Layer
-1. **Create `associations.py` module**
+1. **Create `src/core/associations.py` module**
    - `AssociationManager` class
    - Methods: `load_associations()`, `save_associations()`, `add_association()`, `remove_association()`, `get_associations_for_track()`
-   - Track ID generation and normalization
+   - Track ID normalization (reuse existing IDs)
 
-2. **Update `config.py`**
+2. **Update `src/config/paths.py` and `src/config/__init__.py`**
    - Add `ASSOCIATIONS_JSON = DATA / "track_associations.json"`
 
 ### Phase 2: Core Functionality
-3. **Extend track search in `recommendations.py`**
-   - Add `search_tracks(query)` function for association dialog
-   - Fuzzy matching on artist/title
+3. **Reuse track search in `src/recommendations/search.py`**
+   - Use existing `search_tracks(query, meta_ix)` for association dialog
+   - Add fuzzy matching if needed
 
-4. **Create association dialogs in `ui.py`**
+4. **Create association dialogs in `src/ui/`**
    - `AddAssociationDialog` class
    - Track search functionality
    - Association creation interface
 
 ### Phase 3: UI Integration
-5. **Update main UI (`ui.py`)**
+5. **Update main UI (`src/ui/app.py` and mixins)**
    - Convert suggestions area to tabbed interface using `ttk.Notebook`
    - Create `MyAssociationsTab` class
    - Update track selection to show both tabs
@@ -146,12 +147,12 @@ Use a consistent track identifier across the system:
 
 ```
 dj-cosine/
-├── associations.py          # New: Association management
-├── ui.py                   # Modified: Add tabbed interface
-├── config.py               # Modified: Add associations path
-├── recommendations.py      # Modified: Add track search
+├── src/core/associations.py     # New: association management
+├── src/ui/                      # Modified: add associations UI
+├── src/config/paths.py          # Modified: add associations path
+├── src/recommendations/search.py# Reuse search helper
 └── data/
-    └── track_associations.json  # New: Association storage
+    └── track_associations.json  # New: association storage
 ```
 
 ## Technical Considerations

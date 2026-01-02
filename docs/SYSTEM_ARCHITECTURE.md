@@ -36,7 +36,7 @@
 | **Application Type** | Desktop GUI + CLI |
 | **Platforms** | macOS (ARM64/Intel), Windows, Linux |
 | **Primary Language** | Python 3.8+ |
-| **Codebase Size** | ~5,244 lines of Python |
+| **Codebase Size** | A few thousand lines of Python (see repository) |
 | **Architecture Style** | Layered architecture with mixin-based UI |
 | **Data Storage** | File-based (Parquet, NumPy, JSON) |
 | **ML Framework** | Essentia + TensorFlow |
@@ -63,7 +63,7 @@
 │  ┌─────────────────────────────────────────────────────────────────┐   │
 │  │                    UI LAYER (ui/)                                │   │
 │  │  ┌──────────────┬──────────────┬──────────────┬──────────────┐  │   │
-│  │  │ Recommendations│ Set Creator │  Playlist   │   Library    │  │   │
+│  │  │   Explore     │ Set Creator │  Playlist   │   Library    │  │   │
 │  │  │     Tab       │     Tab     │ Export Tab  │     Tab      │  │   │
 │  │  └──────────────┴──────────────┴──────────────┴──────────────┘  │   │
 │  └─────────────────────────────┬───────────────────────────────────┘   │
@@ -167,7 +167,6 @@ Set Anchor Tracks → Position Anchors → Fill Slots (Context-Aware) → Export
 |------|---------|
 | **GitHub Actions** | CI/CD for multi-platform builds |
 | **PyInstaller** | Creates standalone executables |
-| **pytest** | Testing framework |
 | **pip** | Dependency management |
 
 ---
@@ -223,13 +222,12 @@ Track representations use Python dataclasses for type safety:
 ```python
 @dataclass
 class SetTrack:
-    track_id: int
-    artist: str
-    title: str
-    bpm: float
-    key: str
+    track_id: str
     position: int
     is_anchor: bool
+    score: float = 0.0
+    artist: str = ""
+    title: str = ""
 ```
 
 ### 4.4 Lazy Import Pattern
@@ -239,8 +237,7 @@ Heavy dependencies are imported lazily to minimize startup time:
 ```python
 def index_library(xml_path: str):
     # Heavy imports only when function is called
-    from processing.pipeline import run_indexing_pipeline
-    from processing.embeddings import DiscogsEffnetEmbedder
+    from processing.pipeline import index_library
     ...
 ```
 
@@ -325,7 +322,7 @@ dj-cosine/
 ├── cosine-companion.spec                # PyInstaller spec
 ├── build_app.py                         # Build script
 ├── README.md                            # User documentation
-└── PROGRAM_FLOW.md                      # Flow documentation
+└── docs/PROGRAM_FLOW.md                 # Flow documentation
 ```
 
 ---
@@ -338,17 +335,16 @@ dj-cosine/
 Handles platform-aware path resolution for data storage:
 
 ```python
-def get_data_dir() -> Path:
-    """Returns appropriate data directory based on runtime context."""
-    if is_frozen():  # Running as compiled app
-        if platform == 'darwin':
-            return Path.home() / 'Library/Application Support/Cosine Companion'
-        elif platform == 'win32':
-            return Path.home() / 'AppData/Local/Cosine Companion'
-        else:  # Linux
-            return Path.home() / '.local/share/cosine-companion'
-    else:  # Development mode
-        return project_root / 'data'
+def _get_data_dir() -> Path:
+    """Return writable data directory depending on runtime context."""
+    if getattr(sys, 'frozen', False) or hasattr(sys, '_MEIPASS'):
+        system = platform.system()
+        if system == 'Darwin':
+            return Path.home() / 'Library' / 'Application Support' / 'Cosine Companion'
+        if system == 'Windows':
+            return Path.home() / 'AppData' / 'Local' / 'Cosine Companion'
+        return Path.home() / '.local' / 'share' / 'cosine-companion'
+    return project_root / 'data'
 ```
 
 #### defaults.py
@@ -372,20 +368,26 @@ DEFAULT_FINAL_TOP = 15    # Final recommendations
 Loads existing indexed data and identifies new tracks:
 
 ```python
-def load_all() -> Tuple[pd.DataFrame, pd.DataFrame, np.ndarray, List[int], FaissCosIndex, Set[int]]:
+def load_all() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, FaissCosIndex, np.ndarray, List[str]]:
     """Load all index components from disk."""
-    meta = pd.read_parquet(data_dir / 'meta.parquet')
-    embeddings = pd.read_parquet(data_dir / 'embeddings.parquet')
-    vectors = np.load(data_dir / 'index.npy')
-    ids = json.load(open(data_dir / 'ids.json'))
-    index = FaissCosIndex.load(vectors)
-    deleted = load_deleted_tracks()
-    return meta, embeddings, vectors, ids, index, deleted
+    meta = pd.read_parquet(META_PQ)
+    emb = pd.read_parquet(EMB_PQ)
+    V = np.load(IDX_NPY)
+    with open(IDS_JSON) as f:
+        ids = json.load(f)
+    idx = FaissCosIndex(V.shape[1])
+    for tid, v in zip(ids, V):
+        idx.add(tid, v)
+    meta_ix = meta.set_index("track_id")
+    emb_ix = emb.set_index("track_id")
+    return meta, meta_ix, emb_ix, idx, V, ids
 
-def find_new_tracks(xml_tracks: pd.DataFrame, existing_meta: pd.DataFrame) -> pd.DataFrame:
+def find_new_tracks(current_meta: pd.DataFrame, existing_meta: Optional[pd.DataFrame]) -> pd.DataFrame:
     """Identify tracks in XML not yet indexed."""
-    existing_ids = set(existing_meta['track_id'])
-    return xml_tracks[~xml_tracks['track_id'].isin(existing_ids)]
+    if existing_meta is None:
+        return current_meta
+    existing_ids = set(existing_meta["track_id"])
+    return current_meta[~current_meta["track_id"].isin(existing_ids)]
 ```
 
 #### persistence.py
@@ -396,7 +398,7 @@ def save_index_data(
     meta: pd.DataFrame,
     embeddings: pd.DataFrame,
     vectors: np.ndarray,
-    ids: List[int]
+    ids: List[str]
 ) -> None:
     """Persist all index data to disk."""
     meta.to_parquet(data_dir / 'meta.parquet')
@@ -414,18 +416,33 @@ class FaissCosIndex:
 
     def __init__(self, dim: int = 256):
         # HNSW index with cosine distance (via inner product on normalized vectors)
-        self.index = faiss.IndexHNSWFlat(dim, 32)  # 32 neighbors per layer
+        self.index = faiss.IndexHNSWFlat(dim, 32, faiss.METRIC_INNER_PRODUCT)
         self.index.hnsw.efConstruction = 200       # Build quality
         self.index.hnsw.efSearch = 64              # Search quality
+        self.ids: List[str] = []
 
-    def add(self, vectors: np.ndarray) -> None:
-        """Add L2-normalized vectors to index."""
-        self.index.add(vectors.astype('float32'))
+    def add(self, track_id: str, v: np.ndarray) -> None:
+        """Add a normalized vector to index."""
+        v = v.astype("float32")
+        n = np.linalg.norm(v)
+        if n > 0:
+            v = v / n
+        self.index.add(v[np.newaxis, :])
+        self.ids.append(track_id)
 
-    def search(self, query: np.ndarray, k: int) -> Tuple[np.ndarray, np.ndarray]:
+    def search(self, v: np.ndarray, k: int) -> List[Tuple[str, float]]:
         """Search for k nearest neighbors."""
-        distances, indices = self.index.search(query.reshape(1, -1).astype('float32'), k)
-        return distances[0], indices[0]
+        v = v.astype("float32")
+        n = np.linalg.norm(v)
+        if n > 0:
+            v = v / n
+        D, I = self.index.search(v[np.newaxis, :], k)
+        out = []
+        for j, i in enumerate(I[0]):
+            if i == -1:
+                continue
+            out.append((self.ids[i], float(D[0, j])))
+        return out
 ```
 
 ### 6.3 Processing Layer (`processing/`)
@@ -434,28 +451,35 @@ class FaissCosIndex:
 Extracts track metadata from Rekordbox XML exports:
 
 ```python
-def parse_rekordbox_xml(xml_path: str) -> pd.DataFrame:
+def read_rekordbox_xml(xml_path: str) -> pd.DataFrame:
     """Parse Rekordbox XML and extract track metadata."""
     tree = etree.parse(xml_path)
-    tracks = []
+    rows = []
 
-    for track in tree.xpath('//TRACK'):
-        # Handle file:// URL decoding
-        location = urllib.parse.unquote(track.get('Location', ''))
-        if location.startswith('file://localhost'):
-            location = location[16:]
+    for t in tree.xpath("//COLLECTION/TRACK"):
+        loc = t.get("Location") or ""
+        parsed = urlparse(loc)
+        path_local = ""
+        if parsed.scheme == "file":
+            path_with_fragment = parsed.path + ("#" + parsed.fragment if parsed.fragment else "")
+            if parsed.netloc and parsed.netloc != "localhost":
+                path_local = "/" + parsed.netloc + unquote(path_with_fragment)
+            else:
+                path_local = unquote(path_with_fragment)
 
-        tracks.append({
-            'track_id': int(track.get('TrackID')),
-            'artist': track.get('Artist', ''),
-            'title': track.get('Name', ''),
-            'album': track.get('Album', ''),
-            'bpm': float(track.get('AverageBpm', 0)),
-            'key': convert_tonality(track.get('Tonality', '')),
-            'path': location
+        rows.append({
+            "track_id": t.get("TrackID") or loc,
+            "path": loc,
+            "path_local": path_local,
+            "artist": t.get("Artist") or "",
+            "title": t.get("Name") or "",
+            "album": t.get("Album") or "",
+            "bpm": float(t.get("AverageBpm") or t.get("Tempo") or 0) or None,
+            "key": t.get("Tonality") or "",
         })
 
-    return pd.DataFrame(tracks)
+    df = pd.DataFrame(rows)
+    return df[df["path_local"].astype(str).str.len() > 0].copy()
 ```
 
 #### embeddings.py
@@ -465,26 +489,24 @@ Generates audio embeddings using Essentia:
 class DiscogsEffnetEmbedder:
     """Audio embedding generator using Discogs-EffNet model."""
 
-    def __init__(self, model_path: str):
-        self.model = TensorflowPredictEffnetDiscogs(
-            graphFilename=model_path,
+    def __init__(self, model_path: Optional[str] = None, sr: int = 32000):
+        self.sr = sr
+        model_path = model_path or (MODELS / "discogs_multi_embeddings-effnet-bs64-1.pb")
+        self.pred = es.TensorflowPredictEffnetDiscogs(
+            graphFilename=str(model_path),
             output='PartitionedCall:1'  # Embedding output layer
         )
-        self.sample_rate = 32000
 
-    def embed(self, audio_path: str) -> np.ndarray:
+    def embed_file(self, audio_path: str) -> np.ndarray:
         """Generate embedding for audio file."""
-        # Load audio
-        audio = MonoLoader(filename=audio_path, sampleRate=self.sample_rate)()
-
-        # Get frame-wise embeddings
-        embeddings = self.model(audio)
+        audio = es.MonoLoader(filename=audio_path, sampleRate=self.sr, resampleQuality=4)()
+        embeddings = np.asarray(self.pred(audio))
 
         # Aggregate: mean + std pooling
-        pooled = np.concatenate([
-            embeddings.mean(axis=0),
-            embeddings.std(axis=0)
-        ])
+        if embeddings.ndim == 1:
+            pooled = embeddings
+        else:
+            pooled = np.concatenate([embeddings.mean(axis=0), embeddings.std(axis=0)])
 
         # L2 normalize for cosine similarity
         return pooled / np.linalg.norm(pooled)
@@ -494,61 +516,72 @@ class DiscogsEffnetEmbedder:
 Orchestrates the complete indexing workflow:
 
 ```python
-def run_indexing_pipeline(
+def index_library(
     xml_path: str,
-    force: bool = False,
-    sample: int = None,
-    progress_callback: Callable = None
+    force_full: bool = False,
+    sample_size: int | None = None,
+    cancel_check: Optional[Callable] = None,
 ) -> None:
     """
     Main indexing pipeline with incremental update support.
 
     Steps:
     1. Parse Rekordbox XML
-    2. Load existing data (if not force)
-    3. Detect and remove duplicates
-    4. Identify new tracks
-    5. Generate embeddings for new tracks
-    6. Merge with existing data
-    7. Build FAISS index
+    2. Load existing data (unless force)
+    3. Remove duplicates
+    4. Filter manually deleted tracks
+    5. Identify new tracks
+    6. Generate embeddings for new tracks
+    7. Merge embeddings and metadata
     8. Persist all data
     """
-    # Parse XML
-    xml_tracks = parse_rekordbox_xml(xml_path)
+    existing_meta, existing_emb = (None, None) if force_full else load_existing_data()
+    current_meta = read_rekordbox_xml(xml_path)
+    current_meta, _ = remove_simple_duplicates(current_meta)
+    current_meta = filter_deleted_tracks(current_meta)
+    new_tracks = find_new_tracks(current_meta, existing_meta)
+    if sample_size:
+        new_tracks = new_tracks.head(sample_size)
 
-    if not force and data_exists():
-        # Incremental update
-        existing_meta, existing_emb, _, _, _, _ = load_all()
-        new_tracks = find_new_tracks(xml_tracks, existing_meta)
+    embedder = DiscogsEffnetEmbedder()
+    new_vectors, new_track_ids = [], []
+    for _, row in new_tracks.iterrows():
+        if cancel_check and cancel_check():
+            raise KeyboardInterrupt("User cancelled indexing")
+        vec = embedder.embed_file(row["path_local"])
+        if vec is None:
+            continue
+        new_track_ids.append(row["track_id"])
+        new_vectors.append(vec)
+
+    new_vectors_array = np.vstack(new_vectors).astype("float32")
+    v_cols = [f"v{i}" for i in range(new_vectors_array.shape[1])]
+    new_emb_df = pd.concat([
+        pd.DataFrame({"track_id": new_track_ids}),
+        pd.DataFrame(new_vectors_array, columns=v_cols)
+    ], axis=1)
+
+    # Merge embeddings and metadata, then save
+    combined_emb, combined_vectors, combined_track_ids = merge_embeddings(
+        existing_emb, new_emb_df, new_track_ids, new_vectors_array
+    )
+    if existing_meta is not None:
+        current_meta_dict = {row["track_id"]: row for _, row in current_meta.iterrows()}
+        combined_meta_rows = []
+        seen_ids = set()
+        for tid in combined_track_ids:
+            if tid in current_meta_dict:
+                combined_meta_rows.append(current_meta_dict[tid])
+                seen_ids.add(tid)
+        for _, row in existing_meta.iterrows():
+            tid = row["track_id"]
+            if tid in combined_track_ids and tid not in seen_ids:
+                combined_meta_rows.append(row.to_dict())
+                seen_ids.add(tid)
+        combined_meta = pd.DataFrame(combined_meta_rows)
     else:
-        # Full reindex
-        existing_meta = pd.DataFrame()
-        existing_emb = pd.DataFrame()
-        new_tracks = xml_tracks
-
-    # Remove duplicates
-    new_tracks = remove_duplicates(new_tracks)
-
-    # Generate embeddings
-    embedder = DiscogsEffnetEmbedder(get_model_path())
-    new_embeddings = []
-
-    for i, track in new_tracks.iterrows():
-        if progress_callback:
-            progress_callback(i, len(new_tracks))
-        emb = embedder.embed(track['path'])
-        new_embeddings.append({'track_id': track['track_id'], **dict(enumerate(emb))})
-
-    # Merge data
-    all_meta = pd.concat([existing_meta, new_tracks])
-    all_emb = pd.concat([existing_emb, pd.DataFrame(new_embeddings)])
-
-    # Build index
-    vectors = all_emb.drop('track_id', axis=1).values
-    ids = all_emb['track_id'].tolist()
-
-    # Save
-    save_index_data(all_meta, all_emb, vectors, ids)
+        combined_meta = current_meta
+    save_index_data(combined_meta, combined_emb, combined_vectors, combined_track_ids)
 ```
 
 ### 6.4 Recommendations Layer (`recommendations/`)
@@ -558,69 +591,56 @@ Core recommendation algorithm:
 
 ```python
 def recommend_for(
-    track_id: int,
-    meta: pd.DataFrame,
-    vectors: np.ndarray,
-    ids: List[int],
-    index: FaissCosIndex,
-    deleted: Set[int],
-    topk: int = 200,
-    final_top: int = 15
+    track_id: str,
+    meta_ix: pd.DataFrame,
+    emb_ix: pd.DataFrame,
+    idx: FaissCosIndex,
+    topk: int = DEFAULT_TOPK,
+    final_top: int = DEFAULT_FINAL_TOP
 ) -> List[Dict]:
     """
     Generate recommendations for a track.
 
     Algorithm:
     1. Query FAISS for top-k nearest neighbors
-    2. Filter out deleted tracks
-    3. Compute exact cosine similarity
+    2. Compute exact cosine similarity
     4. Score key compatibility
     5. Score BPM compatibility
     6. Calculate weighted final score
     7. Return top results
     """
-    # Get query vector
-    query_idx = ids.index(track_id)
-    query_vec = vectors[query_idx]
-    query_row = meta[meta['track_id'] == track_id].iloc[0]
-
-    # FAISS search
-    _, neighbor_indices = index.search(query_vec, topk)
+    v = vector_for(track_id, emb_ix)
+    if v is None:
+        return []
+    src = meta_ix.loc[track_id]
+    nbrs = idx.search(v, k=topk + 1)
 
     results = []
-    for idx in neighbor_indices:
-        if idx < 0:  # FAISS returns -1 for missing
+    for tid, _ in nbrs:
+        if tid == track_id:
             continue
-
-        neighbor_id = ids[idx]
-        if neighbor_id == track_id or neighbor_id in deleted:
+        m = meta_ix.loc[tid]
+        v2 = vector_for(tid, emb_ix)
+        if v2 is None:
             continue
-
-        neighbor_row = meta[meta['track_id'] == neighbor_id].iloc[0]
-        neighbor_vec = vectors[idx]
-
-        # Scoring
-        cosine = np.dot(query_vec, neighbor_vec)
-        key_score = key_compatibility(query_row['key'], neighbor_row['key'])
-        bpm_score = bpm_compatibility(query_row['bpm'], neighbor_row['bpm'])
-
-        # Weighted combination
-        final_score = 0.7 * cosine + 0.2 * key_score + 0.1 * bpm_score
+        cosine = float(np.dot(v, v2))
+        key_score = key_compat(src.get("key"), m.get("key"))
+        bpm_score = bpm_compat(src.get("bpm"), m.get("bpm"))
+        score = final_score(cosine, key_score, bpm_score)
 
         results.append({
-            'track_id': neighbor_id,
-            'artist': neighbor_row['artist'],
-            'title': neighbor_row['title'],
-            'bpm': neighbor_row['bpm'],
-            'key': neighbor_row['key'],
-            'score': final_score,
-            'cosine': cosine,
-            'key_score': key_score,
-            'bpm_score': bpm_score
+            "track_id": tid,
+            "artist": m.get("artist", ""),
+            "title": m.get("title", ""),
+            "bpm": m.get("bpm", None),
+            "key": m.get("key", ""),
+            "score": score,
+            "cosine": cosine,
+            "key_score": key_score,
+            "bpm_score": bpm_score
         })
 
-    # Sort by final score, return top results
-    results.sort(key=lambda x: x['score'], reverse=True)
+    results.sort(key=lambda x: x["score"], reverse=True)
     return results[:final_top]
 ```
 
@@ -628,14 +648,7 @@ def recommend_for(
 Musical compatibility scoring:
 
 ```python
-# Camelot wheel positions
-CAMELOT = {
-    'C': '8B', 'Am': '8A', 'G': '9B', 'Em': '9A',
-    'D': '10B', 'Bm': '10A', 'A': '11B', 'F#m': '11A',
-    # ... full mapping
-}
-
-def key_compatibility(key1: str, key2: str) -> float:
+def key_compat(src: Optional[str], dst: Optional[str]) -> float:
     """
     Score key compatibility using Camelot wheel.
 
@@ -644,55 +657,43 @@ def key_compatibility(key1: str, key2: str) -> float:
         0.8  - Adjacent on Camelot wheel (+/-1)
         0.6  - Relative major/minor (same number)
         0.4  - Two steps away
-        0.0  - Incompatible
+        0.0  - Incompatible or unknown keys
     """
-    if key1 == key2:
+    s = to_camelot(src)
+    d = to_camelot(dst)
+    if not s or not d:
+        return 0.0
+    sn, sm = int(s[:-1]), s[-1]
+    dn, dm = int(d[:-1]), d[-1]
+    if s == d:
         return 1.0
+    if sm == dm and ((sn - dn) % 12 in (1, 11)):
+        return 0.8
+    if sn == dn and sm != dm:
+        return 0.6
+    if sm == dm and ((sn - dn) % 12 in (2, 10)):
+        return 0.4
+    return 0.0
 
-    c1, c2 = CAMELOT.get(key1), CAMELOT.get(key2)
-    if not c1 or not c2:
-        return 0.5  # Unknown keys
-
-    num1, letter1 = int(c1[:-1]), c1[-1]
-    num2, letter2 = int(c2[:-1]), c2[-1]
-
-    num_diff = min(abs(num1 - num2), 12 - abs(num1 - num2))
-
-    if num_diff == 0 and letter1 != letter2:
-        return 0.6  # Relative major/minor
-    elif num_diff == 1 and letter1 == letter2:
-        return 0.8  # Adjacent
-    elif num_diff == 2 and letter1 == letter2:
-        return 0.4  # Two steps
-    else:
-        return 0.0  # Incompatible
-
-def bpm_compatibility(bpm1: float, bpm2: float) -> float:
+def bpm_compat(sbpm: Optional[float], dbpm: Optional[float], pct: float = 0.06) -> float:
     """
     Score BPM compatibility with half/double time support.
 
     Returns:
         1.0  - Within 6% of each other
         0.7  - Half or double time (within 6%)
-        0.0  - Incompatible
+        0.0  - Incompatible or unknown BPM
     """
-    if bpm1 == 0 or bpm2 == 0:
-        return 0.5
-
-    ratio = bpm1 / bpm2
-
-    # Direct match (within 6%)
-    if 0.94 <= ratio <= 1.06:
+    if not sbpm or not dbpm:
+        return 0.0
+    lo, hi = sbpm * (1 - pct), sbpm * (1 + pct)
+    if lo <= dbpm <= hi:
         return 1.0
-
-    # Half time
-    if 0.47 <= ratio <= 0.53:
-        return 0.7
-
-    # Double time
-    if 1.88 <= ratio <= 2.12:
-        return 0.7
-
+    for mult in (0.5, 2.0):
+        b = sbpm * mult
+        lo, hi = b * (1 - pct), b * (1 + pct)
+        if lo <= dbpm <= hi:
+            return 0.7
     return 0.0
 ```
 
@@ -701,13 +702,12 @@ DJ set generation with anchor track support:
 
 ```python
 def generate_set(
-    anchor_tracks: List[Tuple[int, int]],  # (track_id, position)
-    set_length: int,
-    meta: pd.DataFrame,
-    vectors: np.ndarray,
-    ids: List[int],
-    index: FaissCosIndex,
-    deleted: Set[int]
+    anchor_tracks: Dict[int, str],  # {position: track_id} (1-indexed)
+    total_tracks: int,
+    meta_ix: pd.DataFrame,
+    emb_ix: pd.DataFrame,
+    idx: FaissCosIndex,
+    exclude_tracks: Optional[List[str]] = None
 ) -> List[SetTrack]:
     """
     Generate a DJ set with anchor tracks at specified positions.
@@ -721,25 +721,23 @@ def generate_set(
        d. Select best track that isn't already in set
     3. Return complete set
     """
-    set_tracks = [None] * set_length
-    used_ids = set()
+    set_tracks = [None] * total_tracks
+    exclude_set = set(exclude_tracks or [])
+    exclude_set.update(anchor_tracks.values())
 
     # Place anchors
-    for track_id, position in anchor_tracks:
-        track_row = meta[meta['track_id'] == track_id].iloc[0]
-        set_tracks[position] = SetTrack(
+    for position, track_id in anchor_tracks.items():
+        track_row = meta_ix.loc[track_id]
+        set_tracks[position - 1] = SetTrack(
             track_id=track_id,
             artist=track_row['artist'],
             title=track_row['title'],
-            bpm=track_row['bpm'],
-            key=track_row['key'],
             position=position,
             is_anchor=True
         )
-        used_ids.add(track_id)
 
     # Fill empty slots
-    for i in range(set_length):
+    for i in range(total_tracks):
         if set_tracks[i] is not None:
             continue
 
@@ -748,25 +746,42 @@ def generate_set(
         next_track = find_next_track(set_tracks, i)
 
         # Get candidates
-        candidates = get_contextual_recommendations(
-            prev_track, next_track,
-            meta, vectors, ids, index, deleted
-        )
+        if prev_track:
+            candidates = recommend_for(prev_track, meta_ix, emb_ix, idx, topk=100, final_top=50)
+        elif next_track:
+            candidates = recommend_for(next_track, meta_ix, emb_ix, idx, topk=100, final_top=50)
+        else:
+            first_anchor = list(anchor_tracks.values())[0]
+            candidates = recommend_for(first_anchor, meta_ix, emb_ix, idx, topk=100, final_top=50)
 
-        # Select best unused
-        for candidate in candidates:
-            if candidate['track_id'] not in used_ids:
-                set_tracks[i] = SetTrack(
-                    track_id=candidate['track_id'],
-                    artist=candidate['artist'],
-                    title=candidate['title'],
-                    bpm=candidate['bpm'],
-                    key=candidate['key'],
-                    position=i,
-                    is_anchor=False
-                )
-                used_ids.add(candidate['track_id'])
-                break
+        # Filter out excluded tracks
+        used_tracks = {track.track_id for track in set_tracks if track is not None}
+        all_excluded = exclude_set.union(used_tracks)
+        filtered_candidates = [c for c in candidates if c["track_id"] not in all_excluded]
+
+        # Score candidates by transition quality
+        best_candidate = None
+        best_score = -1.0
+        for candidate in filtered_candidates[:20]:
+            track_id = candidate["track_id"]
+            if prev_track:
+                score = calculate_transition_score(prev_track, track_id, next_track, emb_ix)
+            else:
+                score = candidate.get("cosine", 0.0)
+            if score > best_score:
+                best_score = score
+                best_candidate = candidate
+
+        if best_candidate:
+            set_tracks[i] = SetTrack(
+                track_id=best_candidate["track_id"],
+                artist=best_candidate.get("artist", ""),
+                title=best_candidate.get("title", ""),
+                position=i + 1,
+                is_anchor=False,
+                score=best_score
+            )
+            exclude_set.add(best_candidate["track_id"])
 
     return set_tracks
 ```
@@ -794,18 +809,23 @@ def generate_set(
                     │   - track_id        │
                     │   - artist, title   │
                     │   - bpm, key        │
-                    │   - file path       │
+                    │   - path, path_local│
                     └──────────┬──────────┘
                                │
               ┌────────────────┼────────────────┐
               │                │                │
               ▼                ▼                ▼
     ┌─────────────────┐ ┌─────────────┐ ┌─────────────────┐
-    │  Duplicate      │ │ Load Exist- │ │  Find New       │
-    │  Detection      │ │ ing Data    │ │  Tracks         │
+    │  Duplicate      │ │ Load Exist- │ │ Filter Deleted  │
+    │  Detection      │ │ ing Data    │ │ Tracks          │
     └────────┬────────┘ └──────┬──────┘ └────────┬────────┘
              │                 │                  │
              └─────────────────┼──────────────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │  Find New Tracks    │
+                    └──────────┬──────────┘
                                │
                                ▼
                     ┌─────────────────────┐
@@ -877,7 +897,7 @@ def generate_set(
     │  Filter & Score     │
     │                     │
     │  For each neighbor: │
-    │  - Skip deleted     │
+    │  - Deleted tracks are filtered at index time │
     │  - Cosine similarity│
     │  - Key compatibility│
     │  - BPM compatibility│
@@ -890,14 +910,13 @@ def generate_set(
                ▼
     ┌─────────────────────┐
     │  Sort by Score      │
-    │  Return Top-15      │
+    │  Return Top-N       │
     └──────────┬──────────┘
                │
                ▼
     ┌─────────────────────┐
     │  Display in UI      │
-    │  (Recommendations   │
-    │   Tab)              │
+    │  (Explore Tab)      │
     └─────────────────────┘
 ```
 
@@ -924,21 +943,22 @@ The application uses a **file-based storage** approach with no external database
 ```
 Column      Type      Description
 ──────────────────────────────────────
-track_id    int64     Unique identifier (from Rekordbox)
+track_id    string    Unique identifier (from Rekordbox or fallback path)
 artist      string    Artist name
 title       string    Track title
 album       string    Album name
 bpm         float64   Beats per minute
 key         string    Musical key (e.g., "Am", "C")
-path        string    Full file path to audio file
+path        string    Rekordbox Location URL
+path_local  string    Local filesystem path to audio file
 ```
 
 #### embeddings.parquet
 ```
 Column      Type      Description
 ──────────────────────────────────────
-track_id    int64     Foreign key to meta
-v0-v255     float64   256-dimensional embedding vector
+track_id    string    Foreign key to meta
+v0-v255     float32   256-dimensional embedding vector
 ```
 
 #### index.npy
@@ -1068,7 +1088,7 @@ Uses the **Camelot Wheel** system for DJ-friendly key matching:
 │  │                   App (Main Window)                    │  │
 │  │  ┌──────────────────────────────────────────────────┐  │  │
 │  │  │                   Menu Bar                       │  │  │
-│  │  │  File | Edit | View | Help                       │  │  │
+│  │  │  File | Library | Help                           │  │  │
 │  │  └──────────────────────────────────────────────────┘  │  │
 │  │  ┌──────────────────────────────────────────────────┐  │  │
 │  │  │               Notebook (Tabs)                    │  │  │
@@ -1118,12 +1138,14 @@ class App(
         self.title("Cosine Companion")
 
         # Load all data
-        self.meta, self.emb, self.vec, self.ids, self.index, self.deleted = load_all()
+        self.meta, self.meta_ix, self.emb_ix, self.idx, self.V, self.ids = load_all()
 
         # Create UI structure
-        self.create_menu()
-        self.create_notebook()
-        self.create_status_bar()
+        self.create_menu_bar()
+        self.notebook = ttk.Notebook(self)
+        self.notebook.pack(fill="both", expand=True, pady=8)
+        self.status = tk.Label(self, text="...", anchor="w")
+        self.status.pack(fill="x", side="bottom")
 
         # Initialize tabs (from mixins)
         self.create_recommendations_tab()
@@ -1138,7 +1160,7 @@ class App(
 |-----|-------|-------------------|
 | **Explore** | `RecommendationsTabMixin` | Browse recommendations, set current track, view similarity scores |
 | **Set Creator** | `SetCreatorTabMixin` | Build DJ sets with anchor tracks, auto-fill remaining slots |
-| **Export** | `PlaylistExportTabMixin` | Export recommendations or sets as M3U playlists |
+| **Export** | `PlaylistExportTabMixin` | Export recommendations as M3U playlists |
 | **Library** | `LibraryTabMixin` | Search all tracks, delete tracks, multi-select operations |
 
 ### 10.4 Onboarding Flow
@@ -1176,8 +1198,8 @@ class App(
                                                │
                                                ▼
                                     ┌─────────────────┐
-                                    │  Download model │
-                                    │  (if needed)    │
+                                    │  Ensure model   │
+                                    │  file exists    │
                                     └────────┬────────┘
                                                │
                                                ▼
@@ -1237,83 +1259,41 @@ class App(
 
 Key settings from `cosine-companion.spec`:
 
-```python
-# Hidden imports (not automatically detected)
-hiddenimports = [
-    'numpy',
-    'pandas',
-    'faiss',
-    'essentia',
-    'essentia.standard',
-    'soundfile',
-    'PIL',
-    'lxml',
-    'pyarrow',
-    'tkinter',
-    'tkinter.ttk',
-]
-
-# Data files to include
-datas = [
-    ('models/', 'models/'),      # ML model
-    ('assets/', 'assets/'),       # Icons
-]
-
-# Binary libraries to collect
-binaries = collect_dynamic_libs('numpy')
-binaries += collect_dynamic_libs('pandas')
-binaries += collect_dynamic_libs('faiss')
-binaries += collect_dynamic_libs('essentia')
-```
+Key points (see `cosine-companion.spec` for the full, up-to-date list):
+- Collects dynamic libraries for numpy/pandas/faiss/essentia/pyarrow
+- Includes `models/`, `assets/`, and `LICENSE` in the bundle
+- Enumerates submodules for major dependencies and UI modules
 
 ### 11.3 CI/CD Pipelines
 
 #### macOS Build (Apple Silicon)
 ```yaml
 # .github/workflows/build-macos.yml
-name: Build macOS (ARM64)
+name: Build macOS
 
 on:
+  workflow_dispatch:
   push:
     tags: ['v*']
-  workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: macos-14  # Apple Silicon runner
+  build-macos:
+    runs-on: macos-latest
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Download model
-        run: |
-          mkdir -p models
-          curl -o models/discogs_multi_embeddings-effnet-bs64-1.pb \
-            https://essentia.upf.edu/models/...
-
-      - name: Build with PyInstaller
-        run: python build_app.py
-
-      - name: Create DMG
-        run: |
-          hdiutil create -volname "Cosine Companion" \
-            -srcfolder dist/Cosine\ Companion.app \
-            -ov -format UDZO \
-            Cosine-Companion-macOS-arm64.dmg
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos-arm64
-          path: '*.dmg'
+          cache: 'pip'
+      - run: pip install -r requirements.txt
+      - run: python build_app.py
+      - run: |
+          brew install create-dmg
+          create-dmg --volname "Cosine Companion" \
+            --volicon "assets/coco_logo.icns" \
+            "Cosine-Companion-macOS.dmg" \
+            "dist/Cosine Companion.app"
 ```
 
 ### 11.4 Platform-Specific Considerations
@@ -1353,7 +1333,6 @@ jobs:
 **Parsing Details**:
 - Uses `lxml` for efficient XML processing
 - Handles `file://localhost` URL encoding
-- Converts Rekordbox tonality to standard key notation
 - Extracts track IDs for deduplication
 
 ### 12.2 Essentia Model
@@ -1375,7 +1354,7 @@ Format: TensorFlow frozen graph (.pb)
 
 ### 12.3 M3U Playlist Export
 
-**Output Format**: Extended M3U (M3U8)
+**Output Format**: Extended M3U
 
 ```m3u
 #EXTM3U
@@ -1404,16 +1383,13 @@ Format: TensorFlow frozen graph (.pb)
 │  1. Hardcoded Defaults (config/defaults.py)         │
 │     └─ Scoring weights, sample rate, thresholds    │
 │                                                     │
-│  2. Environment Variables (.env)                    │
-│     └─ API keys, debug flags                       │
-│                                                     │
-│  3. User Settings (data/settings.json)              │
+│  2. User Settings (data/settings.json)              │
 │     └─ Per-user preferences                        │
 │                                                     │
-│  4. Runtime Arguments (CLI flags)                   │
+│  3. Runtime Arguments (CLI flags)                   │
 │     └─ --force, --sample, etc.                     │
 │                                                     │
-│  Priority: Runtime > User > Environment > Defaults  │
+│  Priority: Runtime > User > Defaults                │
 │                                                     │
 └─────────────────────────────────────────────────────┘
 ```
@@ -1437,17 +1413,6 @@ DEFAULT_SCORING_WEIGHTS = (
 DEFAULT_TOPK = 200          # Initial candidates
 DEFAULT_FINAL_TOP = 15      # Final recommendations
 
-# Key Compatibility Scores
-KEY_SCORES = {
-    'same': 1.0,
-    'adjacent': 0.8,
-    'relative': 0.6,
-    'two_step': 0.4,
-    'incompatible': 0.0,
-}
-
-# BPM Tolerance
-BPM_TOLERANCE = 0.06  # 6% tolerance
 ```
 
 ### 13.3 Path Resolution
@@ -1455,29 +1420,22 @@ BPM_TOLERANCE = 0.06  # 6% tolerance
 ```python
 # config/paths.py
 
-def get_data_dir() -> Path:
+def _get_data_dir() -> Path:
     """Platform-aware data directory resolution."""
+    if getattr(sys, 'frozen', False) or hasattr(sys, '_MEIPASS'):
+        system = platform.system()
+        if system == 'Darwin':
+            return Path.home() / 'Library' / 'Application Support' / 'Cosine Companion'
+        if system == 'Windows':
+            return Path.home() / 'AppData' / 'Local' / 'Cosine Companion'
+        return Path.home() / '.local' / 'share' / 'cosine-companion'
+    return Path(__file__).parent.parent.parent / 'data'
 
-    if getattr(sys, 'frozen', False):
-        # Running as compiled application
-        if sys.platform == 'darwin':
-            base = Path.home() / 'Library' / 'Application Support'
-        elif sys.platform == 'win32':
-            base = Path(os.environ.get('LOCALAPPDATA', Path.home()))
-        else:  # Linux
-            base = Path.home() / '.local' / 'share'
-
-        return base / 'Cosine Companion'
-    else:
-        # Development mode
-        return Path(__file__).parent.parent.parent / 'data'
-
-def get_model_path() -> Path:
-    """Returns path to Essentia model file."""
-    if getattr(sys, 'frozen', False):
-        return Path(sys._MEIPASS) / 'models' / 'discogs_multi_embeddings-effnet-bs64-1.pb'
-    else:
-        return Path(__file__).parent.parent.parent / 'models' / 'discogs_multi_embeddings-effnet-bs64-1.pb'
+def _get_models_dir() -> Path:
+    """Returns path to Essentia model directory."""
+    if hasattr(sys, '_MEIPASS'):
+        return Path(sys._MEIPASS) / 'models'
+    return Path(__file__).parent.parent.parent / 'models'
 ```
 
 ---
@@ -1541,21 +1499,16 @@ Total:                        ~500 MB
 |--------|----------------|
 | **Local Storage** | All data stored locally, no cloud sync |
 | **File Paths** | Stored as-is, no encryption |
-| **API Keys** | Environment variables (`.env` file) |
+| **API Keys** | None (no external API keys required) |
 | **User Data** | No personally identifiable information collected |
 
 ### 15.2 Input Validation
 
 ```python
-# XML Parsing Safety
-def parse_rekordbox_xml(xml_path: str) -> pd.DataFrame:
-    # Validate file exists and is readable
-    if not Path(xml_path).exists():
-        raise FileNotFoundError(f"XML file not found: {xml_path}")
-
-    # Use lxml with safe defaults (no external entities)
-    parser = etree.XMLParser(resolve_entities=False)
-    tree = etree.parse(xml_path, parser)
+# XML Parsing (current behavior)
+def read_rekordbox_xml(xml_path: str) -> pd.DataFrame:
+    # lxml will raise if the file is missing or invalid
+    tree = etree.parse(xml_path)
     ...
 ```
 

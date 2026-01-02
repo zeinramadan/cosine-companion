@@ -1,5 +1,7 @@
 # Auto Current Track – Implementation Plan
 
+**Status**: Proposed / not implemented in the current codebase.
+
 This document lays out clean, incremental steps to add **automatic current track detection** to the Cosine Companion app. Start with **Option A (SQLite polling)** on laptop setups; later you can swap or extend to Pro DJ Link (CDJs/XDJ) or file-based history watchers.
 
 ---
@@ -54,7 +56,7 @@ def watch_rekordbox_db(callback, stop_event, interval=1.5):
 ```
 
 ### 3) Integrate with the UI (non-invasive)
-In `ui.py`:
+In `src/ui/app.py` (or a dedicated mixin):
 - Build a `by_path` mapping from `meta.parquet` once during init: `{path or path_local -> track_id}` (normalize paths by stripping `file://` and URL-decoding as needed).
 - Add a method:
 
@@ -131,7 +133,7 @@ Create and cache dictionaries:
 ---
 
 ## UI Hooks (Summary)
-- Add `on_external_track_change(meta)` in `ui.py`.
+- Add `on_external_track_change(meta)` in `src/ui/app.py` (or a mixin).
 - Start exactly one provider thread on app start (configurable).
 - Stop it on window close.
 - The rest of the UI remains unchanged.

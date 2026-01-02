@@ -46,6 +46,7 @@ This document provides a comprehensive overview of how the Cosine Companion syst
 │  ├── embeddings.parquet (audio embeddings)                      │
 │  ├── index.npy        (FAISS vectors)                           │
 │  └── ids.json         (track ID mapping)                        │
+│  └── deleted_tracks.json (manually deleted track IDs)           │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -62,7 +63,7 @@ if __name__ == "__main__":
 **Available Commands:**
 1. `python src/cosine_companion.py index <xml_file> [--force] [--sample N]`
 2. `python src/cosine_companion.py ui`
-3. `python src/cosine_companion.py clean_duplicates <xml_file>`
+3. `python src/cosine_companion.py clean-duplicates <xml_file>`
 
 ---
 
@@ -99,7 +100,8 @@ graph TD
     G --> H
     
     H --> Ha[core.duplicates.remove_simple_duplicates]
-    Ha --> I[core.loader.find_new_tracks]
+    Ha --> Hb[core.deleted_tracks.filter_deleted_tracks]
+    Hb --> I[core.loader.find_new_tracks]
     I --> J{sample_size set?}
     J -->|Yes| K[Limit to first N tracks]
     J -->|No| L[Process all new tracks]
@@ -136,6 +138,10 @@ def index_library(rb_xml: str, force_full: bool = False, sample_size: int | None
     # Step 2.5: Remove duplicates
     from core.duplicates import remove_simple_duplicates
     current_meta, duplicates_info = remove_simple_duplicates(current_meta)
+
+    # Step 2.6: Filter manually deleted tracks
+    from core.deleted_tracks import filter_deleted_tracks
+    current_meta = filter_deleted_tracks(current_meta)
     
     # Step 3: Find new tracks
     from core.loader import find_new_tracks
@@ -163,7 +169,9 @@ def index_library(rb_xml: str, force_full: bool = False, sample_size: int | None
     combined_emb, combined_vectors, combined_track_ids = merge_embeddings(
         existing_emb, new_emb_df, new_track_ids, new_vectors_array
     )
-    save_index_data(current_meta, combined_emb, combined_vectors, combined_track_ids)
+    # Metadata merge preserves any previously indexed tracks that are no longer in the XML
+    combined_meta = current_meta if existing_meta is None else merge_metadata(existing_meta, current_meta, combined_track_ids)
+    save_index_data(combined_meta, combined_emb, combined_vectors, combined_track_ids)
 ```
 
 #### 2. **processing.xml_parser.read_rekordbox_xml(xml_path)**
@@ -175,12 +183,21 @@ def read_rekordbox_xml(xml_path: str) -> pd.DataFrame:
     
     # Extract track data with robust URL decoding
     for track in root.xpath("//COLLECTION/TRACK"):
-        location = track.get("Location")
-        # Handle file://localhost URLs and percent-encoding
-        if location.startswith("file://"):
-            parsed_url = urlparse(location)
-            path_local = unquote(parsed_url.path)
-        
+        location = track.get("Location") or ""
+        parsed = urlparse(location)
+        path_local = ""
+        if parsed.scheme == "file":
+            # Preserve literal '#' characters in filenames
+            path_with_fragment = parsed.path + ("#" + parsed.fragment if parsed.fragment else "")
+            if parsed.netloc and parsed.netloc != "localhost":
+                path_local = "/" + parsed.netloc + unquote(path_with_fragment)
+            else:
+                path_local = unquote(path_with_fragment)
+
+        track_id = track.get("TrackID") or ""
+        if not track_id:
+            track_id = location  # fallback when TrackID is missing
+
         extract_metadata(track)  # artist, title, bpm, key, etc.
     
     # Return DataFrame with verified local file paths
@@ -220,6 +237,7 @@ data/
 ├── embeddings.parquet  ← Track embeddings with IDs
 ├── index.npy          ← Normalized vectors for FAISS
 └── ids.json           ← Track ID → vector index mapping
+└── deleted_tracks.json ← Tracks manually hidden from indexing
 ```
 
 ---
@@ -240,8 +258,9 @@ cosine_companion.py:ui()
       └─ App.__init__()
          ├─ Load all data: core.loader.load_all()
          ├─ Create UI widgets (tabbed interface)
-         │  ├─ Recommendations tab (ui.recommendations_tab)
+         │  ├─ Explore tab (ui.recommendations_tab)
          │  ├─ Set Creator tab (ui.set_creator_tab)
+         │  ├─ Playlist Export tab (ui.playlist_export_tab)
          │  └─ Library tab (ui.library_tab)
          └─ Start mainloop()
 ```
@@ -335,16 +354,17 @@ graph TD
 #### **Enhanced UI Components**
 
 ```python
-# New UI layout with sorting
 def __init__(self):
     # ... existing setup ...
     
-    # Main buttons
+    # Main buttons (Back, Set Current, Copy, Set Selected as Current)
     btns = tk.Frame(self)
+    tk.Button(btns, text="← Back", command=self.go_back)
     tk.Button(btns, text="Set Current Track", command=self.pick_current)
     tk.Button(btns, text="Copy Selected to Clipboard", command=self.copy_selected)
+    tk.Button(btns, text="Set Selected as Current", command=self.set_selected_as_current)
     
-    # NEW: Sorting buttons
+    # Sorting + Top-N display limit
     sort_frame = tk.Frame(self)
     tk.Label(sort_frame, text="Sort by:")
     tk.Button(sort_frame, text="Score", command=lambda: self.sort_suggestions("score"))
@@ -352,6 +372,8 @@ def __init__(self):
     tk.Button(sort_frame, text="Key", command=lambda: self.sort_suggestions("key"))
     tk.Button(sort_frame, text="BPM", command=lambda: self.sort_suggestions("bpm"))
     tk.Button(sort_frame, text="Artist", command=lambda: self.sort_suggestions("artist"))
+    self.topn_var = tk.StringVar(value="50")
+    ttk.Combobox(sort_frame, textvariable=self.topn_var, values=["10", "20", "30", "50", "100", "200"], state="readonly")
     
     # Store recommendations for sorting
     self.current_recommendations: List[Dict[str, Any]] = []
@@ -389,16 +411,21 @@ def sort_suggestions(self, sort_by: str):
 def update_listbox(self):
     """Separate display logic for clean sorting."""
     self.listbox.delete(0, tk.END)
-    
-    for r in self.current_recommendations:
+
+    try:
+        topn = int(self.topn_var.get())
+    except Exception:
+        topn = 50
+
+    for r in self.current_recommendations[:topn]:
         cosine = float(r.get('cosine', 0))
         score = float(r.get('score', 0))
         cos_pct = cosine * 100.0
         score_pct = max(0.0, min(1.0, score)) * 100.0
         line = f"{r['artist']} – {r['title']}   [Key {r['key'] or '?'}  BPM {r['bpm'] or '?'}  Cos {cos_pct:.1f}%  Score {score_pct:.1f}%]"
         self.listbox.insert(tk.END, line)
-    
-    self.status.config(text=f"{self.listbox.size()} suggestions")
+
+    self.status.config(text=f"Showing {self.listbox.size()} of {len(self.current_recommendations)} recommendations")
 ```
 
 #### **Recommendation Generation - Step by Step**
@@ -416,14 +443,17 @@ def refresh_suggestions(self):
         self.update_listbox()
         return
     
-    # Get fresh recommendations with explicit cosine calculation
+    # Get more candidates than we display to keep Top-N consistent
     self.current_recommendations = recommend_for(
         self.current_id,      # Source track
         self.meta_ix,         # Metadata lookup
         self.emb_ix,          # Embeddings lookup  
         self.idx,             # FAISS index
-        final_top=20          # Number of results
+        topk=500,
+        final_top=200
     )
+    # Default sort is pure cosine similarity
+    self.current_recommendations.sort(key=lambda x: x['cosine'], reverse=True)
     self.update_listbox()
 ```
 
@@ -434,7 +464,7 @@ def recommend_for(track_id, meta_ix, emb_ix, idx, topk=200, final_top=15):
     
     # Step 1: Get source track vector (normalized)
     src_vector = vector_for(track_id, emb_ix)     # Defensive normalization
-    src_meta = meta_ix.loc[track_id]              # Source metadata
+    src_meta = meta_ix.loc[track_id]              # Source metadata (row)
     
     # Step 2: FAISS similarity search
     nbrs = idx.search(src_vector, k=topk+1)       # → core.index_builder
@@ -447,21 +477,23 @@ def recommend_for(track_id, meta_ix, emb_ix, idx, topk=200, final_top=15):
         
         target_meta = meta_ix.loc[candidate_id]
         target_vector = vector_for(candidate_id, emb_ix)  # Re-fetch for accuracy
+        if target_vector is None:
+            continue
         
         # Explicit cosine calculation (dot product of normalized vectors)
         cosine_similarity = np.dot(src_vector, target_vector)
         
         # Calculate compatibility scores
-        key_score = key_compat(src_meta.key, target_meta.key)
-        bpm_score = bpm_compat(src_meta.bpm, target_meta.bpm)
+        key_score = key_compat(src_meta.get("key"), target_meta.get("key"))
+        bpm_score = bpm_compat(src_meta.get("bpm"), target_meta.get("bpm"))
         score = final_score(cosine_similarity, key_score, bpm_score)
         
         recommendations.append({
             "track_id": candidate_id,
-            "artist": target_meta.artist,
-            "title": target_meta.title,
-            "bpm": target_meta.bpm,
-            "key": target_meta.key,
+            "artist": target_meta.get("artist", ""),
+            "title": target_meta.get("title", ""),
+            "bpm": target_meta.get("bpm", None),
+            "key": target_meta.get("key", ""),
             "score": score,
             "cosine": cosine_similarity,  # Store explicit cosine
             "key_score": key_score,
@@ -580,20 +612,24 @@ def recommend_for(track_id, meta_ix, emb_ix, idx, topk=200, final_top=15):
 | **core/** | **persistence.py** | Data Saving | `save_index_data()`, `merge_embeddings()` | pandas, numpy, config |
 | **core/** | **index_builder.py** | Similarity Search | `FaissCosIndex.search()`, `build_faiss_index()` | faiss, numpy |
 | **core/** | **duplicates.py** | Duplicate Detection | `remove_simple_duplicates()` | pandas, os |
+| **core/** | **deleted_tracks.py** | Deleted Track Management | `filter_deleted_tracks()` | json, pandas |
 | **processing/** | **pipeline.py** | Indexing Orchestration | `index_library()` | All core, processing modules |
 | **processing/** | **xml_parser.py** | XML Parsing | `read_rekordbox_xml()` | lxml, pandas, urllib |
 | **processing/** | **embeddings.py** | Audio Processing | `DiscogsEffnetEmbedder.embed_file()` | essentia, numpy |
 | **recommendations/** | **engine.py** | Recommendations | `recommend_for()`, `vector_for()` | core, scoring |
 | **recommendations/** | **scoring.py** | Compatibility Scoring | `key_compat()`, `bpm_compat()`, `final_score()` | None |
 | **recommendations/** | **set_generator.py** | DJ Set Generation | `generate_set()` | engine, transitions, models |
+| **recommendations/** | **playlist_exporter.py** | Playlist Export | `export_recommendations_as_playlists()`, `export_single_playlist()` | engine, core |
 | **recommendations/** | **models.py** | Data Models | `SetTrack` dataclass | dataclasses |
 | **recommendations/** | **transitions.py** | Transition Scoring | `calculate_transition_score()` | engine, numpy |
 | **recommendations/** | **search.py** | Track Search | `search_tracks()` | pandas |
 | **ui/** | **app.py** | Main Application | `App` class, mixins | core, tkinter |
 | **ui/** | **recommendations_tab.py** | Recommendations UI | Tab creation & logic | recommendations.engine |
 | **ui/** | **set_creator_tab.py** | Set Creator UI | Tab creation & logic | recommendations |
+| **ui/** | **playlist_export_tab.py** | Playlist Export UI | Tab creation & logic | recommendations.playlist_exporter |
 | **ui/** | **library_tab.py** | Library Management | Tab creation & deletion | core |
 | **ui/** | **dialogs.py** | UI Dialogs | `SimplePicker`, `AddAnchorDialog` | tkinter, recommendations |
+| **ui/** | **track_selector_dialog.py** | Track Selector Dialog | `TrackSelectorDialog` | tkinter, recommendations.search |
 
 ## ⚡ Performance Characteristics
 
@@ -616,8 +652,9 @@ def recommend_for(track_id, meta_ix, emb_ix, idx, topk=200, final_top=15):
 - **UI State**: ~50KB for current recommendations list
 
 ### UI Features:
-- **Tabbed Interface**: Three main tabs (Explore, Set Creator, Library)
+- **Tabbed Interface**: Four main tabs (Explore, Set Creator, Playlist Export, Library)
 - **Interactive Sorting**: Sort by Score, Cosine, Key, BPM, or Artist
+- **Top-N Selector**: Control how many recommendations are shown (10–200)
 - **Persistent State**: Recommendations cached until track change
 - **Dual Score Display**: Both raw cosine (Cos XX.X%) and weighted score (Score YY.Y%)
 - **History Navigation**: Back button to navigate through track selections

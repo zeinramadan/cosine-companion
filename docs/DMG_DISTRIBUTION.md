@@ -1,12 +1,10 @@
 # 📦 DMG Distribution Guide
 
-## ✅ DMG Installer Created Successfully!
+## ✅ Overview
 
-Your DMG installer is ready for distribution: **DJ-Companion-Installer.dmg**
+Use this guide to create and distribute a macOS DMG installer for Cosine Companion.
 
-- **File**: `DJ-Companion-Installer.dmg`
-- **Size**: ~207 MB
-- **Location**: `/Users/zein/dj-cosine/DJ-Companion-Installer.dmg`
+Example output file name: **Cosine-Companion-Installer.dmg**
 
 ---
 
@@ -33,7 +31,7 @@ When distributing the DMG, make sure you:
 
 ### 1. Open the DMG
 ```bash
-open DJ-Companion-Installer.dmg
+open Cosine-Companion-Installer.dmg
 ```
 
 This will mount the disk image and show the installer window with:
@@ -71,7 +69,7 @@ hdiutil detach "/Volumes/Cosine Companion"
 ```bash
 # Create a new release
 gh release create v1.0.0 \
-  DJ-Companion-Installer.dmg \
+  Cosine-Companion-Installer.dmg \
   --title "Cosine Companion v1.0.0" \
   --notes "Initial release of Cosine Companion"
 ```
@@ -80,7 +78,7 @@ Or manually:
 1. Go to GitHub repository → Releases
 2. Click "Draft a new release"
 3. Tag: `v1.0.0`
-4. Upload `DJ-Companion-Installer.dmg`
+4. Upload `Cosine-Companion-Installer.dmg`
 5. Add release notes
 6. Publish release
 
@@ -113,10 +111,10 @@ codesign --deep --force --verify --verbose \
 
 ```bash
 # Create a zip for notarization
-ditto -c -k --keepParent 'dist/Cosine Companion.app' DJ-Companion.zip
+ditto -c -k --keepParent 'dist/Cosine Companion.app' Cosine-Companion.zip
 
 # Submit for notarization
-xcrun notarytool submit DJ-Companion.zip \
+xcrun notarytool submit Cosine-Companion.zip \
   --apple-id "your@email.com" \
   --team-id "YOUR_TEAM_ID" \
   --password "app-specific-password" \
@@ -164,10 +162,10 @@ Provide these instructions to your users:
 
 ### Installing Cosine Companion
 
-1. **Download** `DJ-Companion-Installer.dmg`
+1. **Download** `Cosine-Companion-Installer.dmg`
 
 2. **Open** the downloaded DMG file
-   - Double-click `DJ-Companion-Installer.dmg`
+   - Double-click `Cosine-Companion-Installer.dmg`
    - A new window will open
 
 3. **Install** the application
@@ -208,12 +206,12 @@ Before distributing:
 ## 📊 File Sizes
 
 Understanding the size:
-- **DMG**: ~207 MB (compressed disk image)
-- **App**: ~500-800 MB (when installed)
+- **DMG**: size varies (typically a few hundred MB, depending on model and dependencies)
+- **App**: ~500-900 MB (when installed)
 - Size includes:
   - Python runtime
   - All dependencies (numpy, pandas, essentia, faiss, etc.)
-  - ML models (~34 MB)
+- ML models (~300 MB)
   - Audio processing libraries
 
 This is normal for a self-contained macOS application with machine learning capabilities.
@@ -246,7 +244,7 @@ When you release an update:
      --icon "Cosine Companion.app" 200 190 \
      --hide-extension "Cosine Companion.app" \
      --app-drop-link 600 185 \
-     "DJ-Companion-v1.0.1-Installer.dmg" \
+     "Cosine-Companion-v1.0.1-Installer.dmg" \
      "dist/Cosine Companion.app"
    ```
 

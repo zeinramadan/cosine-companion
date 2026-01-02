@@ -6,10 +6,10 @@ This guide covers how to build and distribute Cosine Companion as a standalone a
 
 ### 1. Install Dependencies
 
-Ensure you're in the `dj-companion` conda environment:
+Ensure you're in the `cosine-companion` conda environment:
 
 ```bash
-conda activate dj-companion
+conda activate cosine-companion
 pip install -r requirements.txt
 ```
 
@@ -20,6 +20,7 @@ Before building, verify these files exist:
 - ✅ `assets/coco_logo.png` - Main logo (high-res)
 - ✅ `assets/coco_logo_small.png` - Small logo for window icons
 - ✅ `assets/coco_logo.icns` - macOS app icon
+- ✅ `assets/coco_logo.ico` - Windows app icon (required for Windows builds; update spec if you skip this)
 - ✅ `models/discogs_*_embeddings-effnet-bs64-1.pb` - Embedding models
 - ✅ `cosine-companion.spec` - PyInstaller configuration
 
@@ -27,8 +28,8 @@ Before building, verify these files exist:
 
 The build process requires platform-specific icon files:
 
-**macOS**: `assets/coco_logo.icns` (created automatically from PNG)
-**Windows**: `assets/coco_logo.ico` (optional, for Windows builds)
+**macOS**: `assets/coco_logo.icns`
+**Windows**: `assets/coco_logo.ico` (required by `cosine-companion.spec` on Windows)
 
 If missing, create `.icns` from PNG:
 
@@ -132,7 +133,7 @@ create-dmg \
   --icon "Cosine Companion.app" 200 190 \
   --hide-extension "Cosine Companion.app" \
   --app-drop-link 600 185 \
-  "DJ-Companion-Installer.dmg" \
+  "Cosine-Companion-Installer.dmg" \
   "dist/Cosine Companion.app"
 ```
 
@@ -142,14 +143,14 @@ Required for distribution outside the Mac App Store:
 
 ```bash
 # Submit for notarization
-xcrun notarytool submit "DJ-Companion-Installer.dmg" \
+xcrun notarytool submit "Cosine-Companion-Installer.dmg" \
   --apple-id "your@email.com" \
   --team-id "YOUR_TEAM_ID" \
   --password "app-specific-password" \
   --wait
 
 # Staple the notarization ticket
-xcrun stapler staple "DJ-Companion-Installer.dmg"
+xcrun stapler staple "Cosine-Companion-Installer.dmg"
 ```
 
 ### Windows Distribution
@@ -187,7 +188,7 @@ hiddenimports=[
 1. Check console output: `open -a Console` (macOS)
 2. Run from terminal to see errors:
    ```bash
-   ./dist/DJ\ Companion.app/Contents/MacOS/DJ\ Companion
+   ./dist/Cosine\ Companion.app/Contents/MacOS/Cosine\ Companion
    ```
 
 ### Icon Not Appearing

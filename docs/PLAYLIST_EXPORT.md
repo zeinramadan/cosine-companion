@@ -6,7 +6,7 @@ The Playlist Export feature allows you to generate recommendation playlists in t
 
 ## What are .m3u Playlists?
 
-`.m3u` (Moving Picture Experts Group Audio Layer 3 Uniform Resource Locator) is a universal playlist format supported by most DJ software and music players. It's a simple text file that contains file paths to your music files.
+`.m3u` is a universal playlist format supported by most DJ software and music players. It's a simple text file that contains file paths to your music files.
 
 Rekordbox fully supports importing `.m3u` playlists, which makes it the perfect format for exporting your recommendations.
 
@@ -14,8 +14,7 @@ Rekordbox fully supports importing `.m3u` playlists, which makes it the perfect 
 
 1. **Select Tracks**: Choose which tracks you want to generate recommendations for:
    - All tracks in your collection
-   - Selected tracks from the Library tab
-   - Only the current track
+   - Selected tracks via the "+ Add Tracks" search dialog
 
 2. **Configure**: Set how many recommendations you want per track (10-50)
 
@@ -31,25 +30,22 @@ Rekordbox fully supports importing `.m3u` playlists, which makes it the perfect 
 
 Navigate to the **Playlist Export** tab in Cosine Companion.
 
-Choose one of three options:
+Choose one of two options:
 
 **Option A: All tracks in collection**
 - Generates a playlist for every track in your library
 - Best for comprehensive recommendation sets
 - Takes longer for large collections
 
-**Option B: Selected tracks from Library tab**
-- Go to the Library tab first
+**Option B: Selected tracks**
+- Click **+ Add Tracks** to open the search dialog
+- Search by artist or title
 - Select tracks using:
   - Click to select one track
   - Ctrl+Click (Cmd+Click on Mac) to select multiple tracks
   - Shift+Click to select a range of tracks
-- Switch back to Playlist Export tab
+- Click **Add Selected Tracks**
 - Only selected tracks will have playlists generated
-
-**Option C: Current track only**
-- Generates a playlist for just the currently selected track
-- Perfect for quick recommendations for a single track
 
 ### Step 2: Configure Playlists
 
@@ -114,11 +110,9 @@ The app will:
 **Scenario**: You have a 2-hour set coming up and want recommendation playlists for your potential opening tracks.
 
 **Workflow**:
-1. Go to Library tab
-2. Select 10-15 tracks you might open with
-3. Go to Playlist Export tab
-4. Select "Selected tracks from Library tab"
-5. Set recommendations to 30
+1. Go to Playlist Export tab
+2. Click **+ Add Tracks** and select 10-15 tracks you might open with
+3. Set recommendations to 30
 6. Choose "Separate playlist per track"
 7. Generate and import into Rekordbox
 8. Before your set, browse through playlists to find transitions
@@ -140,12 +134,11 @@ The app will:
 **Scenario**: You're building a set and want recommendations for one specific track.
 
 **Workflow**:
-1. Set the track as current (from Explore or Library tab)
-2. Go to Playlist Export tab
-3. Select "Current track only"
-4. Set recommendations to 25
-5. Generate
-6. Import the single playlist into Rekordbox
+1. Go to Playlist Export tab
+2. Click **+ Add Tracks** and select a single track
+3. Set recommendations to 25
+4. Generate
+5. Import the single playlist into Rekordbox
 
 ### 4. USB Preparation for CDJ
 
@@ -235,8 +228,7 @@ After importing:
 **Problem**: Error when clicking Generate Playlists
 
 **Solution**:
-- If "Selected tracks from Library tab" is chosen, go to Library tab and select tracks first
-- If "Current track only" is chosen, set a current track first
+- If "Selected tracks" is chosen, click **+ Add Tracks** and select at least one track
 - Try switching to "All tracks in collection"
 
 ### "Playlists are empty after import"
@@ -311,13 +303,9 @@ Extended M3U format with metadata:
 
 ### Recommendation Algorithm
 
-1. Extracts audio embeddings for each track (already computed during indexing)
-2. Uses FAISS index to find similar tracks
-3. Scores candidates by:
-   - Cosine similarity (audio similarity)
-   - Key compatibility (harmonic mixing)
-   - BPM compatibility (smooth transitions)
-4. Returns top N recommendations sorted by final score
+1. Uses the existing embeddings and FAISS index to find similar tracks
+2. Scores candidates by cosine, key compatibility, and BPM compatibility
+3. For export, recommendations are sorted by **cosine similarity** (pure audio similarity) and the top N are written to the playlist
 
 ## Comparison with Other Features
 
@@ -379,4 +367,3 @@ If you encounter issues:
 **Happy mixing! 🎵🎧**
 
 **Pro tip**: Combine this feature with Rekordbox's smart playlists to create dynamic, automatically updating recommendation sets!
-

@@ -160,10 +160,10 @@ data/
 | Column | Type | Description |
 |--------|------|-------------|
 | `track_id` | string | Unique track identifier |
-| `v0` | float64 | Embedding dimension 0 |
-| `v1` | float64 | Embedding dimension 1 |
+| `v0` | float32 | Embedding dimension 0 |
+| `v1` | float32 | Embedding dimension 1 |
 | ... | ... | ... |
-| `v255` | float64 | Embedding dimension 255 |
+| `v255` | float32 | Embedding dimension 255 |
 
 **Total columns:** 257 (1 ID + 256 embedding dimensions)
 
@@ -331,7 +331,7 @@ HNSW provides the best balance of speed and accuracy for this use case.
          ▼
 ┌─────────────────┐
 │  Filter Self    │
-│  & Deleted      │
+│  (deleted tracks are removed at index time) │
 └────────┬────────┘
          │
          ▼
@@ -389,6 +389,8 @@ def recommend_for(
 
         m = meta_ix.loc[tid]
         v2 = vector_for(tid, emb_ix)
+        if v2 is None:
+            continue
 
         # Exact cosine similarity
         cos = float(np.dot(v, v2))
@@ -404,6 +406,8 @@ def recommend_for(
             "track_id": tid,
             "artist": m.get("artist"),
             "title": m.get("title"),
+            "bpm": m.get("bpm"),
+            "key": m.get("key"),
             "score": score,
             "cosine": cos,
             "key_score": ks,
@@ -419,12 +423,14 @@ def recommend_for(
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `topk` | 200 | Candidates from FAISS |
-| `final_top` | 15 | Results returned to UI |
+| `final_top` | 15 | Results returned by default |
 
 **Why 200 → 15?**
 - FAISS returns approximate results; retrieving more candidates improves accuracy
 - Key/BPM scoring reranks candidates; diverse pool needed
 - Final 15 provides good UX without overwhelming user
+
+**UI override:** The Explore tab requests more candidates (`topk=500`, `final_top=200`) and then sorts by cosine similarity, truncating the list based on the Top-N selector.
 
 ---
 
