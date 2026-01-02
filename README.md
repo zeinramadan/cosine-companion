@@ -18,11 +18,13 @@ Cosine Companion analyzes your music library and helps you:
 
 Download the pre-built application for your platform from the [Releases](https://github.com/yourusername/dj-cosine/releases) page:
 
-| Platform | Download |
-|----------|----------|
-| macOS (Apple Silicon) | `Cosine-Companion-macOS-arm64.dmg` |
+| Platform | Download | Status |
+|----------|----------|--------|
+| macOS (Apple Silicon) | `Cosine-Companion-macOS.dmg` | Working |
+| macOS (Intel) | `Cosine-Companion-macOS-x86_64.dmg` | Not working |
+| Windows | `Cosine-Companion-Windows.zip` | Not working |
 
-Simply install and run - no Python required. Please note only the Apple Silicon build is tested and working. Intel Mac and Windows need to be sorted, I just don't have the time so contributions are more than welcome!
+Simply install and run - no Python required. Currently only the Apple Silicon build is tested and working. Intel Mac and Windows builds are available via GitHub Actions but produce non-functional binaries - contributions to fix these are very welcome!
 
 ### Option 2: Run from Source
 
@@ -193,6 +195,20 @@ python src/cosine_companion.py ui
 - Follow existing code patterns
 - Keep functions focused and documented
 - Test changes with your own library before submitting
+
+### GitHub Actions
+
+The repo has three manual workflows for building standalone applications:
+
+| Workflow | Runner | Status |
+|----------|--------|--------|
+| `build-macos.yml` | `macos-latest` (Apple Silicon) | Working |
+| `build-macos-intel.yml` | `macos-13` (Intel x86_64) | Builds but binary doesn't run |
+| `build-windows.yml` | `windows-latest` | Builds but binary doesn't run |
+
+To trigger a build, go to **Actions** > select workflow > **Run workflow**.
+
+Build artifacts (DMG/ZIP) are uploaded and available for 90 days. Help fixing the Intel Mac and Windows builds would be greatly appreciated!
 
 ## License
 
