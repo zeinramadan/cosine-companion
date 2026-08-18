@@ -19,14 +19,53 @@ from processing.xml_parser import read_rekordbox_xml
 # and nothing that merely imports this module should pay that. It stays a module
 # attribute so `monkeypatch.setattr(pipeline, "DiscogsEffnetEmbedder", Fake)`
 # remains the seam the tests and tests/manual/real_indexing.py use.
+#
+# DECLARED DEVIATION from this PR's strict-preservation contract.
+# ---------------------------------------------------------------
+# On `main` this name was bound eagerly by a module-scope
+# `from processing.embeddings import DiscogsEffnetEmbedder`, so it was the class
+# from the moment the module finished importing. It is now observably None until
+# the first _load_embedder() call:
+#
+#     import processing.pipeline as p
+#     p.DiscogsEffnetEmbedder     # main: the class.  Here: None.
+#
+# This is a deliberate, documented exception, not an oversight, and it is
+# codified by tests/test_services_are_lightweight.py:131-134.
+#
+# Why it is not a behaviour change in the sense the contract protects:
+#   * No RUNTIME path reads the module attribute directly. The one consumer is
+#     _load_embedder() below (used at line 136), which binds it before use.
+#   * The PACKAGE-level re-export is unaffected: processing/__init__.py still
+#     does `from processing.embeddings import DiscogsEffnetEmbedder`, so
+#     `processing.DiscogsEffnetEmbedder` is the class exactly as before, and
+#     that is the import path every caller outside this module uses.
+#   * The monkeypatch seam is preserved, which is why the existing tests and the
+#     manual harness needed no change.
+#
+# Why it was necessary: services.indexing_service must be importable without a
+# 483 MB TensorFlow install, or the CI job (numpy/pandas/pyarrow/lxml/pytest
+# only) and PR 3's web server both break on `import services`. An eager import
+# here would drag Essentia into every consumer of the service layer, down to the
+# 72-line settings_store JSON reader.
+#
+# Anything that genuinely needs the eager-class behaviour should import from
+# `processing`, not from `processing.pipeline`.
 DiscogsEffnetEmbedder = None
 
 
 # index_library's three terminal outcomes. Both "nothing to do" outcomes used to
 # return a bare None, so a caller could not tell "your index is already up to
 # date" (success) from "there were new tracks and not one of them could be
-# embedded" (failure). The CLI never read the return value, but the service
-# layer does, and PR 3 would otherwise report a failed run as a success.
+# embedded" (failure).
+#
+# This return value is ADDITIVE. No current caller reads it: the CLI
+# (cosine_companion.py:50) discards it, and IndexingService only forwards it into
+# an IndexResult that both Tkinter windows discard in turn. So all three outcomes
+# still report success to the user, exactly as on `main` - pinned by
+# tests/test_ui_reports_success_for_every_terminal_outcome.py. PR 3 consumes it
+# to fix that deliberately. See IndexResult's docstring in
+# services/indexing_service.py.
 STATUS_INDEXED = "indexed"
 STATUS_UP_TO_DATE = "up_to_date"
 STATUS_NO_EMBEDDINGS = "no_embeddings"

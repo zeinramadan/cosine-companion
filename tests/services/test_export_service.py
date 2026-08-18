@@ -135,24 +135,72 @@ def test_service_and_direct_call_produce_identical_combined_files(fixture_librar
     assert result.as_legacy_stats() == direct_stats
 
 
-def test_export_service_does_not_reimplement_the_loops(service, fixture_library, tmp_path, monkeypatch):
-    """The loops live in recommendations.playlist_exporter; the service calls
-    them once each. Pinned so a future edit cannot quietly inline them again."""
+def _spy_on_both_loops(monkeypatch):
+    """Replace BOTH exporter loops with recorders. Returns the call log.
+
+    Each records under its own name, so a service method that called the wrong
+    loop - or both, or its own inlined copy - is visible in the log rather than
+    silently passing.
+    """
     import services.export_service as module
 
     calls = []
-    monkeypatch.setattr(
-        module, "export_recommendations_as_playlists",
-        lambda *a, **k: calls.append(("per_seed", a, k)) or {
-            "total_tracks": 1, "successful": 1, "failed": 0,
-            "playlists_created": 1, "total_recommendations": 3,
-        },
-    )
+
+    def per_seed(*a, **k):
+        calls.append(("per_seed", a, k))
+        return {"total_tracks": 1, "successful": 1, "failed": 0,
+                "playlists_created": 1, "total_recommendations": 3}
+
+    def combined(*a, **k):
+        calls.append(("combined", a, k))
+        # No playlists_created key: combined mode's shape (defect #10).
+        return {"total_tracks": 1, "successful": 1, "failed": 0,
+                "total_recommendations": 3}
+
+    monkeypatch.setattr(module, "export_recommendations_as_playlists", per_seed)
+    monkeypatch.setattr(module, "export_single_playlist", combined)
+    return calls
+
+
+def test_export_per_seed_does_not_reimplement_the_per_seed_loop(
+    service, fixture_library, tmp_path, monkeypatch
+):
+    """The loops live in recommendations.playlist_exporter; export_per_seed
+    calls the per-seed one exactly once and never touches the combined one.
+    Pinned so a future edit cannot quietly inline either."""
+    calls = _spy_on_both_loops(monkeypatch)
 
     result = service.export_per_seed(["f01"], str(tmp_path / "o"), 3)
 
     assert [c[0] for c in calls] == ["per_seed"]
     assert result.playlists_created == 1
+
+
+def test_export_combined_does_not_reimplement_the_combined_loop(
+    service, fixture_library, tmp_path, monkeypatch
+):
+    """The other half of the pair above, which used to go uncovered: the test
+    claimed both loops but only ever spied on the per-seed exporter."""
+    calls = _spy_on_both_loops(monkeypatch)
+
+    result = service.export_combined(["f01"], str(tmp_path / "o.m3u"), 3)
+
+    assert [c[0] for c in calls] == ["combined"]
+    # Combined mode carries no playlists_created, and the service must not
+    # invent one (defect #10 survives the extraction).
+    assert result.playlists_created is None
+    assert "playlists_created" not in result.as_legacy_stats()
+
+
+def test_neither_export_mode_calls_the_other_loop(service, tmp_path, monkeypatch):
+    """Stated once, over both modes: exactly one loop call per export, and it is
+    the one belonging to that mode."""
+    calls = _spy_on_both_loops(monkeypatch)
+
+    service.export_per_seed(["f01"], str(tmp_path / "o"), 3)
+    service.export_combined(["f01"], str(tmp_path / "o.m3u"), 3)
+
+    assert [c[0] for c in calls] == ["per_seed", "combined"]
 
 
 def test_real_library_export_matches_a_direct_call(real_library, real_service, tmp_path):
@@ -313,16 +361,26 @@ def test_combined_export_also_snapshots(
     assert DOOMED not in fixture_library.ids
 
 
-def test_the_service_takes_exactly_one_snapshot_per_export(fixture_library, tmp_path, monkeypatch):
+@pytest.mark.parametrize("mode", ["per_seed", "combined"])
+def test_the_service_takes_exactly_one_snapshot_per_export(
+    fixture_library, tmp_path, monkeypatch, mode
+):
     """One capture point per run - not one per seed, which is what made the
-    race materially worse than the legacy worker's."""
+    race materially worse than the legacy worker's.
+
+    Both modes are covered: this used to count calls for per-seed only, so
+    export_combined could have re-read the live library per seed unnoticed."""
     real = fixture_library.snapshot
     calls = []
     monkeypatch.setattr(
         fixture_library, "snapshot", lambda: calls.append(1) or real()
     )
 
-    ExportService(fixture_library).export_per_seed(GOLDEN_SEEDS, str(tmp_path / "o"), 2)
+    service = ExportService(fixture_library)
+    if mode == "per_seed":
+        service.export_per_seed(GOLDEN_SEEDS, str(tmp_path / "o"), 2)
+    else:
+        service.export_combined(GOLDEN_SEEDS, str(tmp_path / "o.m3u"), 2)
 
     assert len(calls) == 1
 

@@ -66,12 +66,7 @@ class ProgressEvent:
 class IndexResult:
     """Outcome of an indexing run.
 
-    ``status`` distinguishes the pipeline's three terminal outcomes. The two
-    empty ones used to be indistinguishable - both returned ``None`` from
-    ``index_library`` and both surfaced here as ``up_to_date=True`` - so a run in
-    which new tracks existed and *not one of them could be embedded* reported
-    itself as a success. PR 3 consumes this API; it must be able to tell them
-    apart.
+    ``status`` distinguishes the pipeline's three terminal outcomes:
 
     * ``indexed`` - work was done. ``total_tracks_indexed`` and
       ``new_tracks_added`` are meaningful.
@@ -80,6 +75,38 @@ class IndexResult:
       of them failed to embed (missing file, unsupported codec). A FAILURE.
 
     A cancelled run raises ``KeyboardInterrupt`` and produces no result at all.
+
+    ``status`` and ``failed`` ARE ADDITIVE. NOTHING CONSUMES THEM YET.
+    ------------------------------------------------------------------
+    Do not read this class as evidence that PR 2 changed a behaviour. It did
+    not, and the distinction below is not yet observable anywhere.
+
+    On ``main`` the two empty outcomes were indistinguishable: ``index_library``
+    returned a bare ``None`` from both, so a run in which new tracks existed and
+    *not one of them could be embedded* was reported to the user as a success.
+    That is a real defect, and it is **still present**, because every caller
+    discards the return value:
+
+    * ``ui/reindex_window.py:173`` - ``service.run(...)``, unassigned, then
+      unconditionally queues ``('complete', True)`` and
+      "\n✅ Indexing completed successfully!"
+    * ``ui/onboarding.py:389`` - the same
+    * ``cosine_companion.py:50`` - ``index_library(xml, ...)``, unassigned
+
+    So all three terminal outcomes still report success to the user, exactly as
+    on ``main``. What is new is only the *ability* to tell them apart, which
+    PR 3 needs in order to fix the defect deliberately, with the UI change that
+    a fix implies.
+
+    Two test files hold the two halves of this apart, and both must be updated
+    together when PR 3 does fix it:
+
+    * ``tests/services/test_indexing_service.py`` pins this NEW service-level
+      distinction.
+    * ``tests/test_ui_reports_success_for_every_terminal_outcome.py`` pins the
+      UNCHANGED observable behaviour - all three outcomes read as success in
+      both Tkinter windows - and statically asserts that no UI module can even
+      reach these fields.
     """
 
     status: str
@@ -89,12 +116,19 @@ class IndexResult:
 
     @property
     def up_to_date(self) -> bool:
-        """True only for a genuinely up-to-date index, never for a failed run."""
+        """True only for a genuinely up-to-date index, never for a failed run.
+
+        Additive: no current caller reads this. See the class docstring.
+        """
         return self.status == STATUS_UP_TO_DATE
 
     @property
     def failed(self) -> bool:
-        """True when new tracks were found and none of them could be embedded."""
+        """True when new tracks were found and none of them could be embedded.
+
+        Additive: no current caller reads this, so a "failed" run still reports
+        success in both Tkinter windows. See the class docstring.
+        """
         return self.status == STATUS_NO_EMBEDDINGS
 
 

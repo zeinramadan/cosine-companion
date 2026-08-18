@@ -587,7 +587,9 @@ Measured full-collection export: **≈ 6.8 minutes**. There is **no cancel contr
 and closing the main window does not stop the daemon thread.
 
 The worker calls `self.after(0, …)` from the background thread to marshal progress and completion
-back to Tk (`playlist_export_tab.py:397,434`). Tk is not thread-safe and `after` is not one of the
+back to Tk. Progress goes through `update_export_progress`, handed to the service as `progress=` at
+`playlist_export_tab.py:401` and calling `self.after(0, update)` at `:438`; completion is marshalled
+at `:420` and the error path at `:422`. Tk is not thread-safe and `after` is not one of the
 documented exceptions, so this is a latent crash rather than correct marshalling — it happens to
 work in practice. **Pre-existing on `main`; deliberately not fixed here** (§4 defect #15).
 
@@ -619,7 +621,17 @@ Notebook tab text: **`Library`** (index 3).
 stats label (Helvetica 9, grey).
 
 **Track list** — `tk.Listbox`, height 20, `selectmode=EXTENDED`, `exportselection=False`, with a
-vertical `tk.Scrollbar`. This is the only listbox in the app with a working scrollbar widget.
+vertical `tk.Scrollbar` wired both ways (`library_tab.py:44-49`). It is the only listbox **in a main
+tab** with a scrollbar; two dialogs have one as well, so three of the nine listboxes in the app
+scroll and six do not:
+
+| Listbox | Scrollbar |
+|---|---|
+| `library_tab.library_listbox` | **yes** — `library_tab.py:44-49` |
+| `DeletedTracksDialog.listbox` | **yes** — `dialogs.py:188-198` |
+| `TrackSelectorDialog.results_listbox` | **yes** — `track_selector_dialog.py:62-74` |
+| `AddAnchorDialog` results, `set_creator_tab` anchors and set, `recommendations_tab.listbox`, `playlist_export_tab.export_selected_listbox` | **no** — content past the visible height is unreachable |
+
 `<Double-Button-1>` → `Set as Current`.
 
 #### Row format and order
@@ -919,18 +931,29 @@ Terminal states — the bar stops and the `Cancel` button is destroyed, then:
 Log lines appended by the window: `\n✅ Indexing completed successfully!`, or
 `\n❌ Error during indexing: {msg}` plus the traceback.
 
-**The two cancellation lines are dead code and are never appended.** `run_indexing` writes
-`\n⚠️ Indexing cancelled by user` after a successful `service.run(...)` and
+**`reindex_window`'s own two cancellation lines are dead code and are never appended.**
+`run_indexing` writes `\n⚠️ Indexing cancelled by user` after a successful `service.run(...)` and
 `\n⚠️ Indexing cancelled` in its `except Exception` handler — but a cancelled run raises
 `KeyboardInterrupt`, which derives from `BaseException`, so it satisfies neither branch. It
 propagates out of `run_indexing` (`reindex_window.py:186`), the worker thread dies with an
-unhandled exception printed to stderr, and **no** further message is queued. The only cancellation
-text the user ever sees in the log pane is `\n⚠️ Cancellation requested...`, queued by the Cancel
-button itself. The window still reaches its orange cancelled state, because `cancel_indexing()`
-set the flag that `check_indexing_status` reads.
+unhandled exception printed to stderr, and **no** further message is queued.
 
-Pinned by `tests/services/test_indexing_service.py::test_cancel_raises_keyboardinterrupt_which_is_not_an_exception`;
-the manual harness `tests/manual/smoke.py` asserts the two lines' **absence**.
+The user does nevertheless see **two** cancellation lines in the log pane, from two different
+sources and in this order:
+
+| # | Line | Emitted by | Thread |
+|---|---|---|---|
+| 1 | `\n⚠️ Cancellation requested...` | `cancel_indexing()`, on confirming the dialog (`reindex_window.py:152`) | main |
+| 2 | `⚠️ Cancellation detected, stopping...` | the pipeline's per-track checkpoint (`processing/pipeline.py:183`), as a `cancelled` `ProgressEvent`, immediately before it raises `KeyboardInterrupt` | worker |
+
+So the **last** line in the pane is `⚠️ Cancellation detected, stopping...`, not `requested`. What
+is absent is `⚠️ Indexing cancelled by user`, `⚠️ Indexing cancelled` and
+`✅ Indexing completed successfully!`. The window still reaches its orange cancelled state, because
+`cancel_indexing()` set the flag that `check_indexing_status` reads.
+
+Pinned by `tests/services/test_indexing_service.py::test_cancel_raises_keyboardinterrupt_which_is_not_an_exception`.
+The manual harness is `tests/manual/real_indexing.py:145-149`, which asserts the **presence** of
+both lines in the table above and the **absence** of `⚠️ Indexing cancelled by user`.
 
 **`Done` → `finish()`** shows
 `messagebox.askyesno("Restart Required", "Library has been updated!\n\nTo see new tracks in the UI, you should restart Cosine Companion.\n\nRestart now?")`.
@@ -1120,8 +1143,14 @@ sanitise to the same name overwrite each other silently.
 ### 3.7 Settings file
 
 `data/settings.json` (or `~/Library/Application Support/Cosine Companion/settings.json` when
-frozen). The only key in real use is **`xml_path`**; onboarding also writes
-**`first_run_complete: true`**. Read/written at **seven** sites in three files:
+frozen). **Two** keys are in real use. **`xml_path`** is read by every consumer below;
+**`first_run_complete`** is written by `onboarding.save_settings` and *read* by
+`onboarding.needs_onboarding` (`onboarding.py:613`), where `not settings.get("first_run_complete",
+False)` decides whether the whole onboarding flow runs at startup — so it gates more of the app than
+`xml_path` does. No third key is ever read or written. Read/written at **seven** sites in three
+files (the `SettingsStore(...)` instances in `reindex_window.py:166` and `onboarding.py:384` are
+**not** among them: they are handed to `IndexingService`, which takes its XML path as a `run()`
+argument and never touches the file):
 
 | Site | Operation | Missing file | Corrupt file |
 |---|---|---|---|
@@ -1205,18 +1234,18 @@ them and say so.
 | 1 | Export/delete data race | export worker thread vs `library_tab` delete | The export thread holds references to `meta_ix`/`emb_ix`/`idx` captured at start while deletion rebinds them on the main thread. A delete mid-export can yield `KeyError`, an `IndexError` from the index, or playlists built from a stale index. Nothing warns the user |
 | 2 | Non-atomic four-file rewrite | `services/library_session.py::_persist` (was `library_tab.py:257-270`) | `meta.parquet`, `embeddings.parquet`, `index.npy`, `ids.json` are written in sequence with no temp-file-and-rename and no rollback. A crash or full disk between writes leaves the four files mutually inconsistent, and the next launch fails the `load_all` validation → the `Inconsistent Index Data` dialog |
 | 3 | Deleting every track leaves `idx = None` | `services/library_session.py::delete_tracks` (was `library_tab.py:251-255`) | `V = np.array([])`, `ids = []`, `idx = None`, and `index.npy` is **not** rewritten, so it retains the pre-delete vectors and disagrees with the now-empty `ids.json` |
-| 4 | Cancel discards all work | `pipeline.py:143-147` | `KeyboardInterrupt` is raised at the next per-track checkpoint; every embedding computed so far is dropped. A cancelled 6.8-minute run leaves nothing behind |
+| 4 | Cancel discards all work | `pipeline.py:182-186` | `KeyboardInterrupt` is raised at the next per-track checkpoint; every embedding computed so far is dropped. A cancelled 6.8-minute run leaves nothing behind |
 | 5 | `sys.exit(0)` after indexing | `reindex_window.py:304-321` | Choosing "Restart now?" kills the process without relaunching. Declining leaves the app running on a stale index with no indication |
 | 6 | Indeterminate progress bar | `reindex_window.py:92-97`, `onboarding.py:335-341` | The pipeline prints `[ i/N]` per track but the bar is `mode='indeterminate'`; the ratio is only readable in the log pane |
 | 7 | Process-global `sys.stdout` swap | *(resolved in PR 2)* | A worker thread used to replace `sys.stdout` for the whole process for the duration of indexing, so any other thread's output was captured too. **This is the single mechanism Task 8 was permitted to replace**, and it has been: `IndexingService` emits a `ProgressEvent` per pipeline message and both windows queue `event.message`. The rendered log lines are unchanged, so the contract below is unaffected |
 | 8 | ~350 lines of macOS Tk workarounds | across the UI | §3.5 |
 | 9 | Blank query returns nothing | `search.py:21-22` | `AddAnchorDialog` and `TrackSelectorDialog` both open with an **empty** result list, contradicting their `# Initialize with all tracks` intent and the `limit = 100 if not query` branch |
 | 10 | Combined export shows no success dialog | `playlist_export_tab.py:440-456` | `export_single_playlist` returns stats without a `playlists_created` key, so `export_complete` raises `KeyError` while building the message. The button is re-enabled and the progress block hidden first, so the user sees the export simply stop with **no confirmation** and a traceback on stderr. The playlist file is written correctly |
-| 11 | Combined export reports no progress | `playlist_export_tab.py:403-412` | `export_single_playlist` takes no `progress_callback`, so the determinate bar sits at 0 % for the whole run |
+| 11 | Combined export reports no progress | `playlist_export_tab.py:403-412` | `export_single_playlist` **does** accept a `progress_callback` and emits one per seed (`playlist_exporter.py:183`, `:223-229`), and `ExportService.export_combined` forwards it. The preserved behaviour is in the **caller**: the tab deliberately omits the `progress=` argument for combined mode (`playlist_export_tab.py:403-412`), exactly as `main` did, so the determinate bar sits at 0 % for the whole run. Wiring it up is PR 3 work — a one-argument change, not a redesign |
 | 12 | Duplicate ranking policy | *(resolved in PR 2)* | There were three copies of the same `recommend_for(topk=500, final_top=200)` + cosine re-sort, in `recommendations_tab.py` and twice in `playlist_exporter.py`. **Verified behaviourally identical** before consolidation (harness: `tests/manual/ranking_equivalence.py`); only the caller-supplied truncation differed. All three now call `recommendations/ranking.py::ranked_recommendations` |
 | 13 | Selection is an unordered `set` | `playlist_export_tab.py:338-347` | Manual-mode export order is arbitrary and varies between runs; the progress readout therefore visits tracks in no particular order |
 | 14 | Deletion leaves `meta` stale | `services/library_session.py::delete_tracks` (was `library_tab.py:213-273`) | Deletion rebuilds `meta_ix`, `emb_ix`, `V`, `ids` and the index, but **not** `meta`. Explore's `Set Current Track` picker still offers the deleted track (and raises `KeyError` from `meta_ix.loc` if it is chosen), and the Playlist Export all-tracks count and id list still include it, until the app is restarted. See the stale-consumer table in §2.7 |
-| 15 | `after()` called from a worker thread | `playlist_export_tab.py:397,434` | The export worker marshals progress and completion back to Tk with `self.after(0, …)` from a background thread. Tk is not thread-safe and `after` is not an exception to that; it happens to work. **Pre-existing on `main` and deliberately untouched by PR 2** — fixing it would be a behaviour change in a PR whose contract forbids one |
+| 15 | `after()` called from a worker thread | `playlist_export_tab.py:420,422,438` | The export worker marshals progress (`:438`, via `update_export_progress`), completion (`:420`) and errors (`:422`) back to Tk with `self.after(0, …)` from a background thread. Tk is not thread-safe and `after` is not an exception to that; it happens to work. **Pre-existing on `main` and deliberately untouched by PR 2** — fixing it would be a behaviour change in a PR whose contract forbids one |
 | 16 | Cancellation log lines are unreachable | `reindex_window.py:180-189` | `\n⚠️ Indexing cancelled by user` and `\n⚠️ Indexing cancelled` are written in branches a `KeyboardInterrupt` never reaches, so neither is ever appended (§2.13). Pre-existing on `main` |
 
 Backlog references: `backlog-n3-ids-lag-race` (#1, #3), spec §3.2 (#1–#8), spec §10.
@@ -1275,7 +1304,7 @@ Every row is a user-reachable workflow catalogued above. Task 9 records pass/fai
 | 32 | Settings ▸ Clear All deleted tracks ▸ confirmation and result dialogs | §2.8 |
 | 33 | Settings ▸ Update Library (Incremental) ▸ `ReindexWindow` runs and reports | §2.8, §2.13 |
 | 34 | Reindex ▸ Cancel ▸ confirmation ▸ orange cancelled state and `Close` | §2.13 |
-| 34a | Reindex ▸ Cancel ▸ the log pane's **last** line is `⚠️ Cancellation requested...` — `⚠️ Indexing cancelled by user` and `⚠️ Indexing cancelled` must **NOT** appear, and neither must `✅ Indexing completed successfully!` | §2.13, §4 #16 |
+| 34a | Reindex ▸ Cancel ▸ the log pane shows `⚠️ Cancellation requested...` **followed by** `⚠️ Cancellation detected, stopping...` as its **last** line — while `⚠️ Indexing cancelled by user`, `⚠️ Indexing cancelled` and `✅ Indexing completed successfully!` must **NOT** appear | §2.13, §4 #16 |
 | 34b | Reindex ▸ Cancel ▸ an unhandled `KeyboardInterrupt` traceback appears on stderr, and no data files are written | §2.13, §4 #4 |
 | 34c | Reindex ▸ let it finish ▸ the log pane ends with `🚀 Ready to use! …` then `✅ Indexing completed successfully!` | §2.13 |
 | 35 | Reindex ▸ Done ▸ Restart Required dialog ▸ declining leaves the app running | §2.13 |
