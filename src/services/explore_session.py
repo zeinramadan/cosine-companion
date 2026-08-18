@@ -19,7 +19,8 @@ cosine ranking of the same candidate pool in 40/40 seeds at top-200 and 11/40
 at top-25. It is neither pure-score nor pure-cosine ranking, and it is
 preserved exactly.
 
-This module must never import tkinter or any UI module.
+This module must never depend on a UI toolkit; see
+tests/test_services_are_ui_free.py, which enforces that with an AST walk.
 """
 
 from dataclasses import dataclass

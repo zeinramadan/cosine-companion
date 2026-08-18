@@ -28,7 +28,8 @@ Two behaviours are preserved rather than improved:
 the pipeline always knew ``i/N`` and simply never reported it. Making the
 progress bar determinate with it is PR 3 work.
 
-This module must never import tkinter or any UI module.
+This module must never depend on a UI toolkit; see
+tests/test_services_are_ui_free.py, which enforces that with an AST walk.
 """
 
 from dataclasses import dataclass

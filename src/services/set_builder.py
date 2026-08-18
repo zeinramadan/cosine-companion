@@ -17,7 +17,8 @@ The per-hop policy inside ``generate_set`` is unchanged: ``topk=100,
 final_top=50`` candidates, the top 20 re-scored by
 ``0.8 * cos(prev -> cand) + 0.2 * cos(cand -> next)``.
 
-This module must never import tkinter or any UI module.
+This module must never depend on a UI toolkit; see
+tests/test_services_are_ui_free.py, which enforces that with an AST walk.
 """
 
 from typing import Dict, List, Optional

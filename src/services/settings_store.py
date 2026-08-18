@@ -18,7 +18,8 @@ Behaviour is preserved exactly, including the two quirks:
 (matching ``OnboardingWindow.save_settings``). Both are kept so each call site
 retains its exact semantics.
 
-This module must never import tkinter or any UI module.
+This module must never depend on a UI toolkit; see
+tests/test_services_are_ui_free.py, which enforces that with an AST walk.
 """
 
 import json

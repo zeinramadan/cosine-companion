@@ -29,7 +29,8 @@ the tab supplies from a combo box; it is a required argument here. The
 ``cancel`` parameter is plumbing for PR 3 - the Tkinter tab has no cancel
 control and passes ``None``, so it changes nothing user-visible today.
 
-This module must never import tkinter or any UI module.
+This module must never depend on a UI toolkit; see
+tests/test_services_are_ui_free.py, which enforces that with an AST walk.
 """
 
 from dataclasses import dataclass

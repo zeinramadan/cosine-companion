@@ -22,7 +22,8 @@ preserved deliberately and are pinned by tests
   ``pick_current`` and the album/key variant in ``filter_library`` are
   documented in the inventory and deliberately NOT unified here.
 
-This module must never import tkinter or any UI module.
+This module must never depend on a UI toolkit; see
+tests/test_services_are_ui_free.py, which enforces that with an AST walk.
 """
 
 import json
