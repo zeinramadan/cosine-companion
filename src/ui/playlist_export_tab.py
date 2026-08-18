@@ -6,7 +6,6 @@ from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
 import threading
 
-from recommendations.playlist_exporter import export_recommendations_as_playlists, export_single_playlist
 from ui.track_selector_dialog import TrackSelectorDialog
 
 if TYPE_CHECKING:
@@ -391,27 +390,27 @@ class PlaylistExportTabMixin:
         def export_worker():
             try:
                 if export_format == "separate":
-                    stats = export_recommendations_as_playlists(
+                    result = self.export_service.export_per_seed(
                         track_ids,
                         output_dir,
                         recommendations_per_track,
-                        self.library.meta_ix,
-                        self.library.emb_ix,
-                        self.library.index,
-                        progress_callback=self.update_export_progress
+                        progress=self.update_export_progress
                     )
                 else:
-                    # Combined playlist
+                    # Combined playlist. No progress callback is passed, because
+                    # combined mode has never reported progress and the bar has
+                    # always sat at 0% for the whole run (inventory defect #11).
                     output_path = Path(output_dir) / "Cosine_Recommendations.m3u"
-                    stats = export_single_playlist(
+                    result = self.export_service.export_combined(
                         track_ids,
                         str(output_path),
-                        "Cosine Recommendations",
-                        self.library.meta_ix,
-                        self.library.emb_ix,
-                        self.library.index,
                         recommendations_per_track
                     )
+
+                # The legacy per-mode dict shape: combined mode carries no
+                # playlists_created key, so export_complete still raises
+                # KeyError and shows no dialog (inventory defect #10).
+                stats = result.as_legacy_stats()
                 
                 # Update UI on main thread
                 self.after(0, lambda: self.export_complete(stats, output_dir))
