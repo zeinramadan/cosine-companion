@@ -168,22 +168,13 @@ class App(RecommendationsTabMixin, SetCreatorTabMixin, LibraryTabMixin, Playlist
         """Quick update library action."""
         from ui.settings_window import SettingsWindow
         from config import DATA
-        import json
-        
-        # Check if XML path is set
-        settings_file = DATA / "settings.json"
-        if not settings_file.exists():
-            messagebox.showinfo(
-                "Setup Required",
-                "Please configure your library settings first."
-            )
-            SettingsWindow(self)
-            return
-        
-        with open(settings_file, 'r') as f:
-            settings = json.load(f)
-            xml_path = settings.get("xml_path")
-        
+        from services import SettingsStore
+
+        # Check if XML path is set. A missing settings file reads as an empty
+        # document, which lands on the same "Setup Required" branch that the
+        # separate exists() check used to take.
+        xml_path = SettingsStore(DATA / "settings.json").xml_path
+
         if not xml_path:
             messagebox.showinfo(
                 "Setup Required",

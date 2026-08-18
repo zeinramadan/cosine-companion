@@ -598,16 +598,14 @@ You only need to do this once. After that, you can add new tracks incrementally.
     def save_settings(self):
         """Save user settings."""
         from config import DATA
-        settings_file = DATA / "settings.json"
-        
-        import json
-        settings = {
+        from services import SettingsStore
+
+        # replace(), not set(): onboarding has always written the whole document,
+        # discarding any other key that happened to be there.
+        SettingsStore(DATA / "settings.json").replace({
             "xml_path": self.xml_path,
             "first_run_complete": True
-        }
-        
-        with open(settings_file, 'w') as f:
-            json.dump(settings, f, indent=2)
+        })
     
     def quit_app(self):
         """Quit the application."""
@@ -619,21 +617,17 @@ You only need to do this once. After that, you can add new tracks incrementally.
 def needs_onboarding():
     """Check if the app needs to show onboarding."""
     from config import DATA, IDS_JSON, IDX_NPY, EMB_PQ
-    
+    from services import SettingsStore
+
     # If we have all the essential data files, skip onboarding
     # This handles cases where user already has indexed data
     essential_files = [META_PQ, IDS_JSON, IDX_NPY, EMB_PQ]
     if all(f.exists() for f in essential_files):
         # Data exists, skip onboarding
         return False
-    
-    # Check if settings indicate first run complete
-    settings_file = DATA / "settings.json"
-    if settings_file.exists():
-        import json
-        with open(settings_file, 'r') as f:
-            settings = json.load(f)
-            return not settings.get("first_run_complete", False)
-    
-    # No data and no settings = needs onboarding
-    return True
+
+    # Check if settings indicate first run complete. A missing settings file
+    # reads as an empty document, so no data and no settings still means
+    # onboarding is needed - exactly as before.
+    settings = SettingsStore(DATA / "settings.json")
+    return not settings.get("first_run_complete", False)
