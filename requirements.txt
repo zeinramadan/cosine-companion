@@ -12,9 +12,6 @@ essentia-tensorflow>=2.1b6.dev0
 # XML parsing
 lxml>=4.6.0
 
-# Similarity search
-faiss-cpu>=1.7.0
-
 # CLI interface
 typer>=0.4.0
 

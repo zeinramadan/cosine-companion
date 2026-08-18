@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 
+from core.index_builder import NumpyCosIndex
 from recommendations.models import SetTrack
 from recommendations.engine import recommend_for
 from recommendations.transitions import calculate_transition_score
@@ -15,7 +16,7 @@ def generate_set(
     total_tracks: int,
     meta_ix: pd.DataFrame,
     emb_ix: pd.DataFrame,
-    idx,
+    idx: NumpyCosIndex,
     exclude_tracks: Optional[List[str]] = None
 ) -> List[SetTrack]:
     """
@@ -31,7 +32,7 @@ def generate_set(
         total_tracks: Total desired tracks in set
         meta_ix: Metadata index DataFrame
         emb_ix: Embeddings index DataFrame  
-        idx: FAISS index for similarity search
+        idx: Exact cosine index for similarity search
         exclude_tracks: Track IDs to exclude from recommendations
         
     Returns:

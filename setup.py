@@ -26,7 +26,6 @@ setup(
         "lxml>=4.6.0",
         "soundfile>=0.10.0",
         "essentia-tensorflow>=2.1b6",
-        "faiss-cpu>=1.7.0",
         "typer>=0.4.0",
     ],
     extras_require={

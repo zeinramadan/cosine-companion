@@ -22,7 +22,6 @@ pandas_hidden = collect_submodules('pandas')
 numpy_hidden = collect_submodules('numpy')
 lxml_hidden = collect_submodules('lxml')
 pil_hidden = collect_submodules('PIL')
-faiss_hidden = collect_submodules('faiss')
 essentia_hidden = collect_submodules('essentia')
 dateutil_hidden = collect_submodules('dateutil')
 pytz_hidden = collect_submodules('pytz')
@@ -37,7 +36,6 @@ pil_datas = collect_data_files('PIL')
 lxml_datas = collect_data_files('lxml')
 pyarrow_datas = collect_data_files('pyarrow')
 
-faiss_bins = collect_dynamic_libs('faiss')
 soundfile_bins = collect_dynamic_libs('soundfile')
 essentia_bins = collect_dynamic_libs('essentia')
 pyarrow_bins = collect_dynamic_libs('pyarrow')
@@ -46,7 +44,7 @@ pandas_bins = collect_dynamic_libs('pandas')
 a = Analysis(
     [str(src_dir / 'cosine_companion.py')],
     pathex=[str(src_dir)],
-    binaries=faiss_bins + soundfile_bins + essentia_bins + numpy_bins + pandas_bins + numpy_all_bins + pandas_all_bins + pyarrow_bins,
+    binaries=soundfile_bins + essentia_bins + numpy_bins + pandas_bins + numpy_all_bins + pandas_all_bins + pyarrow_bins,
     datas=[
         # Include LICENSE for distributions (AGPL compliance)
         (str(project_root / 'LICENSE'), '.'),
@@ -99,7 +97,6 @@ a = Analysis(
         'lxml',
         'soundfile',
         'essentia',
-        'faiss',
         'typer',
         'tkinter',
         'PIL',
@@ -110,12 +107,11 @@ a = Analysis(
         'numpy',
         'lxml',
         'PIL',
-        'faiss',
         'essentia',
         'dateutil',
         'pytz',
         'pyarrow',
-    ] + pandas_hidden + numpy_hidden + lxml_hidden + pil_hidden + faiss_hidden + essentia_hidden + dateutil_hidden + pytz_hidden + pyarrow_hidden + pandas_all_hidden + numpy_all_hidden,
+    ] + pandas_hidden + numpy_hidden + lxml_hidden + pil_hidden + essentia_hidden + dateutil_hidden + pytz_hidden + pyarrow_hidden + pandas_all_hidden + numpy_all_hidden,
     hookspath=[str(project_root / 'hooks')],
     hooksconfig={},
     runtime_hooks=[str(project_root / 'hooks' / 'rthook_macos_env.py')],

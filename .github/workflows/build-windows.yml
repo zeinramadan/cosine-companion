@@ -37,7 +37,6 @@ jobs:
         Write-Host "Verifying installed packages..."
         python -c "import numpy; print(f'[OK] numpy {numpy.__version__} at {numpy.__file__}')"
         python -c "import pandas; print(f'[OK] pandas {pandas.__version__} at {pandas.__file__}')"
-        python -c "import faiss; print(f'[OK] faiss at {faiss.__file__}')"
         Write-Host "All critical packages verified"
       shell: powershell
     

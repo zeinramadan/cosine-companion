@@ -3,7 +3,7 @@
 Cosine Companion - Main application entry point.
 
 A tool for finding similar tracks based on audio content, key compatibility,
-and BPM matching. Uses Essentia's Discogs-EffNet embeddings and FAISS for
+and BPM matching. Uses Essentia's Discogs-EffNet embeddings and exact cosine search for
 efficient similarity search.
 """
 
@@ -45,7 +45,7 @@ def index(
     force: bool = typer.Option(False, "--force", "-f", help="Force full reindex, ignoring existing data"),
     sample: int = typer.Option(None, "--sample", "-s", help="Limit number of new tracks to process (debug)")
 ):
-    """Index your library: parses XML, embeds audio, builds FAISS (incremental by default)."""
+    """Index your library: parse XML and embed audio (incremental by default)."""
     from processing.pipeline import index_library
     index_library(xml, force_full=force, sample_size=sample)
 

@@ -190,7 +190,7 @@ class App(RecommendationsTabMixin, SetCreatorTabMixin, LibraryTabMixin, Playlist
             "Cosine Companion v1.0\n\n"
             "AI-powered music companion for finding similar tracks\n"
             "and creating seamless DJ sets.\n\n"
-            "Uses Essentia's Discogs-EffNet embeddings and FAISS\n"
+            "Uses Essentia's Discogs-EffNet embeddings and exact cosine search\n"
             "for efficient similarity search.\n\n"
             "© 2024"
         )

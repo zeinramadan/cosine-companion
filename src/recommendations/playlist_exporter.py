@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Optional
 import pandas as pd
 
 from recommendations.engine import recommend_for
-from core.index_builder import FaissCosIndex
+from core.index_builder import NumpyCosIndex
 
 
 def create_m3u_playlist(
@@ -54,7 +54,7 @@ def export_recommendations_as_playlists(
     recommendations_per_track: int,
     meta_ix: pd.DataFrame,
     emb_ix: pd.DataFrame,
-    idx: FaissCosIndex,
+    idx: NumpyCosIndex,
     progress_callback: Optional[callable] = None
 ) -> Dict[str, Any]:
     """
@@ -66,7 +66,7 @@ def export_recommendations_as_playlists(
         recommendations_per_track: Number of recommendations per track
         meta_ix: Metadata DataFrame indexed by track_id
         emb_ix: Embeddings DataFrame indexed by track_id
-        idx: FAISS index for similarity search
+        idx: Exact cosine index for similarity search
         progress_callback: Optional callback function(current, total, track_name)
         
     Returns:
@@ -103,7 +103,7 @@ def export_recommendations_as_playlists(
             meta_ix,
             emb_ix,
             idx,
-            topk=500,  # Get many FAISS candidates
+            topk=500,  # Get many cosine-similarity candidates
             final_top=200  # Get top 200 by combined score
         )
         
@@ -148,7 +148,7 @@ def export_single_playlist(
     playlist_name: str,
     meta_ix: pd.DataFrame,
     emb_ix: pd.DataFrame,
-    idx: FaissCosIndex,
+    idx: NumpyCosIndex,
     recommendations_per_track: int
 ) -> Dict[str, Any]:
     """
@@ -160,7 +160,7 @@ def export_single_playlist(
         playlist_name: Name for the playlist
         meta_ix: Metadata DataFrame indexed by track_id
         emb_ix: Embeddings DataFrame indexed by track_id
-        idx: FAISS index for similarity search
+        idx: Exact cosine index for similarity search
         recommendations_per_track: Number of recommendations per track
         
     Returns:
@@ -187,7 +187,7 @@ def export_single_playlist(
             meta_ix,
             emb_ix,
             idx,
-            topk=500,  # Get many FAISS candidates
+            topk=500,  # Get many cosine-similarity candidates
             final_top=200  # Get top 200 by combined score
         )
         
@@ -214,4 +214,3 @@ def export_single_playlist(
         stats['total_recommendations'] = len(all_recommendations)
     
     return stats
-

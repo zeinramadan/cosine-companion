@@ -84,7 +84,6 @@ def check_dependencies():
         ("PIL", "pip install Pillow"),
         ("lxml", "pip install lxml"),
         ("soundfile", "pip install soundfile"),
-        ("faiss", "pip install faiss-cpu"),
         ("essentia", "pip install essentia-tensorflow"),
         ("typer", "pip install typer"),
     ]
