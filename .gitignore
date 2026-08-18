@@ -107,3 +107,6 @@ build/
 
 # Superpowers brainstorm scratch
 .superpowers/
+
+# polly orchestration scratch
+.polly/
