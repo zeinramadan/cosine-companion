@@ -1,6 +1,10 @@
 # Data files - contains user-specific library data
 data/
 
+# Local recommendation benchmark captures (regenerated on demand)
+benchmarks/faiss_baseline.json
+benchmarks/numpy_exact.json
+
 # Python
 __pycache__/
 *.py[cod]

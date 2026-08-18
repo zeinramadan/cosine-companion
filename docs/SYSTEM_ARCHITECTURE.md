@@ -27,14 +27,14 @@
 
 ## 1. Executive Summary
 
-**Cosine Companion** is a desktop application designed to help DJs find similar tracks and create seamless DJ sets from their music library. The application combines deep learning audio embeddings with exact, full-collection cosine search to provide intelligent music recommendations based on sonic similarity, harmonic compatibility, and tempo matching.
+**Cosine Companion** is a cross-platform desktop application designed to help DJs find similar tracks and create seamless DJ sets from their music library. The current supported release target is Apple Silicon macOS; Intel macOS, Windows, and Linux paths remain documented for the existing build and path infrastructure. The application combines deep learning audio embeddings with exact, full-collection cosine search to provide intelligent music recommendations based on sonic similarity, harmonic compatibility, and tempo matching.
 
 ### Key Characteristics
 
 | Attribute | Value |
 |-----------|-------|
 | **Application Type** | Desktop GUI + CLI |
-| **Platforms** | macOS (ARM64/Intel), Windows, Linux |
+| **Platforms** | Apple Silicon macOS (supported); Intel macOS, Windows, Linux infrastructure retained |
 | **Primary Language** | Python 3.8+ |
 | **Codebase Size** | A few thousand lines of Python (see repository) |
 | **Architecture Style** | Layered architecture with mixin-based UI |
@@ -416,8 +416,16 @@ class NumpyCosIndex:
 
     def __init__(self, dim: int = 2560):
         self.dim = dim
-        self.matrix = np.empty((0, dim), dtype=np.float32)
         self.ids: List[str] = []
+        self._rows: List[np.ndarray] = []
+        self._matrix: Optional[np.ndarray] = None
+
+    @property
+    def matrix(self) -> np.ndarray:
+        if self._matrix is None:
+            self._matrix = (np.vstack(self._rows) if self._rows
+                            else np.empty((0, self.dim), dtype=np.float32))
+        return self._matrix
 
     def add(self, track_id: str, v: np.ndarray) -> None:
         """Add a normalized vector to index."""
@@ -425,7 +433,8 @@ class NumpyCosIndex:
         n = np.linalg.norm(v)
         if n > 0:
             v = v / n
-        self.matrix = np.concatenate((self.matrix, v[np.newaxis, :]))
+        self._rows.append(v)
+        self._matrix = None
         self.ids.append(track_id)
 
     def search(self, v: np.ndarray, k: int) -> List[Tuple[str, float]]:
@@ -438,8 +447,7 @@ class NumpyCosIndex:
         if n > 0:
             v = v / n
         scores = self.matrix @ v
-        candidates = np.argpartition(scores, len(scores) - k)[-k:]
-        ranked = candidates[np.lexsort((candidates, -scores[candidates]))]
+        ranked = np.argsort(-scores, kind="stable")[:k]
         return [(self.ids[i], float(scores[i])) for i in ranked]
 ```
 
@@ -1058,14 +1066,14 @@ Uses the **Camelot Wheel** system for DJ-friendly key matching:
 |-----------|-------|---------|
 | Matrix type | NumPy float32 | One normalized row per track |
 | Dimension | 2,560 | 1,280 mean + 1,280 standard-deviation features |
-| Candidate selection | `argpartition` | Exact top-k without a full sort |
-| Result ordering | Descending score sort | Sort only the selected candidates |
+| Candidate selection | Stable descending sort | Exact top-k with positional tie order |
 | Metric | Inner product | Exact cosine on normalized vectors |
 
 **Performance Characteristics:**
-- Index build: normalized matrix assembly
+- Add: O(d) buffered row append
+- Matrix materialization: O(n × d), only after additions
 - Query score calculation: O(n × d)
-- Candidate selection: O(n) average plus O(k log k) ordering
+- Result ordering: O(n log n) stable sort
 - Memory: O(n × d × 4 bytes), with no graph overhead
 
 ---
@@ -1253,7 +1261,7 @@ class App(
 Key settings from `cosine-companion.spec`:
 
 Key points (see `cosine-companion.spec` for the full, up-to-date list):
-- Collects dynamic libraries for numpy/pandas/faiss/essentia/pyarrow
+- Collects dynamic libraries for numpy/pandas/essentia/pyarrow
 - Includes `models/`, `assets/`, and `LICENSE` in the bundle
 - Enumerates submodules for major dependencies and UI modules
 
@@ -1452,13 +1460,14 @@ def _get_models_dir() -> Path:
 
 | Metric | Value |
 |--------|-------|
-| Matrix assembly | One normalized row per track |
+| Add | O(2,560) buffered row append |
+| Matrix materialization | O(n × 2,560), only after additions |
 | Query score calculation | O(n × 2,560) |
-| Candidate selection | O(n) average + O(k log k) |
+| Result ordering | O(n log n) stable sort |
 | Memory per track | 10KB (2,560 × float32) |
 
-Every query scores every track. Runtime therefore scales linearly with the
-number of tracks, while `argpartition` avoids sorting the full collection.
+Every query scores and stably sorts every track. The stable sort makes both
+ordering and top-k membership deterministic when duplicate embeddings tie.
 
 ### 14.3 Memory Management
 

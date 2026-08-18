@@ -202,7 +202,7 @@ Verify:
 
 This is normal! The app includes:
 - Python runtime
-- All dependencies (numpy, pandas, essentia, faiss, etc.)
+- All dependencies (numpy, pandas, essentia, etc.)
 - ML models (~400MB)
 - Audio processing libraries
 

@@ -1,6 +1,6 @@
 {
   "baseline_git_revision": "2c8459cbd1a595dde7de1d909d49c224da3efab2",
-  "current_git_revision": "6339c25a865e9da73904ad5fd795151370441a86",
+  "current_git_revision": "47d81521b382fc05c35dab51e05e901b2f7ffce6",
   "inputs_match": true,
   "parameters_match": true,
   "seed_count": 50,
@@ -12,17 +12,17 @@
   "timings_ms": {
     "app_data_load_median": {
       "before": 316.48345896974206,
-      "after": 599.2351672612131,
-      "change_percent": 89.34170184183432
+      "after": 65.16341678798199,
+      "change_percent": -79.41016664816848
     },
     "recommendation_query_median": {
       "before": 131.70920871198177,
-      "after": 5.070229526609182,
-      "speedup": 25.976971657940886
+      "after": 4.954979056492448,
+      "speedup": 26.58118373667086
     },
     "recommendation_query_p95": {
       "before": 135.29248118866235,
-      "after": 6.350776855833828
+      "after": 5.372951924800873
     }
   },
   "changes": [

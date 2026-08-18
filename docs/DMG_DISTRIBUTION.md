@@ -210,7 +210,7 @@ Understanding the size:
 - **App**: ~500-900 MB (when installed)
 - Size includes:
   - Python runtime
-  - All dependencies (numpy, pandas, essentia, faiss, etc.)
+  - All dependencies (numpy, pandas, essentia, etc.)
 - ML models (~300 MB)
   - Audio processing libraries
 

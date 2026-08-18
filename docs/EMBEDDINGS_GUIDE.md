@@ -236,7 +236,7 @@ approximation or recall loss.
 | `dim` | 2,560 | Vector dimension |
 | `dtype` | float32 | Matrix and query representation |
 | `metric` | Inner product | Exact cosine on normalized vectors |
-| `selection` | `argpartition` + sort | Select top-k, then order descending |
+| `selection` | Stable descending sort | Deterministic ordering and tie membership |
 
 ### 4.2 Implementation
 
@@ -244,15 +244,24 @@ approximation or recall loss.
 class NumpyCosIndex:
     def __init__(self, dim: int):
         self.dim = dim
-        self.matrix = np.empty((0, dim), dtype=np.float32)
         self.ids: List[str] = []
+        self._rows: List[np.ndarray] = []
+        self._matrix: Optional[np.ndarray] = None
+
+    @property
+    def matrix(self) -> np.ndarray:
+        if self._matrix is None:
+            self._matrix = (np.vstack(self._rows) if self._rows
+                            else np.empty((0, self.dim), dtype=np.float32))
+        return self._matrix
 
     def add(self, track_id: str, v: np.ndarray) -> None:
         v = v.astype("float32")
         n = np.linalg.norm(v)
         if n > 0:
             v = v / n
-        self.matrix = np.concatenate((self.matrix, v[np.newaxis, :]))
+        self._rows.append(v)
+        self._matrix = None
         self.ids.append(track_id)
 
     def search(self, v: np.ndarray, k: int = 50) -> List[Tuple[str, float]]:
@@ -264,8 +273,7 @@ class NumpyCosIndex:
         if n > 0:
             v = v / n
         scores = self.matrix @ v
-        candidates = np.argpartition(scores, len(scores) - k)[-k:]
-        ranked = candidates[np.lexsort((candidates, -scores[candidates]))]
+        ranked = np.argsort(-scores, kind="stable")[:k]
         return [(self.ids[i], float(scores[i])) for i in ranked]
 ```
 
@@ -273,9 +281,10 @@ class NumpyCosIndex:
 
 | Operation | Complexity | Accuracy |
 |-----------|------------|----------|
-| Add | O(n × d) matrix copy | Exact stored vector |
+| Add | O(d) buffered row append | Exact stored vector |
+| Matrix materialization | O(n × d), only after additions | Consistent snapshot |
 | Query scores | O(n × d) | 100% of collection scored |
-| Top-k selection | O(n) average + O(k log k) sort | Exact top-k |
+| Result ordering | O(n log n) stable sort | Exact, deterministic top-k |
 | Memory | O(n × d) | No graph/index overhead |
 
 ---
