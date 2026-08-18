@@ -1,0 +1,1816 @@
+{
+  "baseline_git_revision": "2c8459cbd1a595dde7de1d909d49c224da3efab2",
+  "current_git_revision": "6339c25a865e9da73904ad5fd795151370441a86",
+  "inputs_match": true,
+  "parameters_match": true,
+  "seed_count": 50,
+  "unchanged_seed_count": 35,
+  "changed_seed_count": 15,
+  "recovered_miss_count": 15,
+  "regression_count": 0,
+  "max_common_recommendation_score_delta": 1.6689300541550267e-07,
+  "timings_ms": {
+    "app_data_load_median": {
+      "before": 316.48345896974206,
+      "after": 599.2351672612131,
+      "change_percent": 89.34170184183432
+    },
+    "recommendation_query_median": {
+      "before": 131.70920871198177,
+      "after": 5.070229526609182,
+      "speedup": 25.976971657940886
+    },
+    "recommendation_query_p95": {
+      "before": 135.29248118866235,
+      "after": 6.350776855833828
+    }
+  },
+  "changes": [
+    {
+      "seed_track_id": "58709587",
+      "classification": "RECOVERED MISS",
+      "recommendations_added": [
+        "188894369"
+      ],
+      "recommendations_removed": [
+        "13086106"
+      ],
+      "faiss_candidate_cutoff": 0.8452811241149902,
+      "recovered_exact_candidates": [
+        {
+          "rank": 120,
+          "track_id": "183075111",
+          "score": 0.8625360727310181,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 170,
+          "track_id": "308224",
+          "score": 0.8539565801620483,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 172,
+          "track_id": "22713939",
+          "score": 0.8534959554672241,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 196,
+          "track_id": "188894369",
+          "score": 0.847759485244751,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 197,
+          "track_id": "72481770",
+          "score": 0.8476351499557495,
+          "above_faiss_cutoff": true
+        }
+      ],
+      "dropped_faiss_candidates": [
+        {
+          "rank": 197,
+          "track_id": "22079581",
+          "score": 0.8463355302810669
+        },
+        {
+          "rank": 198,
+          "track_id": "13086106",
+          "score": 0.8462232947349548
+        },
+        {
+          "rank": 199,
+          "track_id": "47355920",
+          "score": 0.8460981845855713
+        },
+        {
+          "rank": 200,
+          "track_id": "206524603",
+          "score": 0.8459345698356628
+        },
+        {
+          "rank": 201,
+          "track_id": "130184263",
+          "score": 0.8452811241149902
+        }
+      ]
+    },
+    {
+      "seed_track_id": "185077882",
+      "classification": "RECOVERED MISS",
+      "recommendations_added": [
+        "189013874",
+        "139491236"
+      ],
+      "recommendations_removed": [
+        "12785158",
+        "53710749"
+      ],
+      "faiss_candidate_cutoff": 0.8354921340942383,
+      "recovered_exact_candidates": [
+        {
+          "rank": 104,
+          "track_id": "189013874",
+          "score": 0.8550268411636353,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 110,
+          "track_id": "139491236",
+          "score": 0.854119062423706,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 163,
+          "track_id": "240223865",
+          "score": 0.843833327293396,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 171,
+          "track_id": "131688243",
+          "score": 0.8425103425979614,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 174,
+          "track_id": "8213812",
+          "score": 0.8419898748397827,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 201,
+          "track_id": "94437643",
+          "score": 0.8360807299613953,
+          "above_faiss_cutoff": true
+        }
+      ],
+      "dropped_faiss_candidates": [
+        {
+          "rank": 196,
+          "track_id": "130167876",
+          "score": 0.8359915018081665
+        },
+        {
+          "rank": 197,
+          "track_id": "183157853",
+          "score": 0.8359172344207764
+        },
+        {
+          "rank": 198,
+          "track_id": "140194694",
+          "score": 0.8355810046195984
+        },
+        {
+          "rank": 199,
+          "track_id": "32531610",
+          "score": 0.8355512022972107
+        },
+        {
+          "rank": 200,
+          "track_id": "9097774",
+          "score": 0.8355090618133545
+        },
+        {
+          "rank": 201,
+          "track_id": "148867598",
+          "score": 0.8354921340942383
+        }
+      ]
+    },
+    {
+      "seed_track_id": "264218555",
+      "classification": "RECOVERED MISS",
+      "recommendations_added": [
+        "76459782"
+      ],
+      "recommendations_removed": [
+        "76628871"
+      ],
+      "faiss_candidate_cutoff": 0.8550431132316589,
+      "recovered_exact_candidates": [
+        {
+          "rank": 84,
+          "track_id": "16368615",
+          "score": 0.8779704570770264,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 100,
+          "track_id": "260653595",
+          "score": 0.8746439218521118,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 124,
+          "track_id": "109643335",
+          "score": 0.8684608340263367,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 131,
+          "track_id": "76459782",
+          "score": 0.8675349950790405,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 132,
+          "track_id": "11465021",
+          "score": 0.8672643899917603,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 173,
+          "track_id": "214574489",
+          "score": 0.8618573546409607,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 175,
+          "track_id": "153246121",
+          "score": 0.8618482351303101,
+          "above_faiss_cutoff": true
+        }
+      ],
+      "dropped_faiss_candidates": [
+        {
+          "rank": 195,
+          "track_id": "105559232",
+          "score": 0.8559990525245667
+        },
+        {
+          "rank": 196,
+          "track_id": "261277685",
+          "score": 0.8559129238128662
+        },
+        {
+          "rank": 197,
+          "track_id": "2875229",
+          "score": 0.8557500243186951
+        },
+        {
+          "rank": 198,
+          "track_id": "87594175",
+          "score": 0.855721116065979
+        },
+        {
+          "rank": 199,
+          "track_id": "32078493",
+          "score": 0.8553986549377441
+        },
+        {
+          "rank": 200,
+          "track_id": "234014954",
+          "score": 0.8550552129745483
+        },
+        {
+          "rank": 201,
+          "track_id": "244237891",
+          "score": 0.8550431132316589
+        }
+      ]
+    },
+    {
+      "seed_track_id": "105228960",
+      "classification": "RECOVERED MISS",
+      "recommendations_added": [
+        "24974475"
+      ],
+      "recommendations_removed": [
+        "127830692"
+      ],
+      "faiss_candidate_cutoff": 0.8513333797454834,
+      "recovered_exact_candidates": [
+        {
+          "rank": 69,
+          "track_id": "24974475",
+          "score": 0.8769968748092651,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 123,
+          "track_id": "70096095",
+          "score": 0.8661759495735168,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 127,
+          "track_id": "141053834",
+          "score": 0.8650661110877991,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 153,
+          "track_id": "110477288",
+          "score": 0.8606229424476624,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 169,
+          "track_id": "195657414",
+          "score": 0.8580045700073242,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 172,
+          "track_id": "244634682",
+          "score": 0.8577009439468384,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 198,
+          "track_id": "75165615",
+          "score": 0.8528081178665161,
+          "above_faiss_cutoff": true
+        }
+      ],
+      "dropped_faiss_candidates": [
+        {
+          "rank": 195,
+          "track_id": "135562082",
+          "score": 0.8522287011146545
+        },
+        {
+          "rank": 196,
+          "track_id": "215005818",
+          "score": 0.8521744608879089
+        },
+        {
+          "rank": 197,
+          "track_id": "160442282",
+          "score": 0.8521649241447449
+        },
+        {
+          "rank": 198,
+          "track_id": "127830692",
+          "score": 0.851891279220581
+        },
+        {
+          "rank": 199,
+          "track_id": "209223142",
+          "score": 0.8518268465995789
+        },
+        {
+          "rank": 200,
+          "track_id": "254776801",
+          "score": 0.8517208099365234
+        },
+        {
+          "rank": 201,
+          "track_id": "131688243",
+          "score": 0.8513333797454834
+        }
+      ]
+    },
+    {
+      "seed_track_id": "23898632",
+      "classification": "RECOVERED MISS",
+      "recommendations_added": [
+        "74141712"
+      ],
+      "recommendations_removed": [
+        "257101460"
+      ],
+      "faiss_candidate_cutoff": 0.8765711188316345,
+      "recovered_exact_candidates": [
+        {
+          "rank": 144,
+          "track_id": "219116648",
+          "score": 0.884788990020752,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 163,
+          "track_id": "11079117",
+          "score": 0.8823258876800537,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 164,
+          "track_id": "87791754",
+          "score": 0.8819119930267334,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 168,
+          "track_id": "172635450",
+          "score": 0.8813887238502502,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 174,
+          "track_id": "143495572",
+          "score": 0.8810502886772156,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 184,
+          "track_id": "207937176",
+          "score": 0.8793985843658447,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 187,
+          "track_id": "117413896",
+          "score": 0.8789018392562866,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 191,
+          "track_id": "244634682",
+          "score": 0.8784153461456299,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 195,
+          "track_id": "6066002",
+          "score": 0.8777539730072021,
+          "above_faiss_cutoff": true
+        }
+      ],
+      "dropped_faiss_candidates": [
+        {
+          "rank": 193,
+          "track_id": "48714998",
+          "score": 0.8771337270736694
+        },
+        {
+          "rank": 194,
+          "track_id": "152243180",
+          "score": 0.8771126866340637
+        },
+        {
+          "rank": 195,
+          "track_id": "257101460",
+          "score": 0.8768993616104126
+        },
+        {
+          "rank": 196,
+          "track_id": "123462923",
+          "score": 0.8768797516822815
+        },
+        {
+          "rank": 197,
+          "track_id": "211083696",
+          "score": 0.876758337020874
+        },
+        {
+          "rank": 198,
+          "track_id": "167414080",
+          "score": 0.876752495765686
+        },
+        {
+          "rank": 199,
+          "track_id": "121064282",
+          "score": 0.8767343759536743
+        },
+        {
+          "rank": 200,
+          "track_id": "158799238",
+          "score": 0.8766512274742126
+        },
+        {
+          "rank": 201,
+          "track_id": "143284589",
+          "score": 0.8765711188316345
+        }
+      ]
+    },
+    {
+      "seed_track_id": "222849825",
+      "classification": "RECOVERED MISS",
+      "recommendations_added": [
+        "121437904",
+        "35781059",
+        "99024580"
+      ],
+      "recommendations_removed": [
+        "196420835",
+        "261943954",
+        "94437936"
+      ],
+      "faiss_candidate_cutoff": 0.9159668684005737,
+      "recovered_exact_candidates": [
+        {
+          "rank": 102,
+          "track_id": "35781059",
+          "score": 0.9298131465911865,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 147,
+          "track_id": "121437904",
+          "score": 0.9237368702888489,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 151,
+          "track_id": "60835770",
+          "score": 0.9232831597328186,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 163,
+          "track_id": "99024580",
+          "score": 0.9219299554824829,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 173,
+          "track_id": "36975868",
+          "score": 0.9210164546966553,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 178,
+          "track_id": "57169237",
+          "score": 0.9201364517211914,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 179,
+          "track_id": "195539939",
+          "score": 0.9199895262718201,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 183,
+          "track_id": "215005818",
+          "score": 0.9192819595336914,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 189,
+          "track_id": "6066002",
+          "score": 0.9181756973266602,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 196,
+          "track_id": "111780861",
+          "score": 0.917634904384613,
+          "above_faiss_cutoff": true
+        }
+      ],
+      "dropped_faiss_candidates": [
+        {
+          "rank": 192,
+          "track_id": "139815105",
+          "score": 0.9171613454818726
+        },
+        {
+          "rank": 193,
+          "track_id": "99366390",
+          "score": 0.9167855978012085
+        },
+        {
+          "rank": 194,
+          "track_id": "86136536",
+          "score": 0.9165766835212708
+        },
+        {
+          "rank": 195,
+          "track_id": "238169955",
+          "score": 0.9163875579833984
+        },
+        {
+          "rank": 196,
+          "track_id": "7387126",
+          "score": 0.9162735939025879
+        },
+        {
+          "rank": 197,
+          "track_id": "215757880",
+          "score": 0.9161246418952942
+        },
+        {
+          "rank": 198,
+          "track_id": "122195431",
+          "score": 0.9160840511322021
+        },
+        {
+          "rank": 199,
+          "track_id": "188215905",
+          "score": 0.916050910949707
+        },
+        {
+          "rank": 200,
+          "track_id": "129937891",
+          "score": 0.9159920811653137
+        },
+        {
+          "rank": 201,
+          "track_id": "113924772",
+          "score": 0.9159668684005737
+        }
+      ]
+    },
+    {
+      "seed_track_id": "41373382",
+      "classification": "RECOVERED MISS",
+      "recommendations_added": [
+        "26138114"
+      ],
+      "recommendations_removed": [
+        "193770191"
+      ],
+      "faiss_candidate_cutoff": 0.8211972713470459,
+      "recovered_exact_candidates": [
+        {
+          "rank": 139,
+          "track_id": "26138114",
+          "score": 0.8383368253707886,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 157,
+          "track_id": "240473261",
+          "score": 0.8347201943397522,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 160,
+          "track_id": "8968305",
+          "score": 0.8337482810020447,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 162,
+          "track_id": "191946181",
+          "score": 0.8334131240844727,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 163,
+          "track_id": "189013874",
+          "score": 0.8332430720329285,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 165,
+          "track_id": "214268374",
+          "score": 0.8326860070228577,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 166,
+          "track_id": "169990038",
+          "score": 0.8325005769729614,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 168,
+          "track_id": "137939174",
+          "score": 0.8319777250289917,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 174,
+          "track_id": "2578920",
+          "score": 0.8310567736625671,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 179,
+          "track_id": "114625924",
+          "score": 0.8297611474990845,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 184,
+          "track_id": "97507701",
+          "score": 0.8281905651092529,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 189,
+          "track_id": "121437904",
+          "score": 0.8278223872184753,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 191,
+          "track_id": "89095242",
+          "score": 0.8271774053573608,
+          "above_faiss_cutoff": true
+        }
+      ],
+      "dropped_faiss_candidates": [
+        {
+          "rank": 189,
+          "track_id": "64155852",
+          "score": 0.8233650922775269
+        },
+        {
+          "rank": 190,
+          "track_id": "91375401",
+          "score": 0.8228618502616882
+        },
+        {
+          "rank": 191,
+          "track_id": "121837921",
+          "score": 0.8223294615745544
+        },
+        {
+          "rank": 192,
+          "track_id": "111304347",
+          "score": 0.822267472743988
+        },
+        {
+          "rank": 193,
+          "track_id": "151661372",
+          "score": 0.8221571445465088
+        },
+        {
+          "rank": 194,
+          "track_id": "187507539",
+          "score": 0.8220973014831543
+        },
+        {
+          "rank": 195,
+          "track_id": "102215917",
+          "score": 0.822084903717041
+        },
+        {
+          "rank": 196,
+          "track_id": "160278762",
+          "score": 0.8220746517181396
+        },
+        {
+          "rank": 197,
+          "track_id": "209624159",
+          "score": 0.8220279216766357
+        },
+        {
+          "rank": 198,
+          "track_id": "87594175",
+          "score": 0.8218899965286255
+        },
+        {
+          "rank": 199,
+          "track_id": "11465021",
+          "score": 0.821678876876831
+        },
+        {
+          "rank": 200,
+          "track_id": "29806889",
+          "score": 0.8212000131607056
+        },
+        {
+          "rank": 201,
+          "track_id": "239183098",
+          "score": 0.8211972713470459
+        }
+      ]
+    },
+    {
+      "seed_track_id": "87456152",
+      "classification": "RECOVERED MISS",
+      "recommendations_added": [
+        "66935294"
+      ],
+      "recommendations_removed": [
+        "170466854"
+      ],
+      "faiss_candidate_cutoff": 0.9133555889129639,
+      "recovered_exact_candidates": [
+        {
+          "rank": 94,
+          "track_id": "53006130",
+          "score": 0.9261817932128906,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 111,
+          "track_id": "33289466",
+          "score": 0.9235090613365173,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 146,
+          "track_id": "231790567",
+          "score": 0.9203616380691528,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 165,
+          "track_id": "225712738",
+          "score": 0.9178393483161926,
+          "above_faiss_cutoff": true
+        }
+      ],
+      "dropped_faiss_candidates": [
+        {
+          "rank": 198,
+          "track_id": "266987282",
+          "score": 0.9134949445724487
+        },
+        {
+          "rank": 199,
+          "track_id": "591959",
+          "score": 0.9134440422058105
+        },
+        {
+          "rank": 200,
+          "track_id": "134039671",
+          "score": 0.9134084582328796
+        },
+        {
+          "rank": 201,
+          "track_id": "170466854",
+          "score": 0.9133555889129639
+        }
+      ]
+    },
+    {
+      "seed_track_id": "64562764",
+      "classification": "RECOVERED MISS",
+      "recommendations_added": [
+        "125979652"
+      ],
+      "recommendations_removed": [
+        "110477288"
+      ],
+      "faiss_candidate_cutoff": 0.7848963141441345,
+      "recovered_exact_candidates": [
+        {
+          "rank": 115,
+          "track_id": "125979652",
+          "score": 0.8116568326950073,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 130,
+          "track_id": "192788899",
+          "score": 0.8064993023872375,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 149,
+          "track_id": "107325026",
+          "score": 0.7993361353874207,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 150,
+          "track_id": "54512524",
+          "score": 0.7992599606513977,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 153,
+          "track_id": "47091832",
+          "score": 0.7972169518470764,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 165,
+          "track_id": "30156871",
+          "score": 0.7951180934906006,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 168,
+          "track_id": "140874918",
+          "score": 0.7943829298019409,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 179,
+          "track_id": "184504623",
+          "score": 0.7920858860015869,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 184,
+          "track_id": "115560778",
+          "score": 0.7906661033630371,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 199,
+          "track_id": "177673339",
+          "score": 0.7886587381362915,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 200,
+          "track_id": "132748226",
+          "score": 0.7885625958442688,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 201,
+          "track_id": "99740695",
+          "score": 0.788419246673584,
+          "above_faiss_cutoff": true
+        }
+      ],
+      "dropped_faiss_candidates": [
+        {
+          "rank": 190,
+          "track_id": "234908147",
+          "score": 0.7880879640579224
+        },
+        {
+          "rank": 191,
+          "track_id": "63863168",
+          "score": 0.787737250328064
+        },
+        {
+          "rank": 192,
+          "track_id": "110477288",
+          "score": 0.7871556878089905
+        },
+        {
+          "rank": 193,
+          "track_id": "2875229",
+          "score": 0.7871413230895996
+        },
+        {
+          "rank": 194,
+          "track_id": "22713939",
+          "score": 0.7863825559616089
+        },
+        {
+          "rank": 195,
+          "track_id": "206319910",
+          "score": 0.7860371470451355
+        },
+        {
+          "rank": 196,
+          "track_id": "224194656",
+          "score": 0.7857680916786194
+        },
+        {
+          "rank": 197,
+          "track_id": "237730004",
+          "score": 0.785467267036438
+        },
+        {
+          "rank": 198,
+          "track_id": "179328714",
+          "score": 0.7852237820625305
+        },
+        {
+          "rank": 199,
+          "track_id": "208954855",
+          "score": 0.7849511504173279
+        },
+        {
+          "rank": 200,
+          "track_id": "86904612",
+          "score": 0.7849493026733398
+        },
+        {
+          "rank": 201,
+          "track_id": "148867598",
+          "score": 0.7848963141441345
+        }
+      ]
+    },
+    {
+      "seed_track_id": "154197481",
+      "classification": "RECOVERED MISS",
+      "recommendations_added": [
+        "170802561"
+      ],
+      "recommendations_removed": [
+        "222849825"
+      ],
+      "faiss_candidate_cutoff": 0.8997851610183716,
+      "recovered_exact_candidates": [
+        {
+          "rank": 155,
+          "track_id": "170802561",
+          "score": 0.9065723419189453,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 171,
+          "track_id": "246087399",
+          "score": 0.9053665995597839,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 175,
+          "track_id": "32078493",
+          "score": 0.9038740396499634,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 187,
+          "track_id": "36946926",
+          "score": 0.9025495052337646,
+          "above_faiss_cutoff": true
+        }
+      ],
+      "dropped_faiss_candidates": [
+        {
+          "rank": 198,
+          "track_id": "256783342",
+          "score": 0.9001209735870361
+        },
+        {
+          "rank": 199,
+          "track_id": "91913437",
+          "score": 0.8999600410461426
+        },
+        {
+          "rank": 200,
+          "track_id": "153729126",
+          "score": 0.8999398946762085
+        },
+        {
+          "rank": 201,
+          "track_id": "218257977",
+          "score": 0.8997851610183716
+        }
+      ]
+    },
+    {
+      "seed_track_id": "118127444",
+      "classification": "RECOVERED MISS",
+      "recommendations_added": [
+        "188894369"
+      ],
+      "recommendations_removed": [
+        "82376586"
+      ],
+      "faiss_candidate_cutoff": 0.8862093687057495,
+      "recovered_exact_candidates": [
+        {
+          "rank": 93,
+          "track_id": "250607786",
+          "score": 0.9021922945976257,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 122,
+          "track_id": "195354971",
+          "score": 0.8970974683761597,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 164,
+          "track_id": "66169219",
+          "score": 0.8925291895866394,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 166,
+          "track_id": "189509474",
+          "score": 0.8923987746238708,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 172,
+          "track_id": "188608845",
+          "score": 0.8912929892539978,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 177,
+          "track_id": "244391020",
+          "score": 0.8906055688858032,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 184,
+          "track_id": "90319625",
+          "score": 0.8900308609008789,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 199,
+          "track_id": "188894369",
+          "score": 0.887754499912262,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 201,
+          "track_id": "243044395",
+          "score": 0.8876433372497559,
+          "above_faiss_cutoff": true
+        }
+      ],
+      "dropped_faiss_candidates": [
+        {
+          "rank": 193,
+          "track_id": "206319910",
+          "score": 0.8875577449798584
+        },
+        {
+          "rank": 194,
+          "track_id": "171488089",
+          "score": 0.8873320817947388
+        },
+        {
+          "rank": 195,
+          "track_id": "152370883",
+          "score": 0.8872072100639343
+        },
+        {
+          "rank": 196,
+          "track_id": "261575396",
+          "score": 0.8867658376693726
+        },
+        {
+          "rank": 197,
+          "track_id": "82376586",
+          "score": 0.8867548704147339
+        },
+        {
+          "rank": 198,
+          "track_id": "41033278",
+          "score": 0.8865130543708801
+        },
+        {
+          "rank": 199,
+          "track_id": "89273887",
+          "score": 0.886457622051239
+        },
+        {
+          "rank": 200,
+          "track_id": "246887418",
+          "score": 0.886388897895813
+        },
+        {
+          "rank": 201,
+          "track_id": "201808632",
+          "score": 0.8862093687057495
+        }
+      ]
+    },
+    {
+      "seed_track_id": "201878380",
+      "classification": "RECOVERED MISS",
+      "recommendations_added": [
+        "160510607",
+        "213295812"
+      ],
+      "recommendations_removed": [
+        "54442385",
+        "127387152"
+      ],
+      "faiss_candidate_cutoff": 0.7758511304855347,
+      "recovered_exact_candidates": [
+        {
+          "rank": 58,
+          "track_id": "33004435",
+          "score": 0.8164699077606201,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 92,
+          "track_id": "160510607",
+          "score": 0.8049858212471008,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 122,
+          "track_id": "188497788",
+          "score": 0.7960885167121887,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 137,
+          "track_id": "215346300",
+          "score": 0.7922314405441284,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 138,
+          "track_id": "231614492",
+          "score": 0.7922120094299316,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 151,
+          "track_id": "132329265",
+          "score": 0.7892606854438782,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 154,
+          "track_id": "13086106",
+          "score": 0.7885345816612244,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 160,
+          "track_id": "40643682",
+          "score": 0.7870566844940186,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 165,
+          "track_id": "213295812",
+          "score": 0.7868010997772217,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 167,
+          "track_id": "201767556",
+          "score": 0.7863023281097412,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 182,
+          "track_id": "257101460",
+          "score": 0.7830203771591187,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 189,
+          "track_id": "25681281",
+          "score": 0.7823654413223267,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 190,
+          "track_id": "240696104",
+          "score": 0.7823055386543274,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 197,
+          "track_id": "72367049",
+          "score": 0.779991626739502,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 198,
+          "track_id": "196420835",
+          "score": 0.7798246145248413,
+          "above_faiss_cutoff": true
+        }
+      ],
+      "dropped_faiss_candidates": [
+        {
+          "rank": 187,
+          "track_id": "201808632",
+          "score": 0.7792510986328125
+        },
+        {
+          "rank": 188,
+          "track_id": "53006130",
+          "score": 0.7790510654449463
+        },
+        {
+          "rank": 189,
+          "track_id": "148105274",
+          "score": 0.779045820236206
+        },
+        {
+          "rank": 190,
+          "track_id": "131569229",
+          "score": 0.7786579728126526
+        },
+        {
+          "rank": 191,
+          "track_id": "240161667",
+          "score": 0.7784594893455505
+        },
+        {
+          "rank": 192,
+          "track_id": "64249229",
+          "score": 0.7784370183944702
+        },
+        {
+          "rank": 193,
+          "track_id": "88932921",
+          "score": 0.7781103849411011
+        },
+        {
+          "rank": 194,
+          "track_id": "87594175",
+          "score": 0.7780275344848633
+        },
+        {
+          "rank": 195,
+          "track_id": "165461991",
+          "score": 0.7779954075813293
+        },
+        {
+          "rank": 196,
+          "track_id": "3262229",
+          "score": 0.7779103517532349
+        },
+        {
+          "rank": 197,
+          "track_id": "29312084",
+          "score": 0.7773399353027344
+        },
+        {
+          "rank": 198,
+          "track_id": "86407649",
+          "score": 0.7768373489379883
+        },
+        {
+          "rank": 199,
+          "track_id": "32078493",
+          "score": 0.7768263220787048
+        },
+        {
+          "rank": 200,
+          "track_id": "183731159",
+          "score": 0.7764794826507568
+        },
+        {
+          "rank": 201,
+          "track_id": "75165615",
+          "score": 0.7758511304855347
+        }
+      ]
+    },
+    {
+      "seed_track_id": "206027055",
+      "classification": "RECOVERED MISS",
+      "recommendations_added": [
+        "218971197",
+        "40954238"
+      ],
+      "recommendations_removed": [
+        "65604946",
+        "187507539"
+      ],
+      "faiss_candidate_cutoff": 0.7629289627075195,
+      "recovered_exact_candidates": [
+        {
+          "rank": 85,
+          "track_id": "90621255",
+          "score": 0.8033220767974854,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 86,
+          "track_id": "163229546",
+          "score": 0.8028905391693115,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 102,
+          "track_id": "223808045",
+          "score": 0.796405553817749,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 104,
+          "track_id": "76459782",
+          "score": 0.795698881149292,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 108,
+          "track_id": "16368615",
+          "score": 0.7932984828948975,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 120,
+          "track_id": "41373382",
+          "score": 0.7896027565002441,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 124,
+          "track_id": "226931802",
+          "score": 0.7889686226844788,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 125,
+          "track_id": "95305563",
+          "score": 0.7889628410339355,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 137,
+          "track_id": "198907568",
+          "score": 0.7861361503601074,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 145,
+          "track_id": "213939687",
+          "score": 0.7827825546264648,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 158,
+          "track_id": "76628871",
+          "score": 0.781485915184021,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 160,
+          "track_id": "188608845",
+          "score": 0.7809462547302246,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 162,
+          "track_id": "143677093",
+          "score": 0.7798535823822021,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 165,
+          "track_id": "129937891",
+          "score": 0.7786346077919006,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 170,
+          "track_id": "188894369",
+          "score": 0.7777027487754822,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 175,
+          "track_id": "219920233",
+          "score": 0.7765498161315918,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 176,
+          "track_id": "220178250",
+          "score": 0.7764217853546143,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 185,
+          "track_id": "225654048",
+          "score": 0.7742370367050171,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 191,
+          "track_id": "218971197",
+          "score": 0.7724064588546753,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 197,
+          "track_id": "55810163",
+          "score": 0.7706798911094666,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 199,
+          "track_id": "136630460",
+          "score": 0.7700314521789551,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 201,
+          "track_id": "40954238",
+          "score": 0.7698359489440918,
+          "above_faiss_cutoff": true
+        }
+      ],
+      "dropped_faiss_candidates": [
+        {
+          "rank": 180,
+          "track_id": "65604946",
+          "score": 0.769573450088501
+        },
+        {
+          "rank": 181,
+          "track_id": "26711042",
+          "score": 0.7692639231681824
+        },
+        {
+          "rank": 182,
+          "track_id": "98974817",
+          "score": 0.7691585421562195
+        },
+        {
+          "rank": 183,
+          "track_id": "47806151",
+          "score": 0.7684809565544128
+        },
+        {
+          "rank": 184,
+          "track_id": "210216375",
+          "score": 0.7675591707229614
+        },
+        {
+          "rank": 185,
+          "track_id": "152441601",
+          "score": 0.767543613910675
+        },
+        {
+          "rank": 186,
+          "track_id": "148949525",
+          "score": 0.7672870755195618
+        },
+        {
+          "rank": 187,
+          "track_id": "143306600",
+          "score": 0.76704341173172
+        },
+        {
+          "rank": 188,
+          "track_id": "17648832",
+          "score": 0.766889750957489
+        },
+        {
+          "rank": 189,
+          "track_id": "116701115",
+          "score": 0.7661929726600647
+        },
+        {
+          "rank": 190,
+          "track_id": "210264040",
+          "score": 0.7659873962402344
+        },
+        {
+          "rank": 191,
+          "track_id": "246087399",
+          "score": 0.7655262351036072
+        },
+        {
+          "rank": 192,
+          "track_id": "73216020",
+          "score": 0.7647392749786377
+        },
+        {
+          "rank": 193,
+          "track_id": "5668302",
+          "score": 0.7647225856781006
+        },
+        {
+          "rank": 194,
+          "track_id": "151141651",
+          "score": 0.7644607424736023
+        },
+        {
+          "rank": 195,
+          "track_id": "254013993",
+          "score": 0.7640566229820251
+        },
+        {
+          "rank": 196,
+          "track_id": "250502953",
+          "score": 0.7638781070709229
+        },
+        {
+          "rank": 197,
+          "track_id": "196721157",
+          "score": 0.7636845707893372
+        },
+        {
+          "rank": 198,
+          "track_id": "83050849",
+          "score": 0.7636577486991882
+        },
+        {
+          "rank": 199,
+          "track_id": "231614492",
+          "score": 0.7635589838027954
+        },
+        {
+          "rank": 200,
+          "track_id": "240696104",
+          "score": 0.7630120515823364
+        },
+        {
+          "rank": 201,
+          "track_id": "188497788",
+          "score": 0.7629289627075195
+        }
+      ]
+    },
+    {
+      "seed_track_id": "125399622",
+      "classification": "RECOVERED MISS",
+      "recommendations_added": [
+        "177239636"
+      ],
+      "recommendations_removed": [
+        "261277685"
+      ],
+      "faiss_candidate_cutoff": 0.8626619577407837,
+      "recovered_exact_candidates": [
+        {
+          "rank": 165,
+          "track_id": "252287104",
+          "score": 0.871536374092102,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 178,
+          "track_id": "177239636",
+          "score": 0.868257999420166,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 186,
+          "track_id": "35781059",
+          "score": 0.8660768270492554,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 188,
+          "track_id": "107161237",
+          "score": 0.8655628561973572,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 198,
+          "track_id": "24148217",
+          "score": 0.8640874028205872,
+          "above_faiss_cutoff": true
+        }
+      ],
+      "dropped_faiss_candidates": [
+        {
+          "rank": 197,
+          "track_id": "100281217",
+          "score": 0.8635673522949219
+        },
+        {
+          "rank": 198,
+          "track_id": "32078493",
+          "score": 0.8631410598754883
+        },
+        {
+          "rank": 199,
+          "track_id": "35756014",
+          "score": 0.8628856539726257
+        },
+        {
+          "rank": 200,
+          "track_id": "122195431",
+          "score": 0.8628358840942383
+        },
+        {
+          "rank": 201,
+          "track_id": "215205041",
+          "score": 0.8626619577407837
+        }
+      ]
+    },
+    {
+      "seed_track_id": "209700649",
+      "classification": "RECOVERED MISS",
+      "recommendations_added": [
+        "66169219"
+      ],
+      "recommendations_removed": [
+        "171467637"
+      ],
+      "faiss_candidate_cutoff": 0.7982439398765564,
+      "recovered_exact_candidates": [
+        {
+          "rank": 87,
+          "track_id": "49710077",
+          "score": 0.8264377117156982,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 114,
+          "track_id": "6272095",
+          "score": 0.8184057474136353,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 131,
+          "track_id": "230120515",
+          "score": 0.8157061338424683,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 137,
+          "track_id": "132329265",
+          "score": 0.8139577507972717,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 138,
+          "track_id": "132748226",
+          "score": 0.813852071762085,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 143,
+          "track_id": "86574000",
+          "score": 0.8128355145454407,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 156,
+          "track_id": "13086106",
+          "score": 0.8093483448028564,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 164,
+          "track_id": "121437904",
+          "score": 0.806792140007019,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 172,
+          "track_id": "5000878",
+          "score": 0.8048691749572754,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 191,
+          "track_id": "216328964",
+          "score": 0.8021263480186462,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 195,
+          "track_id": "28307234",
+          "score": 0.8017089366912842,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 200,
+          "track_id": "128590012",
+          "score": 0.8010598421096802,
+          "above_faiss_cutoff": true
+        },
+        {
+          "rank": 201,
+          "track_id": "220178250",
+          "score": 0.8008872866630554,
+          "above_faiss_cutoff": true
+        }
+      ],
+      "dropped_faiss_candidates": [
+        {
+          "rank": 189,
+          "track_id": "140874918",
+          "score": 0.8006447553634644
+        },
+        {
+          "rank": 190,
+          "track_id": "130167876",
+          "score": 0.800491452217102
+        },
+        {
+          "rank": 191,
+          "track_id": "242695941",
+          "score": 0.8003143668174744
+        },
+        {
+          "rank": 192,
+          "track_id": "123805176",
+          "score": 0.8000997304916382
+        },
+        {
+          "rank": 193,
+          "track_id": "139068429",
+          "score": 0.7999551296234131
+        },
+        {
+          "rank": 194,
+          "track_id": "237730004",
+          "score": 0.7998455762863159
+        },
+        {
+          "rank": 195,
+          "track_id": "159044441",
+          "score": 0.7994641065597534
+        },
+        {
+          "rank": 196,
+          "track_id": "234908147",
+          "score": 0.7992868423461914
+        },
+        {
+          "rank": 197,
+          "track_id": "12216527",
+          "score": 0.7990725040435791
+        },
+        {
+          "rank": 198,
+          "track_id": "36946926",
+          "score": 0.7986579537391663
+        },
+        {
+          "rank": 199,
+          "track_id": "155013753",
+          "score": 0.7986194491386414
+        },
+        {
+          "rank": 200,
+          "track_id": "171467637",
+          "score": 0.7986099123954773
+        },
+        {
+          "rank": 201,
+          "track_id": "192432260",
+          "score": 0.7982439398765564
+        }
+      ]
+    }
+  ]
+}
