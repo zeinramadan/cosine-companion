@@ -648,6 +648,123 @@ def test_a_cancel_during_an_up_to_date_run_is_never_observed(indexing):
         e.message for e in events
     ]
 
+def test_a_late_cancel_on_the_no_embeddings_path_is_never_observed(indexing, tmp_path):
+    """TIMING B via STATUS_NO_EMBEDDINGS (inventory §2.13, §4 #17).
+    CURRENT BEHAVIOUR, NOT A BUG FIX.
+
+    Three tracks whose files are all missing. The per-track loop DOES run here -
+    every track is iterated and every track reports "File not found" - so this
+    path performs one checkpoint per track, exactly like the STATUS_INDEXED
+    path. What it never performs is a checkpoint AFTER the last iteration:
+    ``pipeline.py:219-221`` reports "❌ No new embeddings generated." and
+    returns without reading ``cancel_check`` again.
+
+    So the reachable timing-B interleaving on this path is a flag first set
+    after the LAST track's checkpoint - not "at any moment of the run", which
+    would be caught by a later track's checkpoint. The progress callback
+    supplies that interleaving deterministically, with no threads and no
+    sleeps. Each per-track iteration runs, in source order:
+
+        pipeline.py:182   if cancel_check and cancel_check():   <- the checkpoint
+        pipeline.py:189   report("embed", "   [  3/3] C - Gone")
+        pipeline.py:193   if not pl or not os.path.exists(pl):
+        pipeline.py:194   report("embed", "      ⚠️  File not found: ...")  <- fires
+        pipeline.py:197   continue
+
+    so calling ``cancel.set()`` from the THIRD "File not found" report lands
+    after every checkpoint this run will ever perform. The assertions below PIN
+    that placement rather than assume it: at the moment of ``set()`` the
+    pipeline has performed 3 checkpoint reads - one per track, all of them -
+    and has reported all 3 misses.
+
+    The pipeline never looks again. It does not raise ``KeyboardInterrupt``, it
+    does not emit "⚠️ Cancellation detected, stopping...", it emits its
+    "❌ No new embeddings generated." line AFTER the flag went up, and it
+    returns ``STATUS_NO_EMBEDDINGS``. No data files are written on this path.
+
+    reindex_window then evaluates `if self.cancel_requested:` - True - and
+    appends "⚠️ Indexing cancelled by user" over a run that failed rather than
+    one that was cancelled. The UI half of that is pinned in
+    tests/test_ui_reports_success_for_every_terminal_outcome.py.
+    """
+    service, _, data, audio = indexing
+    xml = _write_xml(tmp_path / "allbad.xml", [
+        ("3001", "Gone", "A", audio / "missing1.mp3"),
+        ("3002", "Gone", "B", audio / "missing2.mp3"),
+        ("3003", "Gone", "C", audio / "missing3.mp3"),
+    ])
+
+    cancel = CountingEvent()
+    events = []
+    misses = []
+    set_at = []
+    set_index = []
+
+    def progress(event):
+        events.append(event)
+        # The per-track miss line for each track. Matching the message prefix
+        # the way the rest of this file does; the closing "complete" line is a
+        # different phase and does not collide with it.
+        if event.message.startswith("      ⚠️  File not found:"):
+            misses.append(event.message)
+            if len(misses) == 3:  # the LAST track's miss
+                cancel.set()
+                set_at.append((cancel.reads, len(misses)))
+                set_index.append(len(events))
+
+    try:
+        result = service.run(str(xml), progress=progress, cancel=cancel)
+    except KeyboardInterrupt:  # pragma: no cover - only on a behaviour change
+        pytest.fail(
+            "the no-embeddings path OBSERVED the late cancel and raised "
+            "KeyboardInterrupt. Defect #17 says it does not: a cancellation "
+            "checkpoint now runs after the top of the last per-track iteration "
+            "- most likely on the STATUS_NO_EMBEDDINGS return path itself."
+        )
+
+    # The RUN set the flag - this test did not - and it set it after the third
+    # (final) checkpoint. That is timing B on this path exactly.
+    assert set_at == [(3, 3)], (
+        "the flag was not set at the timing-B interleaving. Expected "
+        "(checkpoint reads, misses reported) == (3, 3) at set(); got "
+        f"{set_at}"
+    )
+
+    # The pipeline never consulted the token again, so it ran the rest of the
+    # job - the empty-vector test, the "complete" report and the return - with
+    # the cancellation flag standing at True the whole time.
+    reads_during_run = cancel.reads  # captured before this test reads it itself
+    assert reads_during_run == 3, (
+        f"expected 3 in-run reads (one per track); got {reads_during_run}. "
+        "A checkpoint after the last one would have caught this cancel"
+    )
+
+    assert cancel.is_set() is True  # still set; nothing cleared it
+    assert result.status == STATUS_NO_EMBEDDINGS
+    assert result.failed is True
+    assert result.up_to_date is False
+    assert result.new_tracks_found == 3
+    assert result.new_tracks_added == 0
+
+    messages = [e.message for e in events]
+    assert "⚠️ Cancellation detected, stopping..." not in messages
+
+    # The run carried on PAST the moment the flag went up: its terminal line was
+    # emitted after set(), which is what "the cancel was never observed" means
+    # here. Asserting the ordering rather than an absolute index, so an
+    # unrelated event elsewhere in the pipeline does not move this goalpost.
+    complete_line = "❌ No new embeddings generated. Check audio paths/codecs."
+    assert complete_line in messages
+    assert messages.index(complete_line) >= set_index[0], (
+        "the terminal line was emitted before the flag was set, so this run "
+        "never modelled a late cancel at all"
+    )
+
+    # Nothing is persisted on this path, cancelled or not.
+    for name in ("meta.parquet", "embeddings.parquet", "index.npy", "ids.json"):
+        assert not (data / name).exists(), f"{name} was written on the no-embeddings path"
+
+
 
 # --------------------------------------------------------------------------
 # Result and persistence

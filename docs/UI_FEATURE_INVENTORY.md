@@ -39,16 +39,20 @@ Every §-reference, every `#n` defect reference and every `tests/…::test_name`
 something real, and the defect table is numbered without gaps. The listbox and print-site counts
 are re-derived from the source rather than trusted, and no stated count contradicts its own
 enumeration. A short list of claims already found false in review cannot reappear verbatim. And
-every block making an absolute claim — `never`, `dead code`, `none of …`, `no … are written` —
-carries a justification token in the same block: a test citation, the word *pinned*, or a
-`file.py:N` derivation.
+every block matching the hand-written absolute-claim vocabulary — `never`, `dead code`,
+`none of …`, `no … are written` — carries a justification token in the same block: a test
+citation, the word *pinned*, or a `file.py:N` derivation.
 
 **It does not verify.** It does not check that a citation *supports* the sentence it hangs off:
 the citation check reads the cited file's length, never the cited line, so any real line number
 satisfies it. It has no general contradiction detector — the two contradiction checks it does have
 are hand-written for specific known pairs (scrolling, and the refuted-claim list), so a new claim
-that contradicts a distant section passes. And it cannot settle an **ordering** claim at all,
-because those are refuted by an interleaving rather than by anything in the text.
+that contradicts a distant section passes. The absolute-claim vocabulary is a finite hand-written
+list of phrasings, not a general detector of absoluteness: a claim worded outside it — *zero data
+files are written* — goes unseen, and an unseen block is not asked to justify itself. Widening the
+list is a permanent game of catch-up, and finishing it is not attempted. And it cannot settle an
+**ordering** claim at all, because those are refuted by an interleaving rather than by anything in
+the text.
 
 A worked example of the gap, recorded so it is not rediscovered as a surprise: rewriting the timing
 B paragraph below to assert the *opposite* of what it asserts, with a real `pipeline.py` line
@@ -1042,7 +1046,8 @@ few microseconds. It is not short in *instructions*, and it is not atomic: `:151
 assignment whose setter (`reindex_window.py:60-65`) calls `Event.set()`, and `:152` then builds a
 tuple and calls `queue.Queue.put`, which takes a mutex, appends to a deque and notifies a condition
 variable. That is many bytecodes across several Python frames, and CPython may switch threads at
-any bytecode boundary — every `sys.setswitchinterval()`, 5 ms by default — or while that mutex is
+a bytecode boundary once the switch interval has elapsed (`sys.setswitchinterval()`, 5 ms by
+default) — it does not switch on a fixed 5 ms period, and it may also switch while that mutex is
 contended. Nothing enforces the order. Any check written as "line 1 **followed by** line 2", or
 as "the **last** line is `⚠️ Cancellation detected, stopping...`", is asserting a race it cannot
 rely on; check for the
@@ -1066,9 +1071,15 @@ that is:
   (`pipeline.py:200-216`); or
 - during any post-loop phase: normalisation, `merge_embeddings`, the metadata merge, index build or
   the four-file write; or
-- at **any** moment of a run that returns before the loop can run again — `len(new_tracks) == 0`
-  returns `STATUS_UP_TO_DATE` at `pipeline.py:169-170`, and an all-failed run returns
-  `STATUS_NO_EMBEDDINGS` at `pipeline.py:219-221`.
+- at **any** moment of a run that never enters the loop at all: `len(new_tracks) == 0` returns
+  `STATUS_UP_TO_DATE` at `pipeline.py:169-170` without ever reading `cancel_check`, so there is no
+  moment at which a flag on such a run could be seen (pinned by
+  `tests/services/test_indexing_service.py::test_a_cancel_during_an_up_to_date_run_is_never_observed`); or
+- after the **last** track's checkpoint on a run where every track fails to embed. That run does
+  enter the loop and does perform one checkpoint per track, but `pipeline.py:219-221` then returns
+  `STATUS_NO_EMBEDDINGS` without another read — so a flag set from the final track onwards is never
+  observed, while one set earlier still is (pinned by
+  `…::test_a_late_cancel_on_the_no_embeddings_path_is_never_observed`).
 
 The pipeline never re-reads `cancel_check`, so it **completes normally** and returns a summary
 dict. `service.run(...)` returns, and `run_indexing`'s `if self.cancel_requested:`
@@ -1094,7 +1105,9 @@ nothing is written — those returns are at `processing/pipeline.py:169-170` and
 half is pinned by
 `tests/services/test_indexing_service.py::test_a_cancel_first_observed_after_the_last_checkpoint_does_not_stop_the_run`
 and the `STATUS_NO_EMBEDDINGS` half by
-`…::test_a_run_where_nothing_could_be_embedded_is_not_up_to_date`.
+`…::test_a_late_cancel_on_the_no_embeddings_path_is_never_observed`, which sets a real cancel flag
+after that run's last checkpoint. (`…::test_a_run_where_nothing_could_be_embedded_is_not_up_to_date`
+pins the same empty outcome but passes no cancel token, so it says nothing about timing B.)
 
 Either way the window shows the orange `⚠️ Indexing cancelled` state with a `Close` button, **not**
 `Done` (`reindex_window.py:246-247` dispatches to `show_cancelled` at `reindex_window.py:270-285`,
@@ -1484,6 +1497,7 @@ Every row is a user-reachable workflow catalogued above. Task 9 records pass/fai
 | 34d | Reindex ▸ Cancel **after the last per-track checkpoint has passed** — during the final track's embed, or during the merge/write phase (timing B) ▸ the pipeline does **not** raise, no `⚠️ Cancellation detected, stopping...` appears, and the log pane ends with `⚠️ Indexing cancelled by user`. `✅ Indexing completed successfully!` is still absent | §2.13, §4 #16, #17 |
 | 34e | …the same run (timing B) reaching `STATUS_INDEXED` ▸ all four data files **are** written and the on-disk index is updated, while the window shows the orange cancelled state and a `Close` button — no `Restart Required` prompt is offered | §2.13, §4 #17, #5 |
 | 34f | Reindex ▸ Cancel an already-up-to-date library, at any moment (timing B via `STATUS_UP_TO_DATE`) ▸ `⚠️ Indexing cancelled by user` is appended and no data files are written (`processing/pipeline.py:169-170` returns before `save_index_data`; pinned by `…::test_a_cancel_during_an_up_to_date_run_is_never_observed`) | §2.13, §4 #17 |
+| 34g | Reindex ▸ Cancel **during the last track of a run whose files are all missing or undecodable** (timing B via `STATUS_NO_EMBEDDINGS`) ▸ the pipeline does **not** raise, `❌ No new embeddings generated. Check audio paths/codecs.` is still logged, `⚠️ Indexing cancelled by user` is appended over what was a failure, and no data files are written (`processing/pipeline.py:219-221` returns before `save_index_data`; pinned by `…::test_a_late_cancel_on_the_no_embeddings_path_is_never_observed`) | §2.13, §4 #17 |
 | 34c | Reindex ▸ let it finish ▸ the log pane ends with `🚀 Ready to use! …` then `✅ Indexing completed successfully!` | §2.13 |
 | 35 | Reindex ▸ Done ▸ Restart Required dialog ▸ declining leaves the app running | §2.13 |
 | 36 | Menu ▸ Library ▸ Update Library (Incremental) ▸ same reindex window | §2.3 |

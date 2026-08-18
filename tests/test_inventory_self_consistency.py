@@ -31,9 +31,10 @@ WHAT IT VERIFIES
 * the listbox and print-site counts are re-derived from the source rather than
   trusted, and no stated count contradicts its own enumeration;
 * a short, explicit list of claims already found false cannot reappear verbatim;
-* absolute claims ("never", "dead code", "none of ... are written") must carry a
-  justification TOKEN - a test citation, the word "pinned", or a `file.py:N`
-  derivation - in the same block.
+* every block matching the hand-written absolute-claim vocabulary ("never",
+  "dead code", "none of ... are written") must carry a justification TOKEN - a
+  test citation, the word "pinned", or a `file.py:N` derivation - in the same
+  block.
 
 WHAT IT DOES NOT VERIFY
 -----------------------
@@ -43,6 +44,13 @@ Read this before treating a green run as evidence that a claim is true.
   Both the citation check and the justification check test for presence: does
   the file exist, is the line number within it, is a token there. Neither ever
   reads the cited line. Any real line number in any real file satisfies both.
+* The absolute-claim vocabulary is a finite hand-written list of phrasings,
+  not a general detector of absoluteness. It is checked against, and only
+  against, the wordings someone has already thought of. "zero data files are
+  written" carries exactly the weight of "no data files are written" and the
+  pattern does not see it, so that block is never asked to justify itself.
+  Widening the list is a permanent game of catch-up; no attempt is made to
+  finish it, and a green run says nothing about a claim the vocabulary misses.
 * There is NO general contradiction detector, and none is attempted - a
   semantic checker over English prose is not achievable here. The two
   contradiction checks below are hand-written for two specific known pairs
@@ -472,8 +480,9 @@ def test_every_absolute_claim_carries_a_justification_in_its_own_block(doc):
     An existential claim ("string X is at line N") is settled by one grep. An
     absolute one ("never", "dead code", "none of ... are written") can only be
     settled by argument, and it is exactly the kind that survives review by
-    being plausible. So every block making one must show its working in the
-    same block: a test citation, the word "pinned", or a derivation.
+    being plausible. So every block matching the hand-written absolute-claim
+    vocabulary must show its working in the same block: a test citation, the
+    word "pinned", or a derivation.
 
     THE LIMIT, stated so nobody relies on more than this delivers. The check is
     for the PRESENCE of a justification token, not its relevance. A `file.py:N`
@@ -482,6 +491,12 @@ def test_every_absolute_claim_carries_a_justification_in_its_own_block(doc):
     a false claim that carries a real-but-irrelevant line number passes both.
     That is how a reviewer defeated this file in round 5, and it is not fixable
     by widening either regex; it needs a human reading the cited line.
+
+    The second limit is the vocabulary itself. ABSOLUTE is a hand-written list
+    of phrasings, so a block only reaches this check if it happens to use one
+    of them: "zero data files are written" is as absolute as "no data files are
+    written" and escapes untouched. The list is not exhaustive and is not being
+    made exhaustive.
 
     This does not make the claims TRUE. It makes an UNSUPPORTED one visible.
     """
@@ -571,9 +586,16 @@ def test_the_workflow_checklist_covers_both_cancellation_timings(doc):
     B needs rows of its own or the race is untested by the manual pass."""
     start = doc.index("## 5. Workflow checklist")
     rows = {m.group(1): m.group(0) for m in
-            re.finditer(r"^\|\s*(3[0-9][a-f]?)\s*\|.*$", doc[start:], re.M)}
+            re.finditer(r"^\|\s*(3[0-9][a-z]?)\s*\|.*$", doc[start:], re.M)}
 
     assert "34a" in rows and "timing A" in rows["34a"]
     assert "34b" in rows and "timing A" in rows["34b"]
     late = [k for k, v in rows.items() if "timing B" in v]
     assert len(late) >= 2, f"only {late} cover timing B; the late-cancel race needs its own rows"
+
+    # Each terminal status reachable under timing B needs its own row: they
+    # differ in what the user is left with (all four files, or none) and the
+    # manual pass is driven off this table.
+    for status in ("STATUS_UP_TO_DATE", "STATUS_NO_EMBEDDINGS"):
+        assert any(status in rows[k] for k in late), (
+            f"no timing-B workflow row covers {status}; rows found: {sorted(late)}")
