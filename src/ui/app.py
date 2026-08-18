@@ -5,7 +5,7 @@ from typing import Optional, List, Dict, Any
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from services import ExploreSession, LibrarySession, Recommendation
+from services import ExploreSession, LibrarySession, Recommendation, SetBuilder
 from ui.recommendations_tab import RecommendationsTabMixin
 from ui.set_creator_tab import SetCreatorTabMixin
 from ui.library_tab import LibraryTabMixin
@@ -47,6 +47,7 @@ class App(RecommendationsTabMixin, SetCreatorTabMixin, LibraryTabMixin, Playlist
         # read through this session instead of mutating App attributes.
         self.library: LibrarySession = _load_app_data(self)
         self.explore: ExploreSession = ExploreSession(self.library)
+        self.set_builder: SetBuilder = SetBuilder(self.library)
         self.current_id: Optional[str] = None
         self.current_recommendations: List[Recommendation] = []
         

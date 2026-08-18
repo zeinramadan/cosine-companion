@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Dict, List
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from recommendations import generate_set, SetTrack
+from recommendations import SetTrack
 from ui.dialogs import AddAnchorDialog
 
 if TYPE_CHECKING:
@@ -110,12 +110,9 @@ class SetCreatorTabMixin:
             self.status.config(text="🎵 Generating set... This may take a moment.")
             self.update()
             
-            self.generated_set = generate_set(
-                self.anchor_tracks, 
-                total_tracks,
-                self.library.meta_ix,
-                self.library.emb_ix,
-                self.library.index
+            self.generated_set = self.set_builder.build(
+                self.anchor_tracks,
+                total_tracks
             )
             self.update_set_listbox()
             self.status.config(text=f"✅ Generated {len(self.generated_set)}-track set successfully!")
