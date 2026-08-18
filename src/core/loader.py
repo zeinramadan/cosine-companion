@@ -2,6 +2,7 @@
 """Data loading functions for metadata, embeddings, and index."""
 
 import json
+import re
 from typing import Tuple, Optional, List
 
 import numpy as np
@@ -9,6 +10,9 @@ import pandas as pd
 
 from config import META_PQ, EMB_PQ, IDX_NPY, IDS_JSON
 from core.index_builder import NumpyCosIndex
+
+
+VECTOR_COLUMN_PATTERN = re.compile(r"^v\d+$")
 
 
 def load_existing_data() -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
@@ -56,7 +60,11 @@ def _validate_index_data(V: np.ndarray, ids: List[str], emb: pd.DataFrame) -> No
             f"{duplicate_embedding_ids[:5]}"
         )
 
-    vector_columns = [column for column in emb.columns if column.startswith("v")]
+    vector_columns = [
+        column
+        for column in emb.columns
+        if isinstance(column, str) and VECTOR_COLUMN_PATTERN.fullmatch(column)
+    ]
     if len(vector_columns) != V.shape[1]:
         raise ValueError(
             f"index.npy vector dimension is {V.shape[1]} but "

@@ -56,14 +56,30 @@ def test_search_returns_scores_in_descending_order() -> None:
     assert [score for _, score in results] == pytest.approx([1.0, 0.0, -1.0])
 
 
-def test_equal_scores_preserve_positional_id_order() -> None:
+def test_equal_scores_straddling_k_preserve_positional_id_order() -> None:
     index = NumpyCosIndex(dim=2)
-    index.add("first", np.array([0.0, 1.0]))
-    index.add("second", np.array([0.0, -1.0]))
+    tied_vector = np.array([0.5, np.sqrt(0.75)])
+    for position in range(8):
+        index.add(f"tie-{position}", tied_vector)
+    index.add("highest", np.array([0.9, np.sqrt(0.19)]))
 
-    results = index.search(np.array([1.0, 0.0]), k=2)
+    results = index.search(np.array([1.0, 0.0]), k=3)
 
-    assert [track_id for track_id, _ in results] == ["first", "second"]
+    assert [track_id for track_id, _ in results] == ["highest", "tie-0", "tie-1"]
+
+
+def test_add_invalidates_matrix_without_mutating_existing_snapshot() -> None:
+    index = NumpyCosIndex(dim=2)
+    index.add("first", np.array([1.0, 0.0]))
+    first_snapshot = index.matrix
+
+    index.add("second", np.array([0.0, 1.0]))
+    second_snapshot = index.matrix
+
+    assert first_snapshot.shape == (1, 2)
+    assert second_snapshot.shape == (2, 2)
+    assert first_snapshot is not second_snapshot
+    np.testing.assert_array_equal(first_snapshot, np.array([[1.0, 0.0]]))
 
 
 def test_search_clamps_k_greater_than_collection_size() -> None:

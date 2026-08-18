@@ -12,6 +12,23 @@ from ui.library_tab import LibraryTabMixin
 from ui.playlist_export_tab import PlaylistExportTabMixin
 
 
+def _load_app_data(parent):
+    """Load persisted index data or show a user-facing recovery path."""
+    try:
+        return load_all()
+    except ValueError as error:
+        messagebox.showerror(
+            "Inconsistent Index Data",
+            "Cosine Companion could not load its saved index because the data "
+            "files are inconsistent. Re-run indexing with --force, for example:\n\n"
+            "python src/cosine_companion.py index <rekordbox.xml> --force\n\n"
+            f"Details: {error}",
+            parent=parent,
+        )
+        parent.destroy()
+        raise SystemExit(1) from None
+
+
 class App(RecommendationsTabMixin, SetCreatorTabMixin, LibraryTabMixin, PlaylistExportTabMixin, tk.Tk):
     """Main application window for Cosine Companion."""
     
@@ -26,7 +43,9 @@ class App(RecommendationsTabMixin, SetCreatorTabMixin, LibraryTabMixin, Playlist
         from utils.icon import set_window_icon
         set_window_icon(self)
 
-        self.meta, self.meta_ix, self.emb_ix, self.idx, self.V, self.ids = load_all()
+        self.meta, self.meta_ix, self.emb_ix, self.idx, self.V, self.ids = (
+            _load_app_data(self)
+        )
         self.current_id: Optional[str] = None
         self.current_recommendations: List[Dict[str, Any]] = []
         

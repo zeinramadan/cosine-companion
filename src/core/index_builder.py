@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Exact NumPy cosine-similarity index."""
 
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 
@@ -14,8 +14,20 @@ class NumpyCosIndex:
         if dim <= 0:
             raise ValueError(f"Vector dimension must be positive, got {dim}")
         self.dim = dim
-        self.matrix = np.empty((0, dim), dtype=np.float32)
         self.ids: List[str] = []
+        self._rows: List[np.ndarray] = []
+        self._matrix: Optional[np.ndarray] = None
+
+    @property
+    def matrix(self) -> np.ndarray:
+        """Materialize and cache the current rows as one float32 matrix."""
+        if self._matrix is None:
+            self._matrix = (
+                np.vstack(self._rows)
+                if self._rows
+                else np.empty((0, self.dim), dtype=np.float32)
+            )
+        return self._matrix
 
     def add(self, track_id: str, v: np.ndarray) -> None:
         """Normalize and append a vector and its positional track ID."""
@@ -28,7 +40,8 @@ class NumpyCosIndex:
         norm = np.linalg.norm(v)
         if norm > 0:
             v = v / norm
-        self.matrix = np.concatenate((self.matrix, v[np.newaxis, :]), axis=0)
+        self._rows.append(v)
+        self._matrix = None
         self.ids.append(track_id)
 
     def search(self, v: np.ndarray, k: int = 50) -> List[Tuple[str, float]]:
@@ -45,7 +58,5 @@ class NumpyCosIndex:
             v = v / norm
 
         scores = self.matrix @ v
-        candidate_indices = np.argpartition(scores, len(scores) - count)[-count:]
-        order = np.lexsort((candidate_indices, -scores[candidate_indices]))
-        ranked_indices = candidate_indices[order]
+        ranked_indices = np.argsort(-scores, kind="stable")[:count]
         return [(self.ids[i], float(scores[i])) for i in ranked_indices]

@@ -16,6 +16,11 @@ def test_validate_index_data_rejects_row_count_mismatch() -> None:
         _validate_index_data(np.zeros((3, 2)), ["a", "b"], _embeddings(["a", "b"]))
 
 
+def test_validate_index_data_rejects_non_matrix_vectors() -> None:
+    with pytest.raises(ValueError, match="must contain a 2D matrix"):
+        _validate_index_data(np.zeros(2), ["a", "b"], _embeddings(["a", "b"]))
+
+
 def test_validate_index_data_rejects_duplicate_ids() -> None:
     with pytest.raises(ValueError, match="duplicate track IDs"):
         _validate_index_data(np.zeros((2, 2)), ["a", "a"], _embeddings(["a", "b"]))
@@ -24,3 +29,28 @@ def test_validate_index_data_rejects_duplicate_ids() -> None:
 def test_validate_index_data_rejects_embedding_dimension_mismatch() -> None:
     with pytest.raises(ValueError, match="dimension is 3.*has 2 vector columns"):
         _validate_index_data(np.zeros((2, 3)), ["a", "b"], _embeddings(["a", "b"]))
+
+
+def test_validate_index_data_rejects_missing_track_id_column() -> None:
+    embeddings = pd.DataFrame({"v0": [0.0, 0.0], "v1": [0.0, 0.0]})
+
+    with pytest.raises(ValueError, match="missing the track_id column"):
+        _validate_index_data(np.zeros((2, 2)), ["a", "b"], embeddings)
+
+
+def test_validate_index_data_rejects_duplicate_embedding_ids() -> None:
+    with pytest.raises(ValueError, match="embeddings.parquet contains duplicate"):
+        _validate_index_data(np.zeros((2, 2)), ["a", "b"], _embeddings(["a", "a"]))
+
+
+def test_validate_index_data_rejects_id_set_mismatch() -> None:
+    with pytest.raises(ValueError, match="track IDs do not match"):
+        _validate_index_data(np.zeros((2, 2)), ["a", "b"], _embeddings(["a", "c"]))
+
+
+def test_validate_index_data_ignores_non_vector_v_prefix_columns() -> None:
+    embeddings = _embeddings(["a", "b"])
+    embeddings["version"] = [1, 1]
+    embeddings["volume"] = [0.5, 0.6]
+
+    _validate_index_data(np.zeros((2, 2)), ["a", "b"], embeddings)

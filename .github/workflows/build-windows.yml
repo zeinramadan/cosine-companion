@@ -124,13 +124,6 @@ jobs:
             Write-Host "[ERROR] pandas NOT found!"
           }
           
-          # Check for faiss
-          $faiss = Get-ChildItem "dist\Cosine Companion\_internal" -Filter "*faiss*" -Recurse | Select-Object -First 1
-          if ($faiss) {
-            Write-Host "[OK] faiss found"
-          } else {
-            Write-Host "[WARNING] faiss not found"
-          }
         } else {
           Write-Host "[ERROR] _internal directory NOT found!"
         }
