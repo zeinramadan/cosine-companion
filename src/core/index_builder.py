@@ -46,6 +46,6 @@ class NumpyCosIndex:
 
         scores = self.matrix @ v
         candidate_indices = np.argpartition(scores, len(scores) - count)[-count:]
-        order = np.argsort(-scores[candidate_indices], kind="stable")
+        order = np.lexsort((candidate_indices, -scores[candidate_indices]))
         ranked_indices = candidate_indices[order]
         return [(self.ids[i], float(scores[i])) for i in ranked_indices]

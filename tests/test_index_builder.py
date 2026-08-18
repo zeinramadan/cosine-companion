@@ -56,6 +56,16 @@ def test_search_returns_scores_in_descending_order() -> None:
     assert [score for _, score in results] == pytest.approx([1.0, 0.0, -1.0])
 
 
+def test_equal_scores_preserve_positional_id_order() -> None:
+    index = NumpyCosIndex(dim=2)
+    index.add("first", np.array([0.0, 1.0]))
+    index.add("second", np.array([0.0, -1.0]))
+
+    results = index.search(np.array([1.0, 0.0]), k=2)
+
+    assert [track_id for track_id, _ in results] == ["first", "second"]
+
+
 def test_search_clamps_k_greater_than_collection_size() -> None:
     index = NumpyCosIndex(dim=2)
     index.add("a", np.array([1.0, 0.0]))

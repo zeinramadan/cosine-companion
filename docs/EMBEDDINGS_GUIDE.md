@@ -265,7 +265,7 @@ class NumpyCosIndex:
             v = v / n
         scores = self.matrix @ v
         candidates = np.argpartition(scores, len(scores) - k)[-k:]
-        ranked = candidates[np.argsort(-scores[candidates])]
+        ranked = candidates[np.lexsort((candidates, -scores[candidates]))]
         return [(self.ids[i], float(scores[i])) for i in ranked]
 ```
 
