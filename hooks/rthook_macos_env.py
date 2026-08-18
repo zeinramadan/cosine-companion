@@ -14,11 +14,10 @@ if sys.platform == 'darwin':
     os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
     os.environ.setdefault("SDL_RENDER_DRIVER", "software")
 
-    # Avoid OpenMP duplicate symbols crash (e.g., with numpy, faiss, essentia)
+    # Avoid OpenMP duplicate symbols crash (e.g., with numpy and essentia)
     os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
     os.environ.setdefault("OMP_NUM_THREADS", "1")
 
     # Silence deprecated Tk warnings; avoid forcing TCL/TK paths which may mismatch
     os.environ.setdefault("TK_SILENCE_DEPRECATION", "1")
-
 

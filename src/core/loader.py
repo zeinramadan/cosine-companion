@@ -2,13 +2,17 @@
 """Data loading functions for metadata, embeddings, and index."""
 
 import json
+import re
 from typing import Tuple, Optional, List
 
 import numpy as np
 import pandas as pd
 
 from config import META_PQ, EMB_PQ, IDX_NPY, IDS_JSON
-from core.index_builder import FaissCosIndex
+from core.index_builder import NumpyCosIndex
+
+
+VECTOR_COLUMN_PATTERN = re.compile(r"^v\d+$")
 
 
 def load_existing_data() -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
@@ -31,26 +35,75 @@ def load_existing_data() -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]
         return None, None
 
 
-def load_all() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, FaissCosIndex, np.ndarray, List[str]]:
+def _validate_index_data(V: np.ndarray, ids: List[str], emb: pd.DataFrame) -> None:
+    """Validate the persisted row and dimension mappings before indexing."""
+    if V.ndim != 2:
+        raise ValueError(f"index.npy must contain a 2D matrix; got shape {V.shape}")
+    if len(ids) != V.shape[0]:
+        raise ValueError(
+            f"ids.json contains {len(ids)} track IDs but index.npy has "
+            f"{V.shape[0]} vector rows"
+        )
+
+    duplicate_ids = pd.Index(ids)[pd.Index(ids).duplicated()].unique().tolist()
+    if duplicate_ids:
+        raise ValueError(f"ids.json contains duplicate track IDs: {duplicate_ids[:5]}")
+
+    if "track_id" not in emb.columns:
+        raise ValueError("embeddings.parquet is missing the track_id column")
+    duplicate_embedding_ids = emb.loc[
+        emb["track_id"].duplicated(), "track_id"
+    ].unique().tolist()
+    if duplicate_embedding_ids:
+        raise ValueError(
+            "embeddings.parquet contains duplicate track IDs: "
+            f"{duplicate_embedding_ids[:5]}"
+        )
+
+    vector_columns = [
+        column
+        for column in emb.columns
+        if isinstance(column, str) and VECTOR_COLUMN_PATTERN.fullmatch(column)
+    ]
+    if len(vector_columns) != V.shape[1]:
+        raise ValueError(
+            f"index.npy vector dimension is {V.shape[1]} but "
+            f"embeddings.parquet has {len(vector_columns)} vector columns"
+        )
+
+    indexed_ids = set(ids)
+    embedding_ids = set(emb["track_id"])
+    if indexed_ids != embedding_ids:
+        missing = list(indexed_ids - embedding_ids)[:5]
+        extra = list(embedding_ids - indexed_ids)[:5]
+        raise ValueError(
+            "ids.json and embeddings.parquet track IDs do not match "
+            f"(missing embeddings: {missing}; unindexed embeddings: {extra})"
+        )
+
+
+def load_all() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, NumpyCosIndex, np.ndarray, List[str]]:
     """
-    Load all indexed data: metadata, embeddings, vectors, and FAISS index.
+    Load all indexed data: metadata, embeddings, vectors, and cosine index.
     
     Returns:
         Tuple of (meta, meta_ix, emb_ix, idx, V, ids) where:
         - meta: Full metadata DataFrame
         - meta_ix: Metadata indexed by track_id
         - emb_ix: Embeddings indexed by track_id
-        - idx: Built FAISS index
+        - idx: Built exact cosine index
         - V: Vector array
         - ids: List of track IDs
     """
     meta = pd.read_parquet(META_PQ)
     emb = pd.read_parquet(EMB_PQ)
     V = np.load(IDX_NPY)
-    with open(IDS_JSON) as f:
+    with open(IDS_JSON, encoding="utf-8") as f:
         ids = json.load(f)
 
-    idx = FaissCosIndex(V.shape[1])
+    _validate_index_data(V, ids, emb)
+
+    idx = NumpyCosIndex(V.shape[1])
     for tid, v in zip(ids, V):
         idx.add(tid, v)
 

@@ -26,12 +26,14 @@ setup(
         "lxml>=4.6.0",
         "soundfile>=0.10.0",
         "essentia-tensorflow>=2.1b6",
-        "faiss-cpu>=1.7.0",
         "typer>=0.4.0",
     ],
     extras_require={
+        "test": [
+            "pytest>=7.0",
+        ],
         "dev": [
-            "pytest>=6.0.0",
+            "pytest>=7.0",
             "pytest-cov>=2.12.0",
             "black>=21.0.0",
             "pylint>=2.8.0",

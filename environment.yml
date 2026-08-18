@@ -30,4 +30,3 @@ dependencies:
   - pip
   - pip:
       - essentia-tensorflow>=2.1b6.dev0
-      - faiss-cpu>=1.7.0

@@ -238,7 +238,7 @@ class RecommendationsTabMixin:
             self.meta_ix, 
             self.emb_ix, 
             self.idx, 
-            topk=500,  # Get more FAISS candidates for better results
+            topk=500,  # Get more cosine-similarity candidates for better results
             final_top=200  # Compute up to 200 final recommendations
         )
         

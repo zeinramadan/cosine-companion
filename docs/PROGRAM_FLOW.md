@@ -44,7 +44,7 @@ This document provides a comprehensive overview of how the Cosine Companion syst
 │  config/paths.py → data/ directory                              │
 │  ├── meta.parquet     (track metadata)                          │
 │  ├── embeddings.parquet (audio embeddings)                      │
-│  ├── index.npy        (FAISS vectors)                           │
+│  ├── index.npy        (exact-search vectors)                    │
 │  └── ids.json         (track ID mapping)                        │
 │  └── deleted_tracks.json (manually deleted track IDs)           │
 └─────────────────────────────────────────────────────────────────┘
@@ -235,7 +235,7 @@ def embed_file(self, path_local: str) -> np.ndarray:
 data/
 ├── meta.parquet        ← Current XML metadata
 ├── embeddings.parquet  ← Track embeddings with IDs
-├── index.npy          ← Normalized vectors for FAISS
+├── index.npy          ← Normalized vectors for exact cosine search
 └── ids.json           ← Track ID → vector index mapping
 └── deleted_tracks.json ← Tracks manually hidden from indexing
 ```
@@ -277,7 +277,7 @@ graph TD
     
     C --> G[Create indexed DataFrames]
     D --> G
-    E --> H[Build core.index_builder.FaissCosIndex]
+    E --> H[Build core.index_builder.NumpyCosIndex]
     F --> H
     
     G --> I[Return loaded structures]
@@ -290,7 +290,7 @@ graph TD
 ```python
 def load_all():
     from config import META_PQ, EMB_PQ, IDX_NPY, IDS_JSON
-    from core.index_builder import FaissCosIndex
+    from core.index_builder import NumpyCosIndex
     
     # Load saved data files
     meta = pd.read_parquet(META_PQ)           # Track metadata
@@ -299,8 +299,9 @@ def load_all():
     with open(IDS_JSON) as f:
         ids = json.load(f)                    # Track ID list
     
-    # Build FAISS index with defensive normalization
-    idx = FaissCosIndex(V.shape[1])           # → core.index_builder
+    # Validate alignment, then build the exact cosine index
+    validate_index_data(V, ids, emb)
+    idx = NumpyCosIndex(V.shape[1])           # → core.index_builder
     for track_id, vector in zip(ids, V):
         idx.add(track_id, vector)             # Vectors normalized in add()
     
@@ -326,12 +327,11 @@ graph TD
     
     I --> J[recommendations.engine.recommend_for]
     J --> K[Get track vector from embeddings]
-    K --> L[core.index_builder.FaissCosIndex search]
-    L --> M[Recompute cosine from stored vectors]
-    M --> N[recommendations.scoring: cosine + key + BPM]
-    N --> O[Sort by final score]
-    O --> P[Store in current_recommendations]
-    P --> Q[update_listbox]
+    K --> L[core.index_builder.NumpyCosIndex exact search]
+    L --> M[recommendations.scoring: cosine + key + BPM]
+    M --> N[Sort by final score]
+    N --> O[Store in current_recommendations]
+    O --> P[update_listbox]
     
     Q --> R[Display with Cos XX.X% Score YY.Y%]
     
@@ -448,7 +448,7 @@ def refresh_suggestions(self):
         self.current_id,      # Source track
         self.meta_ix,         # Metadata lookup
         self.emb_ix,          # Embeddings lookup  
-        self.idx,             # FAISS index
+        self.idx,             # Exact cosine index
         topk=500,
         final_top=200
     )
@@ -457,7 +457,7 @@ def refresh_suggestions(self):
     self.update_listbox()
 ```
 
-#### **recommendations.engine.recommend_for() - Enhanced with Explicit Cosine**
+#### **recommendations.engine.recommend_for() - Exact Cosine Search**
 ```python
 def recommend_for(track_id, meta_ix, emb_ix, idx, topk=200, final_top=15):
     from recommendations.scoring import key_compat, bpm_compat, final_score
@@ -466,22 +466,16 @@ def recommend_for(track_id, meta_ix, emb_ix, idx, topk=200, final_top=15):
     src_vector = vector_for(track_id, emb_ix)     # Defensive normalization
     src_meta = meta_ix.loc[track_id]              # Source metadata (row)
     
-    # Step 2: FAISS similarity search
+    # Step 2: Exact full-collection cosine search
     nbrs = idx.search(src_vector, k=topk+1)       # → core.index_builder
-    # Returns: [(track_id, faiss_inner_product), ...]
+    # Returns: [(track_id, exact_cosine), ...]
     
-    # Step 3: Score each candidate with explicit cosine calculation
+    # Step 3: Blend each exact cosine score with metadata compatibility
     recommendations = []
-    for candidate_id, faiss_score in nbrs:
+    for candidate_id, cosine_similarity in nbrs:
         if candidate_id == track_id: continue      # Skip self
         
         target_meta = meta_ix.loc[candidate_id]
-        target_vector = vector_for(candidate_id, emb_ix)  # Re-fetch for accuracy
-        if target_vector is None:
-            continue
-        
-        # Explicit cosine calculation (dot product of normalized vectors)
-        cosine_similarity = np.dot(src_vector, target_vector)
         
         # Calculate compatibility scores
         key_score = key_compat(src_meta.get("key"), target_meta.get("key"))
@@ -495,7 +489,7 @@ def recommend_for(track_id, meta_ix, emb_ix, idx, topk=200, final_top=15):
             "bpm": target_meta.get("bpm", None),
             "key": target_meta.get("key", ""),
             "score": score,
-            "cosine": cosine_similarity,  # Store explicit cosine
+            "cosine": cosine_similarity,
             "key_score": key_score,
             "bpm_score": bpm_score,
         })
@@ -578,7 +572,7 @@ def recommend_for(track_id, meta_ix, emb_ix, idx, topk=200, final_top=15):
                     ┌─────────────────────────┐
                     │ core/loader.py          │
                     │ Load all data           │
-                    │ Build FAISS index       │
+                    │ Build NumPy matrix      │
                     └─────────┬───────────────┘
                               │
                               ▼
@@ -588,8 +582,8 @@ def recommend_for(track_id, meta_ix, emb_ix, idx, topk=200, final_top=15):
 ┌─────────────────┐                        ┌─────────────────┐
 │ core/           │                        │ recommendations/│
 │ index_builder.py│◄──────────────────────►│ engine.py       │
-│ FAISS Search    │                        │ recommend_for() │
-│ Defensive norm  │                        │ Explicit cosine │
+│ Exact Cosine    │                        │ recommend_for() │
+│ Full collection │                        │ Blended scoring │
 └─────────────────┘                        └────────┬────────┘
                                                     │
                                                     ▼
@@ -610,7 +604,7 @@ def recommend_for(track_id, meta_ix, emb_ix, idx, topk=200, final_top=15):
 | **config/** | **defaults.py** | Default Parameters | Constants | None |
 | **core/** | **loader.py** | Data Loading | `load_all()`, `load_existing_data()`, `find_new_tracks()` | pandas, config |
 | **core/** | **persistence.py** | Data Saving | `save_index_data()`, `merge_embeddings()` | pandas, numpy, config |
-| **core/** | **index_builder.py** | Similarity Search | `FaissCosIndex.search()`, `build_faiss_index()` | faiss, numpy |
+| **core/** | **index_builder.py** | Similarity Search | `NumpyCosIndex.search()` | numpy |
 | **core/** | **duplicates.py** | Duplicate Detection | `remove_simple_duplicates()` | pandas, os |
 | **core/** | **deleted_tracks.py** | Deleted Track Management | `filter_deleted_tracks()` | json, pandas |
 | **processing/** | **pipeline.py** | Indexing Orchestration | `index_library()` | All core, processing modules |
@@ -640,14 +634,14 @@ def recommend_for(track_id, meta_ix, emb_ix, idx, topk=200, final_top=15):
 - **Sample Mode**: O(sample_size) for debugging/testing
 
 ### Search Performance:
-- **FAISS Search**: O(log n) approximate nearest neighbors
+- **Exact Cosine Search**: O(n × d) matrix-vector scoring across the full collection
 - **Scoring**: O(k) where k = number of candidates (typically 200)
 - **UI Update**: O(k) for displaying results
 - **Sorting**: O(k log k) for recommendation sorting
 
 ### Memory Usage:
-- **Embeddings**: ~1KB per track (depends on model dimensionality)
-- **FAISS Index**: ~4x embedding size (HNSW overhead)
+- **Embeddings**: ~10KB per track for 2,560 float32 values
+- **Cosine Index**: one float32 matrix with no graph overhead
 - **Metadata**: ~100 bytes per track
 - **UI State**: ~50KB for current recommendations list
 

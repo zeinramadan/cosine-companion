@@ -118,9 +118,9 @@ python src/cosine_companion.py clean-duplicates /path/to/rekordbox.xml
 
 ## How It Works
 
-1. **Audio Analysis**: Each track is processed through a neural network (Discogs-EffNet) trained on millions of songs, producing a 256-dimensional "fingerprint" of how the track sounds
+1. **Audio Analysis**: Each track is processed through a neural network (Discogs-EffNet) trained on millions of songs, producing a 2,560-dimensional "fingerprint" (1,280 mean + 1,280 standard-deviation features) of how the track sounds
 
-2. **Similarity Search**: When you select a track, FAISS (Facebook AI Similarity Search) quickly finds the most similar fingerprints in your library
+2. **Similarity Search**: When you select a track, NumPy computes exact cosine similarity against every fingerprint in your library
 
 3. **Compatibility Scoring**: Results are ranked using a weighted formula:
    - 70% audio similarity (cosine distance)
@@ -165,8 +165,7 @@ dj-cosine/
 ### Dependencies
 
 - `essentia-tensorflow` - Audio analysis
-- `faiss-cpu` - Similarity search
-- `numpy`, `pandas` - Data processing
+- `numpy`, `pandas` - Exact similarity search and data processing
 - `lxml` - XML parsing
 - `typer` - CLI
 - `tkinter` - GUI (included with Python)
@@ -217,7 +216,6 @@ This project is licensed under the GNU Affero General Public License v3.0 - see 
 ## Acknowledgments
 
 - [Essentia](https://essentia.upf.edu/) for audio analysis and the Discogs-EffNet model
-- [FAISS](https://github.com/facebookresearch/faiss) for efficient similarity search
 - [r/ProperTechno](https://www.reddit.com/r/ProperTechno/) for remaining true to Techno.
 
 ---
