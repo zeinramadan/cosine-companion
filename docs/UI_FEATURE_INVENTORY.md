@@ -654,7 +654,7 @@ drift apart:
 
 | # | Listbox | Constructed at | Scrollbar widget |
 |---|---|---|---|
-| 1 | `library_tab.library_listbox` | `library_tab.py:43` | **yes** — `library_tab.py:44-46` |
+| 1 | `library_tab.library_listbox` | `library_tab.py:43` | **yes** — `library_tab.py:44-49` |
 | 2 | `DeletedTracksDialog.listbox` | `dialogs.py:191` | **yes** — `dialogs.py:188-198` |
 | 3 | `TrackSelectorDialog.results_listbox` | `track_selector_dialog.py:65` | **yes** — `track_selector_dialog.py:62-74` |
 | 4 | `SimplePicker` picker list (§2.9) | `dialogs.py:21` | **no** |
