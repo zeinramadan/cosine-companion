@@ -247,7 +247,7 @@ class PlaylistExportTabMixin:
     
     def open_track_selector(self: "App"):
         """Open dialog to select tracks."""
-        dialog = TrackSelectorDialog(self, self.meta_ix, self.export_selected_track_ids)
+        dialog = TrackSelectorDialog(self, self.library.meta_ix, self.export_selected_track_ids)
         self.wait_window(dialog)
         
         if dialog.result:
@@ -269,8 +269,8 @@ class PlaylistExportTabMixin:
         # Get track info and sort by artist/title
         tracks_info = []
         for track_id in self.export_selected_track_ids:
-            if track_id in self.meta_ix.index:
-                row = self.meta_ix.loc[track_id]
+            if track_id in self.library.meta_ix.index:
+                row = self.library.meta_ix.loc[track_id]
                 tracks_info.append({
                     'track_id': track_id,
                     'artist': row.get('artist', ''),
@@ -304,7 +304,7 @@ class PlaylistExportTabMixin:
         mode = self.export_selection_var.get()
         
         if mode == "all":
-            count = len(self.meta)
+            count = self.library.track_count
             self.export_selection_info.config(
                 text=f"✓ Will generate playlists for all {count} tracks in your collection",
                 fg="blue"
@@ -337,7 +337,7 @@ class PlaylistExportTabMixin:
         mode = self.export_selection_var.get()
         
         if mode == "all":
-            return list(self.meta['track_id'].values)
+            return list(self.library.meta['track_id'].values)
         elif mode == "manual":
             return list(self.export_selected_track_ids)
         
@@ -395,9 +395,9 @@ class PlaylistExportTabMixin:
                         track_ids,
                         output_dir,
                         recommendations_per_track,
-                        self.meta_ix,
-                        self.emb_ix,
-                        self.idx,
+                        self.library.meta_ix,
+                        self.library.emb_ix,
+                        self.library.index,
                         progress_callback=self.update_export_progress
                     )
                 else:
@@ -407,9 +407,9 @@ class PlaylistExportTabMixin:
                         track_ids,
                         str(output_path),
                         "Cosine Recommendations",
-                        self.meta_ix,
-                        self.emb_ix,
-                        self.idx,
+                        self.library.meta_ix,
+                        self.library.emb_ix,
+                        self.library.index,
                         recommendations_per_track
                     )
                 

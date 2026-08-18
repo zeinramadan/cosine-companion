@@ -56,7 +56,7 @@ class SetCreatorTabMixin:
     
     def add_anchor_track(self: "App"):
         """Add an anchor track at a specific position."""
-        dialog = AddAnchorDialog(self, self.meta_ix, self.anchor_tracks)
+        dialog = AddAnchorDialog(self, self.library.meta_ix, self.anchor_tracks)
         self.wait_window(dialog)
         if dialog.result:
             position, track_id = dialog.result
@@ -85,8 +85,8 @@ class SetCreatorTabMixin:
         self.anchor_listbox.delete(0, tk.END)
         for position in sorted(self.anchor_tracks.keys()):
             track_id = self.anchor_tracks[position]
-            if track_id in self.meta_ix.index:
-                row = self.meta_ix.loc[track_id]
+            if track_id in self.library.meta_ix.index:
+                row = self.library.meta_ix.loc[track_id]
                 display_name = f"{row.get('artist', '')} – {row.get('title', '')}"
                 self.anchor_listbox.insert(tk.END, f"{position}. {display_name}")
     
@@ -113,9 +113,9 @@ class SetCreatorTabMixin:
             self.generated_set = generate_set(
                 self.anchor_tracks, 
                 total_tracks,
-                self.meta_ix, 
-                self.emb_ix, 
-                self.idx
+                self.library.meta_ix,
+                self.library.emb_ix,
+                self.library.index
             )
             self.update_set_listbox()
             self.status.config(text=f"✅ Generated {len(self.generated_set)}-track set successfully!")

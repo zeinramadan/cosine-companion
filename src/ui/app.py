@@ -5,17 +5,17 @@ from typing import Optional, List, Dict, Any
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from core.loader import load_all
+from services import LibrarySession
 from ui.recommendations_tab import RecommendationsTabMixin
 from ui.set_creator_tab import SetCreatorTabMixin
 from ui.library_tab import LibraryTabMixin
 from ui.playlist_export_tab import PlaylistExportTabMixin
 
 
-def _load_app_data(parent):
-    """Load persisted index data or show a user-facing recovery path."""
+def _load_app_data(parent) -> LibrarySession:
+    """Load the library session, or show a user-facing recovery path."""
     try:
-        return load_all()
+        return LibrarySession.load()
     except ValueError as error:
         messagebox.showerror(
             "Inconsistent Index Data",
@@ -43,9 +43,9 @@ class App(RecommendationsTabMixin, SetCreatorTabMixin, LibraryTabMixin, Playlist
         from utils.icon import set_window_icon
         set_window_icon(self)
 
-        self.meta, self.meta_ix, self.emb_ix, self.idx, self.V, self.ids = (
-            _load_app_data(self)
-        )
+        # Single source of truth for meta / embeddings / index / ids. The tabs
+        # read through this session instead of mutating App attributes.
+        self.library: LibrarySession = _load_app_data(self)
         self.current_id: Optional[str] = None
         self.current_recommendations: List[Dict[str, Any]] = []
         

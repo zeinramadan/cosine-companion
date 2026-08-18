@@ -143,7 +143,7 @@ class RecommendationsTabMixin:
             self.back_btn.config(state="disabled")
         
         # Update status
-        m = self.meta_ix.loc[self.current_id]
+        m = self.library.meta_ix.loc[self.current_id]
         self.status.config(text=f"↩️ Went back to '{m.get('artist','')} – {m.get('title','')}'", fg="blue")
         self.after(3000, lambda: self.status.config(text="💡 Tip: Double-click any suggestion to set it as current track", fg="gray"))
 
@@ -183,7 +183,8 @@ class RecommendationsTabMixin:
         if not query:
             return
         q = query.lower()
-        m = self.meta[(self.meta["artist"].str.lower().str.contains(q, na=False)) | (self.meta["title"].str.lower().str.contains(q, na=False))].head(50)
+        meta = self.library.meta
+        m = meta[(meta["artist"].str.lower().str.contains(q, na=False)) | (meta["title"].str.lower().str.contains(q, na=False))].head(50)
         if m.empty:
             messagebox.showinfo("No match", "Couldn't find any tracks.")
             return
@@ -211,7 +212,7 @@ class RecommendationsTabMixin:
     def update_current_track_display(self: "App"):
         """Update the current track display label."""
         if self.current_id:
-            m = self.meta_ix.loc[self.current_id]
+            m = self.library.meta_ix.loc[self.current_id]
             # Format key and BPM display
             key_text = f"[{m.get('key', '?')}]" if m.get('key') else "[?]"
             bpm_text = f"({m.get('bpm', '?')} BPM)" if m.get('bpm') else "(?)"
@@ -234,10 +235,10 @@ class RecommendationsTabMixin:
         # Always compute more recommendations than we might display
         # This ensures consistency - top 10 stays the same when showing top 20, etc.
         self.current_recommendations = recommend_for(
-            self.current_id, 
-            self.meta_ix, 
-            self.emb_ix, 
-            self.idx, 
+            self.current_id,
+            self.library.meta_ix,
+            self.library.emb_ix,
+            self.library.index,
             topk=500,  # Get more cosine-similarity candidates for better results
             final_top=200  # Compute up to 200 final recommendations
         )
