@@ -3,6 +3,7 @@
 
 import json
 import re
+from pathlib import Path
 from typing import Tuple, Optional, List
 
 import numpy as np
@@ -13,6 +14,24 @@ from core.index_builder import NumpyCosIndex
 
 
 VECTOR_COLUMN_PATTERN = re.compile(r"^v\d+$")
+
+
+def index_file_paths(data_dir: Optional[Path] = None) -> Tuple[Path, Path, Path, Path]:
+    """Return (meta.parquet, embeddings.parquet, index.npy, ids.json) for a data directory.
+
+    ``data_dir=None`` yields the configured application paths, which is what
+    every existing caller relies on. Passing a directory is what lets the
+    service layer be pointed at a fixture without touching the real library.
+    """
+    if data_dir is None:
+        return META_PQ, EMB_PQ, IDX_NPY, IDS_JSON
+    data_dir = Path(data_dir)
+    return (
+        data_dir / "meta.parquet",
+        data_dir / "embeddings.parquet",
+        data_dir / "index.npy",
+        data_dir / "ids.json",
+    )
 
 
 def load_existing_data() -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
@@ -82,10 +101,15 @@ def _validate_index_data(V: np.ndarray, ids: List[str], emb: pd.DataFrame) -> No
         )
 
 
-def load_all() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, NumpyCosIndex, np.ndarray, List[str]]:
+def load_all(data_dir: Optional[Path] = None) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, NumpyCosIndex, np.ndarray, List[str]]:
     """
     Load all indexed data: metadata, embeddings, vectors, and cosine index.
-    
+
+    Args:
+        data_dir: Directory holding the four index files. ``None`` (the default)
+            uses the configured application data directory, which is the
+            behaviour every existing caller depends on.
+
     Returns:
         Tuple of (meta, meta_ix, emb_ix, idx, V, ids) where:
         - meta: Full metadata DataFrame
@@ -95,10 +119,12 @@ def load_all() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, NumpyCosIndex,
         - V: Vector array
         - ids: List of track IDs
     """
-    meta = pd.read_parquet(META_PQ)
-    emb = pd.read_parquet(EMB_PQ)
-    V = np.load(IDX_NPY)
-    with open(IDS_JSON, encoding="utf-8") as f:
+    meta_pq, emb_pq, idx_npy, ids_json = index_file_paths(data_dir)
+
+    meta = pd.read_parquet(meta_pq)
+    emb = pd.read_parquet(emb_pq)
+    V = np.load(idx_npy)
+    with open(ids_json, encoding="utf-8") as f:
         ids = json.load(f)
 
     _validate_index_data(V, ids, emb)
