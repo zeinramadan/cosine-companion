@@ -28,11 +28,35 @@ things:
 | **Absence / universal / exclusivity / attribution** — "X never appears", "the only listbox with…", "every call site discards…" | a falsifier: a test that would find the counterexample if one existed. 98 of these were written in round 3 | the characterisation suite, plus `tests/test_ui_reports_success_for_every_terminal_outcome.py` |
 | **Ordering / timing** — "the last line is X", "the flag is always seen", "the lines are dead code" | neither of the above can settle these. They are refuted by an INTERLEAVING, which no static search over the source surfaces. Each one needs the concurrency reasoned through by hand and then pinned with a deterministic test that stands in for the interleaving | §2.13, defects #16–#18 |
 
-Two failure modes are entirely internal to the document and no source-facing test can see them: a
-stated **count** disagreeing with its own enumeration, and one section **contradicting** another.
-`tests/test_inventory_self_consistency.py` checks the document against itself for both, and also
-re-derives counts from the source, resolves every citation and cross-reference, and requires every
-absolute claim to carry its justification in the same block.
+Some failure modes are entirely internal to the document and no source-facing test can see them —
+a stated **count** disagreeing with its own enumeration, or one passage contradicting another.
+`tests/test_inventory_self_consistency.py` is the check whose subject is this document. What it
+settles and what it leaves open are both stated here, because a guard that is trusted for more than
+it does is worse than no guard:
+
+**It verifies.** Every `file.py:N` citation names a file that exists and a line number inside it.
+Every §-reference, every `#n` defect reference and every `tests/…::test_name` citation resolves to
+something real, and the defect table is numbered without gaps. The listbox and print-site counts
+are re-derived from the source rather than trusted, and no stated count contradicts its own
+enumeration. A short list of claims already found false in review cannot reappear verbatim. And
+every block making an absolute claim — `never`, `dead code`, `none of …`, `no … are written` —
+carries a justification token in the same block: a test citation, the word *pinned*, or a
+`file.py:N` derivation.
+
+**It does not verify.** It does not check that a citation *supports* the sentence it hangs off:
+the citation check reads the cited file's length, never the cited line, so any real line number
+satisfies it. It has no general contradiction detector — the two contradiction checks it does have
+are hand-written for specific known pairs (scrolling, and the refuted-claim list), so a new claim
+that contradicts a distant section passes. And it cannot settle an **ordering** claim at all,
+because those are refuted by an interleaving rather than by anything in the text.
+
+A worked example of the gap, recorded so it is not rediscovered as a surprise: rewriting the timing
+B paragraph below to assert the *opposite* of what it asserts, with a real `pipeline.py` line
+number appended, passes every one of these checks. A general semantic checker is not achievable
+here and none is attempted. Ordering claims are settled instead by the deterministic timing tests
+in `tests/services/test_indexing_service.py` and
+`tests/test_ui_reports_success_for_every_terminal_outcome.py`, each of which has been verified to
+FAIL when the behaviour it pins is changed — the mutations are listed in the PR description.
 
 ---
 
@@ -1013,16 +1037,23 @@ The log pane then shows **two** cancellation lines, from two different sources:
 `reindex_window.py:151` and only then queues line 1 at `:152`. Those are two separate statements on
 the main thread, and the worker is free to run between them — it releases the GIL on every
 `time.sleep(0.05)` and inside numpy — so a checkpoint reached in that window queues line 2 **first**.
-In practice line 1 nearly always wins, because the window is two bytecodes wide, but nothing
-enforces it. Any check written as "line 1 **followed by** line 2", or as "the **last** line is
-`⚠️ Cancellation detected, stopping...`", is asserting a race it cannot rely on; check for the
+In practice line 1 nearly always wins, because the window is short in **wall-clock** terms — a
+few microseconds. It is not short in *instructions*, and it is not atomic: `:151` is a property
+assignment whose setter (`reindex_window.py:60-65`) calls `Event.set()`, and `:152` then builds a
+tuple and calls `queue.Queue.put`, which takes a mutex, appends to a deque and notifies a condition
+variable. That is many bytecodes across several Python frames, and CPython may switch threads at
+any bytecode boundary — every `sys.setswitchinterval()`, 5 ms by default — or while that mutex is
+contended. Nothing enforces the order. Any check written as "line 1 **followed by** line 2", or
+as "the **last** line is `⚠️ Cancellation detected, stopping...`", is asserting a race it cannot
+rely on; check for the
 **presence** of both lines instead.
 
 Absent under this timing: `⚠️ Indexing cancelled by user`, `⚠️ Indexing cancelled` and
 `✅ Indexing completed successfully!`. **No data files are written** — the interrupt is raised
 before the merge and before `save_all`, so every embedding computed so far is discarded (§4 #4).
 The window still reaches its orange cancelled state, because `cancel_indexing()` set the flag that
-`check_indexing_status` reads.
+`check_indexing_status` reads. Pinned by
+`tests/services/test_indexing_service.py::test_cancel_discards_every_embedding_computed_so_far`.
 
 ---
 
@@ -1058,7 +1089,12 @@ distinguishable from timing A in the log pane by that line alone. Pinned by
 **Whether data is written depends on which sub-case of B occurred.** If the run reached
 `STATUS_INDEXED`, all four data files are written and the on-disk index is fully updated while the
 window reports a cancellation. If it returned `STATUS_UP_TO_DATE` or `STATUS_NO_EMBEDDINGS`,
-nothing is written — those returns precede `save_all`.
+nothing is written — those returns are at `processing/pipeline.py:169-170` and
+`processing/pipeline.py:219-221`, both of which precede `save_index_data`. The `STATUS_INDEXED`
+half is pinned by
+`tests/services/test_indexing_service.py::test_a_cancel_first_observed_after_the_last_checkpoint_does_not_stop_the_run`
+and the `STATUS_NO_EMBEDDINGS` half by
+`…::test_a_run_where_nothing_could_be_embedded_is_not_up_to_date`.
 
 Either way the window shows the orange `⚠️ Indexing cancelled` state with a `Close` button, **not**
 `Done` (`reindex_window.py:246-247` dispatches to `show_cancelled` at `reindex_window.py:270-285`,
@@ -1382,8 +1418,7 @@ them and say so.
 | 15 | `after()` called from a worker thread | `playlist_export_tab.py:420,422,438` | The export worker marshals progress (`:438`, via `update_export_progress`), completion (`:420`) and errors (`:422`) back to Tk with `self.after(0, …)` from a background thread. Tk is not thread-safe and `after` is not an exception to that; it happens to work. **Pre-existing on `main` and deliberately untouched by PR 2** — fixing it would be a behaviour change in a PR whose contract forbids one |
 | 16 | Cancellation is signalled by `KeyboardInterrupt`, so the log line the user sees is timing-dependent | `reindex_window.py:180-194` | `KeyboardInterrupt` derives from `BaseException`, so `except Exception` at `:186` never catches it. When the pipeline **does** raise (timing A) the worker thread dies unhandled and neither `\n⚠️ Indexing cancelled by user` nor `\n⚠️ Indexing cancelled` is appended; when it does **not** (timings B and C, defect #17) one of them is. Which line — or none — the user ends up with is decided by an interleaving, not by anything they did. Pre-existing on `main`; §2.13 |
 | 17 | Late cancel is silently ignored by the pipeline, then reported as a cancellation | `pipeline.py:182` (the only `cancel_check` call) vs `reindex_window.py:180-182` | `cancel_check` is read **only** at the top of each per-track loop iteration. A flag first set after the last checkpoint — during the final `embed_file`, during the 50 ms sleep, during the merge/index/write phase, or at any time on a run that returns `STATUS_UP_TO_DATE`/`STATUS_NO_EMBEDDINGS` without re-entering the loop — is never observed. The pipeline completes, and on the `STATUS_INDEXED` path **writes all four data files**; `run_indexing` then sees `cancel_requested` and queues `('cancelled', True)` plus `\n⚠️ Indexing cancelled by user`. The user is told the run was cancelled while the index was in fact updated, and `show_cancelled` offers `Close` rather than `Done`, so the `Restart Required` prompt (#5) is never shown and the app keeps a stale in-memory index over changed files. Pre-existing on `main`; §2.13 timing B |
-
-| 18 | The two cancellation log lines can arrive in either order | `reindex_window.py:151-152` vs `processing/pipeline.py:182-183` | `cancel_indexing` sets the `threading.Event` **before** it queues `\n⚠️ Cancellation requested...`. Between those two statements the worker may reach a checkpoint, see the flag and queue `⚠️ Cancellation detected, stopping...` first. Both lines always appear; which one is last is decided by a GIL switch. The window is narrow — two bytecodes — so line 1 nearly always wins, which is exactly why an ordering assertion here would pass in testing and fail in the field. Pre-existing on `main`; §2.13 timing A |
+| 18 | The two cancellation log lines can arrive in either order | `reindex_window.py:151-152` vs `processing/pipeline.py:182-183` | `cancel_indexing` sets the `threading.Event` **before** it queues `\n⚠️ Cancellation requested...`. Between those two statements the worker may reach a checkpoint, see the flag and queue `⚠️ Cancellation detected, stopping...` first. Both lines always appear; which one is last is decided by a GIL switch. The window is narrow in wall-clock terms — microseconds — but it is not two instructions and it is not atomic: `:151` is a property assignment whose setter calls `Event.set()`, and `:152` builds a tuple and calls `queue.Queue.put`, which takes a mutex and notifies a condition variable, across several Python frames. Line 1 therefore nearly always wins, which is exactly why an ordering assertion here would pass in testing and fail in the field. Pre-existing on `main`; §2.13 timing A |
 
 Backlog references: `backlog-n3-ids-lag-race` (#1, #3), spec §3.2 (#1–#8), spec §10.
 
@@ -1428,7 +1463,7 @@ Every row is a user-reachable workflow catalogued above. Task 9 records pass/fai
 | 22a | …then Library ▸ Refresh ▸ the deleted track is **gone** from the list and the stats count drops | §2.7 |
 | 22b | …then Explore ▸ Set Current Track ▸ search for the deleted track ▸ it is **still offered** (stale `meta`), and choosing it raises `KeyError` | §2.7, §4 #14 |
 | 22c | …then Playlist Export ▸ All tracks radio ▸ the count is **unchanged** (still counts the deleted track) | §2.7, §4 #14 |
-| 22d | …then Playlist Export ▸ All tracks ▸ export ▸ the deleted id is sent and silently skipped; no playlist is written for it | §2.7, §4 #14 |
+| 22d | …then Playlist Export ▸ All tracks ▸ export ▸ the deleted id is sent and silently skipped; no playlist is written for it (`recommendations/playlist_exporter.py:137-139` — a seed missing from `meta_ix` is `continue`d before the write) | §2.7, §4 #14 |
 | 22e | …then Set Creator ▸ an anchor on the deleted track disappears from the anchor list on next render | §2.5, §2.7 |
 | 22f | Restart the app ▸ every stale surface above is now correct | §2.7, §4 #14 |
 | 22g | Start a full export, delete a track while it runs ▸ the export finishes against its start-of-run snapshot; the deleted track still appears in playlists written after the delete | §2.6, §4 #1 |
@@ -1445,10 +1480,10 @@ Every row is a user-reachable workflow catalogued above. Task 9 records pass/fai
 | 33 | Settings ▸ Update Library (Incremental) ▸ `ReindexWindow` runs and reports | §2.8, §2.13 |
 | 34 | Reindex ▸ Cancel ▸ confirmation ▸ orange cancelled state and `Close` | §2.13 |
 | 34a | Reindex ▸ Cancel **while more than one track is still to be embedded** (timing A — at least one per-track checkpoint runs after the flag is set) ▸ the log pane contains **both** `⚠️ Cancellation requested...` and `⚠️ Cancellation detected, stopping...` — in either order, see §4 #18 — while `⚠️ Indexing cancelled by user`, `⚠️ Indexing cancelled` and `✅ Indexing completed successfully!` must **NOT** appear | §2.13, §4 #16, #18 |
-| 34b | …the same run (timing A) ▸ an unhandled `KeyboardInterrupt` traceback appears on stderr, and **no** data files are written | §2.13, §4 #4 |
+| 34b | …the same run (timing A) ▸ an unhandled `KeyboardInterrupt` traceback appears on stderr, and **no** data files are written (pinned by `…::test_cancel_discards_every_embedding_computed_so_far`) | §2.13, §4 #4 |
 | 34d | Reindex ▸ Cancel **after the last per-track checkpoint has passed** — during the final track's embed, or during the merge/write phase (timing B) ▸ the pipeline does **not** raise, no `⚠️ Cancellation detected, stopping...` appears, and the log pane ends with `⚠️ Indexing cancelled by user`. `✅ Indexing completed successfully!` is still absent | §2.13, §4 #16, #17 |
 | 34e | …the same run (timing B) reaching `STATUS_INDEXED` ▸ all four data files **are** written and the on-disk index is updated, while the window shows the orange cancelled state and a `Close` button — no `Restart Required` prompt is offered | §2.13, §4 #17, #5 |
-| 34f | Reindex ▸ Cancel an already-up-to-date library, at any moment (timing B via `STATUS_UP_TO_DATE`) ▸ `⚠️ Indexing cancelled by user` is appended and no data files are written | §2.13, §4 #17 |
+| 34f | Reindex ▸ Cancel an already-up-to-date library, at any moment (timing B via `STATUS_UP_TO_DATE`) ▸ `⚠️ Indexing cancelled by user` is appended and no data files are written (`processing/pipeline.py:169-170` returns before `save_index_data`; pinned by `…::test_a_cancel_during_an_up_to_date_run_is_never_observed`) | §2.13, §4 #17 |
 | 34c | Reindex ▸ let it finish ▸ the log pane ends with `🚀 Ready to use! …` then `✅ Indexing completed successfully!` | §2.13 |
 | 35 | Reindex ▸ Done ▸ Restart Required dialog ▸ declining leaves the app running | §2.13 |
 | 36 | Menu ▸ Library ▸ Update Library (Incremental) ▸ same reindex window | §2.3 |

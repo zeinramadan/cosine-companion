@@ -469,49 +469,121 @@ def test_an_unset_cancel_event_does_not_stop_anything(indexing):
     assert (data / "meta.parquet").exists()
 
 
-class LateCancel:
-    """A cancel token that reports False for the first ``n`` reads, True after.
+class CountingEvent(threading.Event):
+    """A REAL ``threading.Event`` that also counts how many times it is read.
 
-    ``IndexingService`` passes ``cancel.is_set`` to the pipeline, so this stands
-    in for a ``threading.Event`` whose flag is first set at a chosen point in the
-    checkpoint sequence. With ``n`` equal to the number of tracks, every one of
-    the loop's checkpoints reads False and the flag "becomes set" only after the
-    loop is over - which is exactly the interleaving a real user produces by
-    clicking Cancel during the last track's embed or during the merge/write.
+    ``IndexingService`` passes ``cancel.is_set`` to the pipeline, so every
+    ``cancel_check()`` the pipeline performs lands in this counter, and nothing
+    else does.
+
+    It is deliberately a real Event rather than a scripted double. A double
+    whose ``is_set()`` starts returning True after the Nth read can be pointed
+    at a run that never performs an Nth read - in which case the flag is False
+    at every moment the pipeline is running, the "late cancel" it claims to
+    model is an ordinary uncancelled run, and the test's own trailing
+    ``is_set()`` call manufactures the state it then asserts. With a real Event
+    the only way the flag becomes True is for something to call ``set()``, so a
+    test has to actually cause the state it claims to observe.
     """
 
-    def __init__(self, n):
-        self.n = n
+    def __init__(self):
+        super().__init__()
         self.reads = 0
 
     def is_set(self):
         self.reads += 1
-        return self.reads > self.n
+        return super().is_set()
 
 
-def test_a_cancel_first_observed_after_the_last_checkpoint_does_not_stop_the_run(indexing):
+def test_a_cancel_first_observed_after_the_last_checkpoint_does_not_stop_the_run(
+    indexing, monkeypatch
+):
     """TIMING B, inventory defect #17. CURRENT BEHAVIOUR, NOT A BUG FIX.
 
-    cancel_check is read in exactly one place - pipeline.py:182, at the top of
-    each per-track loop iteration. The fixture has 5 tracks, so there are exactly
-    5 checkpoints. A flag that only becomes set on the 6th read is never observed
-    by the pipeline: no KeyboardInterrupt, no "⚠️ Cancellation detected,
-    stopping..." line, and the run persists all four data files.
+    The flag is set DURING the run, at the single interleaving defect #17 is
+    about: after the LAST track's checkpoint and before that track's embed
+    returns. That is a user clicking Cancel while the final track is being
+    embedded.
+
+    The progress callback supplies that interleaving deterministically - no
+    threads, no sleeps, no wall-clock race. Each per-track iteration runs, in
+    source order:
+
+        pipeline.py:182   if cancel_check and cancel_check():   <- the checkpoint
+        pipeline.py:188   pl = str(row.get("path_local", ""))
+        pipeline.py:189   report("embed", "   [  5/  5] ...")   <- fires progress
+        pipeline.py:198   vector = embedder.embed_file(pl)
+
+    so calling ``cancel.set()`` from the report on track 5 lands strictly
+    between track 5's checkpoint and track 5's embed. The assertions below PIN
+    that placement instead of assuming it: at the moment of ``set()`` the
+    pipeline has performed 5 checkpoint reads (all of them) and 4 embeds (not
+    yet track 5's).
+
+    ``cancel_check`` is read in exactly one place, at the TOP of each
+    iteration, and track 5 is the last iteration - so the pipeline never looks
+    again. It does not raise ``KeyboardInterrupt``, it does not emit
+    "⚠️ Cancellation detected, stopping...", it finishes embedding track 5,
+    and it writes all four data files.
 
     reindex_window then evaluates `if self.cancel_requested:` - True - and
     appends "⚠️ Indexing cancelled by user". The UI half of that is pinned in
     tests/test_ui_reports_success_for_every_terminal_outcome.py.
     """
     service, xml, data, _ = indexing
-    cancel = LateCancel(n=5)
+    embeds = []
+
+    class RecordingEmbedder(FakeEmbedder):
+        """FakeEmbedder that also records WHEN each embed happened, so the test
+        can prove the flag was set before the final embed rather than assert it."""
+
+        def embed_file(self, path_local):
+            embeds.append(path_local)
+            return super().embed_file(path_local)
+
+    monkeypatch.setattr(pipeline_module, "DiscogsEffnetEmbedder", RecordingEmbedder)
+
+    cancel = CountingEvent()
     events = []
+    set_at = []
 
-    result = service.run(str(xml), progress=events.append, cancel=cancel)
+    def progress(event):
+        events.append(event)
+        # The per-track embed line for the LAST track. The closing
+        # "✨ Generated ..." summary is also phase "embed" at current == 5, so
+        # match on the "   [  i/  N] " prefix the way the rest of this file does.
+        if event.phase == "embed" and event.current == 5 and event.message.startswith("   ["):
+            cancel.set()
+            set_at.append((cancel.reads, len(embeds)))
 
-    # The pipeline consulted the token once per track and then stopped asking.
-    assert cancel.reads == 5
-    assert cancel.is_set() is True, "the token is set by now; the pipeline just never re-reads it"
+    try:
+        result = service.run(str(xml), progress=progress, cancel=cancel)
+    except KeyboardInterrupt:  # pragma: no cover - only on a behaviour change
+        pytest.fail(
+            "the pipeline OBSERVED the late cancel and raised KeyboardInterrupt. "
+            "Defect #17 says it does not: a cancellation checkpoint now runs "
+            "somewhere after the top of the last per-track iteration."
+        )
 
+    # The RUN set the flag - this test did not - and it set it after the fifth
+    # (final) checkpoint and before the fifth embed. That is timing B exactly.
+    assert set_at == [(5, 4)], (
+        "the flag was not set at the timing-B interleaving. Expected "
+        "(checkpoint reads, completed embeds) == (5, 4) at set(); got "
+        f"{set_at}"
+    )
+
+    # The pipeline never consulted the token again, so it ran the rest of the
+    # job - the final embed, the merge, the four-file write - with the
+    # cancellation flag standing at True the whole time.
+    reads_during_run = cancel.reads  # captured before this test reads it itself
+    assert reads_during_run == 5, (
+        f"expected 5 in-run reads (one per track); got {reads_during_run}. "
+        "A checkpoint after the last one would have caught this cancel"
+    )
+    assert len(embeds) == 5, "track 5 was not embedded after the flag went up"
+
+    assert cancel.is_set() is True  # still set; nothing cleared it
     assert result.status == STATUS_INDEXED
     assert result.new_tracks_added == 5
     assert "⚠️ Cancellation detected, stopping..." not in [e.message for e in events]
@@ -528,9 +600,13 @@ def test_the_pipeline_reads_the_cancel_token_once_per_track_and_nowhere_else(ind
     persist, anywhere - this read count changes and the timing-B analysis in
     inventory Sec 2.13 stops being true. That is a behaviour change and it must
     be deliberate, so it fails here first.
+
+    This pins only the NUMBER of reads, not their location. The location is
+    pinned by the test above, which sets a real flag between the last
+    checkpoint and the last embed.
     """
     service, xml, _, _ = indexing
-    cancel = LateCancel(n=10 ** 6)  # never sets
+    cancel = CountingEvent()  # never set: nothing in this test calls set()
 
     service.run(str(xml), progress=lambda e: None, cancel=cancel)
 
@@ -557,7 +633,14 @@ def test_a_cancel_during_an_up_to_date_run_is_never_observed(indexing):
     already_set = threading.Event()
     already_set.set()
     events = []
-    result = service.run(str(xml), progress=events.append, cancel=already_set)
+    try:
+        result = service.run(str(xml), progress=events.append, cancel=already_set)
+    except KeyboardInterrupt:  # pragma: no cover - only on a behaviour change
+        pytest.fail(
+            "the up-to-date path OBSERVED the cancel and raised KeyboardInterrupt. "
+            "Workflow 34f says it does not: a cancellation checkpoint now runs on "
+            "the len(new_tracks) == 0 return path."
+        )
 
     assert result.status == STATUS_UP_TO_DATE
     assert "⚠️ Cancellation detected, stopping..." not in [e.message for e in events]

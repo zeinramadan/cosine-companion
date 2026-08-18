@@ -22,19 +22,52 @@ was findable that way:
    both entirely inside the document.
 
 So the document needs a check whose subject is the document. That is this file.
-It covers what is mechanisable:
 
-* every source citation resolves to a real file and a line that exists;
+WHAT IT VERIFIES
+----------------
+* every source citation names a real file and a line NUMBER that exists in it;
 * every internal cross-reference (section, defect number, test name) resolves;
-* stated counts are re-derived from the source rather than trusted;
-* claims previously found false cannot come back;
-* absolute claims ("never", "dead code", "impossible") must carry a
-  justification - a test citation or a derivation - in the same block.
+* the defect table is numbered 1..n without gaps;
+* the listbox and print-site counts are re-derived from the source rather than
+  trusted, and no stated count contradicts its own enumeration;
+* a short, explicit list of claims already found false cannot reappear verbatim;
+* absolute claims ("never", "dead code", "none of ... are written") must carry a
+  justification TOKEN - a test citation, the word "pinned", or a `file.py:N`
+  derivation - in the same block.
 
-What it does NOT cover, and what still needs a human: whether a universal claim
-survives every ORDERING. Defect #17 is the standing example. The manual pass is
-recorded in the PR description; this file only stops the two known defects, and
-this class of drift, from recurring silently.
+WHAT IT DOES NOT VERIFY
+-----------------------
+Read this before treating a green run as evidence that a claim is true.
+
+* It does not check that a citation SUPPORTS the sentence it is attached to.
+  Both the citation check and the justification check test for presence: does
+  the file exist, is the line number within it, is a token there. Neither ever
+  reads the cited line. Any real line number in any real file satisfies both.
+* There is NO general contradiction detector, and none is attempted - a
+  semantic checker over English prose is not achievable here. The two
+  contradiction checks below are hand-written for two specific known pairs
+  (scrolling; the refuted-claim list). A new claim that contradicts a distant
+  section passes.
+* It cannot settle an ORDERING claim at all. Those are refuted by an
+  interleaving, which is not present in the text in any form.
+
+The concrete demonstration, from the round-5 review: rewriting the timing-B
+paragraph of Sec 2.13 to claim the OPPOSITE of what it claims - "if the run
+reached STATUS_INDEXED, none of the four data files are written
+(pipeline.py:182)" - passed every check in this file. The citation resolved
+(that is all the citation check verifies), the required headings and the
+"**IS appended**" marker were still present, and although workflow 34e still
+said all four files ARE written, nothing here compares the two. Round 5 added
+"none"/"no ... are" to the absolute vocabulary, which closes the narrower half
+of that hole; the citation-relevance half is not closable here.
+
+So: this file stops drift, stale references and arithmetic slips. It does not
+stop a determined false claim, and it is not a substitute for reading the cited
+line. Ordering claims are settled instead by the deterministic timing tests in
+tests/services/test_indexing_service.py and
+tests/test_ui_reports_success_for_every_terminal_outcome.py, each of which has
+been verified to FAIL when the behaviour it pins is changed. The manual pass is
+recorded in the PR description.
 """
 
 import re
@@ -398,38 +431,114 @@ def test_the_document_does_not_contradict_itself_about_scrolling(doc):
 ABSOLUTE = re.compile(
     r"\b(dead code"
     r"|never (?:appended|reached|runs?|fires?|happens?|shown|called|written|observed)"
-    r"|unreachable|impossible|cannot happen|is never|are never|can never)\b",
+    r"|unreachable|impossible|cannot happen|is never|are never|can never"
+    # Added in round 5. A reviewer defeated this guard with "none of the four
+    # data files are written" - and the vocabulary above did not recognise that
+    # as an absolute claim at ALL. Negation by "none"/"no X are"/"nothing is" is
+    # exactly as absolute as "never", and was a cheap miss.
+    r"|none of\b"
+    r"|no [a-z ]{0,30}?(?:are|is) "
+    r"(?:written|appended|queued|emitted|shown|rendered|reached|called|observed|created|set)"
+    r"|nothing is (?:written|appended|queued|emitted|shown|reached|called|observed))\b",
     re.I,
 )
 
 # A block satisfies the requirement if it cites a test, says it is pinned, or
 # derives the claim in place (a file:line citation, or an explicit refutation of
 # a previous claim).
+# NOTE the `[a-z_/]+` in the derivation branch: the document cites both bare
+# filenames (`pipeline.py:182`) and path-qualified ones
+# (`processing/pipeline.py:182`), and both are equally good as a derivation.
 JUSTIFIED = re.compile(
-    r"(tests/[A-Za-z0-9_/]+\.py|`…::|[Pp]inned|`[a-z_]+\.py:\d+|contrary to what|"
+    r"(tests/[A-Za-z0-9_/]+\.py|`…::|[Pp]inned|`[a-z_/]+\.py:\d+|contrary to what|"
     r"class bindings|re-derived)",
 )
+
+
+def _plain(block):
+    """A block with markdown emphasis markers removed.
+
+    ABSOLUTE reasons about WORDS, and this document bolds them constantly. Row
+    34b writes "**no** data files are written", where the `**` sits between
+    "no" and the space the pattern needs, so the claim slipped past the
+    vocabulary purely because of its formatting. Strip the markers first.
+    """
+    return re.sub(r"[*_]{1,3}", "", block)
 
 
 def test_every_absolute_claim_carries_a_justification_in_its_own_block(doc):
     """The lesson of defect #17, mechanised as far as it goes.
 
     An existential claim ("string X is at line N") is settled by one grep. An
-    absolute one ("never", "dead code", "impossible") can only be settled by
-    argument, and it is exactly the kind that survives review by being
-    plausible. So every block making one must show its working in the same
-    block: a test citation, the word "pinned", or a derivation.
+    absolute one ("never", "dead code", "none of ... are written") can only be
+    settled by argument, and it is exactly the kind that survives review by
+    being plausible. So every block making one must show its working in the
+    same block: a test citation, the word "pinned", or a derivation.
 
-    This does not make the claims TRUE. It makes an unsupported one visible.
+    THE LIMIT, stated so nobody relies on more than this delivers. The check is
+    for the PRESENCE of a justification token, not its relevance. A `file.py:N`
+    citation satisfies it as long as line N exists in that file - the citation
+    check never reads the cited line, and this check never reads it either. So
+    a false claim that carries a real-but-irrelevant line number passes both.
+    That is how a reviewer defeated this file in round 5, and it is not fixable
+    by widening either regex; it needs a human reading the cited line.
+
+    This does not make the claims TRUE. It makes an UNSUPPORTED one visible.
     """
     unjustified = []
     for block in _blocks(doc):
-        if ABSOLUTE.search(block) and not JUSTIFIED.search(block):
+        if ABSOLUTE.search(_plain(block)) and not JUSTIFIED.search(block):
             unjustified.append(" ".join(block.split())[:160])
     assert unjustified == [], (
         "absolute claims with no test citation or derivation in the same block:\n  "
         + "\n  ".join(unjustified)
     )
+
+
+def test_the_absolute_vocabulary_recognises_the_claims_that_have_defeated_it(doc):
+    """A vocabulary that cannot SEE a claim cannot ask it to justify itself.
+
+    In round 5 a reviewer rewrote the timing-B paragraph to say "none of the
+    four data files are written" and every check here passed. Two things were
+    wrong, and only one of them is fixable: "none"/"no X are"/"nothing is" were
+    absent from the vocabulary (fixed, and pinned below), and the block still
+    carried a real `pipeline.py` citation, which is all a justification token
+    has to be (not fixable here - see the docstring above).
+
+    This test exists so the vocabulary cannot silently narrow back. It reasons
+    over phrases, not over the document, so it keeps working when the document
+    is rewritten.
+    """
+    recognised = (
+        "none of the four data files are written",
+        "no data files are written",
+        "no playlist is written for it",
+        "nothing is written",
+        "the branch is dead code",
+        "the line is never appended",
+        "this is unreachable",
+    )
+    for phrase in recognised:
+        assert ABSOLUTE.search(phrase), f"absolute claim NOT recognised: {phrase!r}"
+
+    # ... and formatting must not hide one. Row 34b writes "**no** data files
+    # are written", where the emphasis markers sit exactly where the pattern
+    # expects a space.
+    for phrase in recognised:
+        emphasised = phrase.replace(" ", "** **", 1)
+        assert ABSOLUTE.search(_plain(emphasised)), (
+            f"absolute claim hidden by markdown emphasis: {emphasised!r}")
+
+    # ... and it must not fire on the ordinary positive statements the document
+    # is mostly made of, or every block would need a justification token.
+    ignored = (
+        "all four data files are written",
+        "the log pane shows two cancellation lines",
+        "the window reports a cancellation",
+        "a piano roll is drawn for each note",
+    )
+    for phrase in ignored:
+        assert not ABSOLUTE.search(phrase), f"false positive on: {phrase!r}"
 
 
 def test_the_cancellation_section_describes_both_timings(doc):
