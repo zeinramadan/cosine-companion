@@ -28,7 +28,7 @@ curl -O https://essentia.upf.edu/models/feature-extractors/discogs_multi_embeddi
 | **Architecture** | EfficientNet-based model trained on Discogs dataset |
 | **Input** | 32kHz mono audio |
 | **Raw Output** | Frame-wise embeddings (variable length) |
-| **Pooled Output** | 256-dimensional vector (mean + std pooling) |
+| **Pooled Output** | 2,560-dimensional vector (1,280 mean + 1,280 std pooling) |
 | **File Size** | ~300 MB |
 | **License** | See [Essentia licensing terms](https://essentia.upf.edu/licensing_information.html) |
 

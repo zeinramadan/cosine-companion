@@ -27,7 +27,7 @@
 
 ## 1. Executive Summary
 
-**Cosine Companion** is a cross-platform desktop application designed to help DJs find similar tracks and create seamless DJ sets from their music library. The application leverages deep learning audio embeddings and approximate nearest neighbor search to provide intelligent music recommendations based on sonic similarity, harmonic compatibility, and tempo matching.
+**Cosine Companion** is a desktop application designed to help DJs find similar tracks and create seamless DJ sets from their music library. The application combines deep learning audio embeddings with exact, full-collection cosine search to provide intelligent music recommendations based on sonic similarity, harmonic compatibility, and tempo matching.
 
 ### Key Characteristics
 
@@ -40,7 +40,7 @@
 | **Architecture Style** | Layered architecture with mixin-based UI |
 | **Data Storage** | File-based (Parquet, NumPy, JSON) |
 | **ML Framework** | Essentia + TensorFlow |
-| **Search Algorithm** | FAISS HNSW |
+| **Search Algorithm** | Exact NumPy cosine similarity |
 
 ---
 
@@ -79,7 +79,7 @@
 │  ┌─────────────────────────────────────────────────────────────────┐   │
 │  │                   CORE LAYER (core/)                             │   │
 │  │  ┌────────────┬────────────┬────────────┬────────────────────┐  │   │
-│  │  │   Loader   │ Persistence│   FAISS    │    Duplicates/     │  │   │
+│  │  │   Loader   │ Persistence│Exact Cosine│    Duplicates/     │  │   │
 │  │  │            │            │   Index    │   Deleted Tracks   │  │   │
 │  │  └────────────┴────────────┴────────────┴────────────────────┘  │   │
 │  └─────────────────────────────┬───────────────────────────────────┘   │
@@ -107,7 +107,7 @@
 │                        DATA STORAGE LAYER                                │
 │  ┌──────────────┬──────────────┬──────────────┬──────────────────────┐  │
 │  │ meta.parquet │ embeddings.  │  index.npy   │ ids.json, settings,  │  │
-│  │  (metadata)  │   parquet    │ (FAISS vec)  │  deleted_tracks.json │  │
+│  │  (metadata)  │   parquet    │(NumPy vectors)│ deleted_tracks.json │  │
 │  └──────────────┴──────────────┴──────────────┴──────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -117,12 +117,12 @@
 #### Indexing Workflow
 ```
 Rekordbox XML → Parse Metadata → Detect Duplicates → Filter New Tracks
-    → Load Audio → Generate Embeddings → Build FAISS Index → Persist Data
+    → Load Audio → Generate Embeddings → Persist Vectors and IDs
 ```
 
 #### Recommendation Workflow
 ```
-Select Track → Query FAISS (top-k) → Score by Key/BPM → Rank Results → Display
+Select Track → Exact Cosine Search (top-k) → Score by Key/BPM → Rank Results → Display
 ```
 
 #### Set Generation Workflow
@@ -142,8 +142,7 @@ Set Anchor Tracks → Position Anchors → Fill Slots (Context-Aware) → Export
 | **GUI Framework** | Tkinter | Built-in | Cross-platform desktop UI |
 | **CLI Framework** | Typer | Latest | Command-line interface |
 | **Audio Analysis** | Essentia | 2.1b6+ | Audio embeddings via TensorFlow |
-| **Vector Search** | FAISS | 1.7.0+ | Approximate nearest neighbor search |
-| **Data Processing** | NumPy | Latest | Numerical computations |
+| **Vector Search / Data Processing** | NumPy | Latest | Exact cosine search and numerical computations |
 | **Data Processing** | Pandas | Latest | Metadata management |
 | **Data Storage** | PyArrow | Latest | Parquet file support |
 | **XML Processing** | lxml | Latest | Rekordbox XML parsing |
@@ -260,7 +259,7 @@ dj-cosine/
 │   │   ├── __init__.py
 │   │   ├── loader.py                    # Load existing index data
 │   │   ├── persistence.py               # Save data to disk
-│   │   ├── index_builder.py             # FAISS index construction
+│   │   ├── index_builder.py             # Exact NumPy cosine index
 │   │   ├── duplicates.py                # Duplicate track detection
 │   │   └── deleted_tracks.py            # Track deletion management
 │   │
@@ -358,7 +357,7 @@ DEFAULT_SAMPLE_RATE = 32000
 DEFAULT_SCORING_WEIGHTS = (0.7, 0.2, 0.1)  # cosine, key, bpm
 
 # Recommendation parameters
-DEFAULT_TOPK = 200        # Candidates from FAISS
+DEFAULT_TOPK = 200        # Exact cosine candidates
 DEFAULT_FINAL_TOP = 15    # Final recommendations
 ```
 
@@ -368,14 +367,15 @@ DEFAULT_FINAL_TOP = 15    # Final recommendations
 Loads existing indexed data and identifies new tracks:
 
 ```python
-def load_all() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, FaissCosIndex, np.ndarray, List[str]]:
+def load_all() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, NumpyCosIndex, np.ndarray, List[str]]:
     """Load all index components from disk."""
     meta = pd.read_parquet(META_PQ)
     emb = pd.read_parquet(EMB_PQ)
     V = np.load(IDX_NPY)
     with open(IDS_JSON) as f:
         ids = json.load(f)
-    idx = FaissCosIndex(V.shape[1])
+    validate_index_data(V, ids, emb)
+    idx = NumpyCosIndex(V.shape[1])
     for tid, v in zip(ids, V):
         idx.add(tid, v)
     meta_ix = meta.set_index("track_id")
@@ -408,17 +408,15 @@ def save_index_data(
 ```
 
 #### index_builder.py
-FAISS index wrapper with HNSW configuration:
+Exact cosine index over one normalized float32 matrix:
 
 ```python
-class FaissCosIndex:
-    """FAISS index optimized for cosine similarity search."""
+class NumpyCosIndex:
+    """Brute-force cosine search over a float32 matrix."""
 
-    def __init__(self, dim: int = 256):
-        # HNSW index with cosine distance (via inner product on normalized vectors)
-        self.index = faiss.IndexHNSWFlat(dim, 32, faiss.METRIC_INNER_PRODUCT)
-        self.index.hnsw.efConstruction = 200       # Build quality
-        self.index.hnsw.efSearch = 64              # Search quality
+    def __init__(self, dim: int = 2560):
+        self.dim = dim
+        self.matrix = np.empty((0, dim), dtype=np.float32)
         self.ids: List[str] = []
 
     def add(self, track_id: str, v: np.ndarray) -> None:
@@ -427,22 +425,22 @@ class FaissCosIndex:
         n = np.linalg.norm(v)
         if n > 0:
             v = v / n
-        self.index.add(v[np.newaxis, :])
+        self.matrix = np.concatenate((self.matrix, v[np.newaxis, :]))
         self.ids.append(track_id)
 
     def search(self, v: np.ndarray, k: int) -> List[Tuple[str, float]]:
-        """Search for k nearest neighbors."""
+        """Search all vectors for the exact top-k neighbors."""
+        k = min(k, len(self.ids))
+        if k <= 0:
+            return []
         v = v.astype("float32")
         n = np.linalg.norm(v)
         if n > 0:
             v = v / n
-        D, I = self.index.search(v[np.newaxis, :], k)
-        out = []
-        for j, i in enumerate(I[0]):
-            if i == -1:
-                continue
-            out.append((self.ids[i], float(D[0, j])))
-        return out
+        scores = self.matrix @ v
+        candidates = np.argpartition(scores, len(scores) - k)[-k:]
+        ranked = candidates[np.argsort(-scores[candidates])]
+        return [(self.ids[i], float(scores[i])) for i in ranked]
 ```
 
 ### 6.3 Processing Layer (`processing/`)
@@ -594,7 +592,7 @@ def recommend_for(
     track_id: str,
     meta_ix: pd.DataFrame,
     emb_ix: pd.DataFrame,
-    idx: FaissCosIndex,
+    idx: NumpyCosIndex,
     topk: int = DEFAULT_TOPK,
     final_top: int = DEFAULT_FINAL_TOP
 ) -> List[Dict]:
@@ -602,12 +600,11 @@ def recommend_for(
     Generate recommendations for a track.
 
     Algorithm:
-    1. Query FAISS for top-k nearest neighbors
-    2. Compute exact cosine similarity
-    4. Score key compatibility
-    5. Score BPM compatibility
-    6. Calculate weighted final score
-    7. Return top results
+    1. Compute exact cosine for the full collection and select top-k
+    2. Score key compatibility
+    3. Score BPM compatibility
+    4. Calculate weighted final score
+    5. Return top results
     """
     v = vector_for(track_id, emb_ix)
     if v is None:
@@ -616,14 +613,10 @@ def recommend_for(
     nbrs = idx.search(v, k=topk + 1)
 
     results = []
-    for tid, _ in nbrs:
+    for tid, cosine in nbrs:
         if tid == track_id:
             continue
         m = meta_ix.loc[tid]
-        v2 = vector_for(tid, emb_ix)
-        if v2 is None:
-            continue
-        cosine = float(np.dot(v, v2))
         key_score = key_compat(src.get("key"), m.get("key"))
         bpm_score = bpm_compat(src.get("bpm"), m.get("bpm"))
         score = final_score(cosine, key_score, bpm_score)
@@ -706,7 +699,7 @@ def generate_set(
     total_tracks: int,
     meta_ix: pd.DataFrame,
     emb_ix: pd.DataFrame,
-    idx: FaissCosIndex,
+    idx: NumpyCosIndex,
     exclude_tracks: Optional[List[str]] = None
 ) -> List[SetTrack]:
     """
@@ -844,7 +837,7 @@ def generate_set(
                     │   (TensorFlow)      │
                     │                     │
                     │  Audio → Embeddings │
-                    │  (256-dim vector)   │
+                    │ (2,560-dim vector)  │
                     └──────────┬──────────┘
                                │
                                ▼
@@ -856,8 +849,8 @@ def generate_set(
               │                │                │
               ▼                ▼                ▼
     ┌─────────────────┐ ┌─────────────┐ ┌─────────────────┐
-    │ meta.parquet    │ │embeddings.  │ │  FAISS Index    │
-    │ (metadata)      │ │parquet      │ │  (HNSW)         │
+    │ meta.parquet    │ │embeddings.  │ │  NumPy Matrix   │
+    │ (metadata)      │ │parquet      │ │ (exact cosine)  │
     └─────────────────┘ └─────────────┘ └─────────────────┘
                                │
               ┌────────────────┼────────────────┐
@@ -885,8 +878,8 @@ def generate_set(
                │
                ▼
     ┌─────────────────────┐
-    │   FAISS Search      │
-    │   (HNSW k-NN)       │
+    │ Exact Cosine Search │
+    │ (full collection)   │
     │                     │
     │  Query → Top-200    │
     │  neighbor indices   │
@@ -932,7 +925,7 @@ The application uses a **file-based storage** approach with no external database
 |------|--------|---------|--------------|
 | `meta.parquet` | Apache Parquet | Track metadata | ~175KB (4K tracks) |
 | `embeddings.parquet` | Apache Parquet | Audio embeddings | ~19MB (4K tracks) |
-| `index.npy` | NumPy binary | FAISS vectors | ~13MB (4K tracks) |
+| `index.npy` | NumPy binary | Search vectors | ~39MB (4K tracks) |
 | `ids.json` | JSON | Track ID mapping | ~16KB (4K tracks) |
 | `deleted_tracks.json` | JSON | User deletions | ~2KB |
 | `settings.json` | JSON | User preferences | ~1KB |
@@ -958,12 +951,12 @@ path_local  string    Local filesystem path to audio file
 Column      Type      Description
 ──────────────────────────────────────
 track_id    string    Foreign key to meta
-v0-v255     float32   256-dimensional embedding vector
+v0-v2559    float32   2,560-dimensional embedding vector
 ```
 
 #### index.npy
 ```
-Shape: (N, 256) where N = number of tracks
+Shape: (N, 2560) where N = number of tracks
 Type: float32
 Content: L2-normalized embedding vectors
 Note: Same order as ids.json
@@ -1059,21 +1052,21 @@ Uses the **Camelot Wheel** system for DJ-friendly key matching:
 └─────────────────────────────────────────────────┘
 ```
 
-### 9.5 FAISS Index Configuration
+### 9.5 Exact Cosine Search
 
 | Parameter | Value | Purpose |
 |-----------|-------|---------|
-| Index Type | HNSW | Hierarchical Navigable Small World graph |
-| Dimension | 256 | Embedding vector size |
-| M (neighbors) | 32 | Connections per node |
-| efConstruction | 200 | Index build quality (higher = better) |
-| efSearch | 64 | Query quality (higher = more accurate) |
-| Metric | Inner Product | Cosine on normalized vectors |
+| Matrix type | NumPy float32 | One normalized row per track |
+| Dimension | 2,560 | 1,280 mean + 1,280 standard-deviation features |
+| Candidate selection | `argpartition` | Exact top-k without a full sort |
+| Result ordering | Descending score sort | Sort only the selected candidates |
+| Metric | Inner product | Exact cosine on normalized vectors |
 
 **Performance Characteristics:**
-- Index build: O(n log n)
-- Query time: O(log n)
-- Memory: O(n × M × 4 bytes)
+- Index build: normalized matrix assembly
+- Query score calculation: O(n × d)
+- Candidate selection: O(n) average plus O(k log k) ordering
+- Memory: O(n × d × 4 bytes), with no graph overhead
 
 ---
 
@@ -1409,7 +1402,7 @@ DEFAULT_SCORING_WEIGHTS = (
     0.1,  # BPM compatibility weight
 )
 
-# FAISS Search Parameters
+# Exact Cosine Search Parameters
 DEFAULT_TOPK = 200          # Initial candidates
 DEFAULT_FINAL_TOP = 15      # Final recommendations
 
@@ -1455,18 +1448,17 @@ def _get_models_dir() -> Path:
 - Progress callbacks for UI feedback
 - Sample mode for debugging (--sample N)
 
-### 14.2 FAISS Search
+### 14.2 Exact NumPy Search
 
 | Metric | Value |
 |--------|-------|
-| Index build time | O(n log n) |
-| Query time | O(log n) |
-| Memory per track | ~1KB (256 × float32) |
+| Matrix assembly | One normalized row per track |
+| Query score calculation | O(n × 2,560) |
+| Candidate selection | O(n) average + O(k log k) |
+| Memory per track | 10KB (2,560 × float32) |
 
-**Scaling Characteristics**:
-- 1,000 tracks: <10ms query time
-- 10,000 tracks: ~20ms query time
-- 100,000 tracks: ~50ms query time
+Every query scores every track. Runtime therefore scales linearly with the
+number of tracks, while `argpartition` avoids sorting the full collection.
 
 ### 14.3 Memory Management
 
@@ -1474,8 +1466,8 @@ def _get_models_dir() -> Path:
 Application Memory Footprint (4,000 tracks):
 ├── Metadata DataFrame:        ~5 MB
 ├── Embeddings DataFrame:      ~20 MB
-├── FAISS Index:              ~15 MB
-├── NumPy Vectors:            ~13 MB
+├── NumPy cosine matrix:      ~39 MB
+├── Persisted NumPy vectors:  ~39 MB
 ├── Essentia Model:           ~300 MB
 ├── Tkinter UI:               ~50 MB
 └── Python Runtime:           ~100 MB
@@ -1548,7 +1540,7 @@ def read_rekordbox_xml(xml_path: str) -> pd.DataFrame:
 | `recommendations/scoring.py` | ~100 | Key/BPM scoring |
 | `processing/pipeline.py` | ~200 | Indexing pipeline |
 | `processing/embeddings.py` | ~100 | Audio embeddings |
-| `core/index_builder.py` | ~80 | FAISS wrapper |
+| `core/index_builder.py` | ~50 | Exact NumPy cosine index |
 
 ---
 
@@ -1558,8 +1550,7 @@ def read_rekordbox_xml(xml_path: str) -> pd.DataFrame:
 |------|------------|
 | **Camelot Wheel** | Circular key notation system for DJ mixing compatibility |
 | **Embedding** | Dense vector representation of audio characteristics |
-| **FAISS** | Facebook AI Similarity Search - library for efficient similarity search |
-| **HNSW** | Hierarchical Navigable Small World - graph-based approximate nearest neighbor algorithm |
+| **Cosine similarity** | Dot product of two L2-normalized vectors |
 | **Rekordbox** | Pioneer DJ's music management software |
 | **M3U** | Multimedia playlist file format |
 | **Parquet** | Columnar storage format for efficient data analytics |

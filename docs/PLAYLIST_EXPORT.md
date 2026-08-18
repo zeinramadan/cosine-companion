@@ -303,7 +303,7 @@ Extended M3U format with metadata:
 
 ### Recommendation Algorithm
 
-1. Uses the existing embeddings and FAISS index to find similar tracks
+1. Uses the existing embeddings and exact NumPy cosine index to find similar tracks
 2. Scores candidates by cosine, key compatibility, and BPM compatibility
 3. For export, recommendations are sorted by **cosine similarity** (pure audio similarity) and the top N are written to the playlist
 

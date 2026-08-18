@@ -13,7 +13,7 @@ Technical documentation for Cosine Companion's audio embedding pipeline and vect
 1. [Overview](#1-overview)
 2. [Embedding Extraction](#2-embedding-extraction)
 3. [Storage Format](#3-storage-format)
-4. [FAISS Index](#4-faiss-index)
+4. [Exact NumPy Index](#4-exact-numpy-index)
 5. [Similarity Search](#5-similarity-search)
 6. [Scoring System](#6-scoring-system)
 7. [Code Reference](#7-code-reference)
@@ -26,16 +26,16 @@ The system uses a three-stage pipeline to find similar tracks:
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│ Audio File  │ ──▶ │  Essentia   │ ──▶ │   Storage   │ ──▶ │   FAISS     │
+│ Audio File  │ ──▶ │  Essentia   │ ──▶ │   Storage   │ ──▶ │ Exact NumPy │
 │   (.mp3)    │     │  Embedding  │     │  (Parquet)  │     │   Search    │
 └─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
 ```
 
 | Stage | Technology | Output |
 |-------|------------|--------|
-| Extraction | Essentia + TensorFlow | 256-dim float32 vector |
+| Extraction | Essentia + TensorFlow | 2,560-dim float32 vector |
 | Storage | Parquet + NumPy | Columnar files on disk |
-| Search | FAISS HNSW | Top-k nearest neighbors |
+| Search | NumPy matrix multiplication | Exact top-k nearest neighbors |
 
 ---
 
@@ -95,7 +95,7 @@ Audio File
 └─────────────────────────────────┘
     │
     ▼
-  256-dim float32 vector
+  2,560-dim float32 vector (1,280 mean + 1,280 std)
 ```
 
 ### 2.3 Implementation
@@ -163,21 +163,21 @@ data/
 | `v0` | float32 | Embedding dimension 0 |
 | `v1` | float32 | Embedding dimension 1 |
 | ... | ... | ... |
-| `v255` | float32 | Embedding dimension 255 |
+| `v2559` | float32 | Embedding dimension 2559 |
 
-**Total columns:** 257 (1 ID + 256 embedding dimensions)
+**Total columns:** 2,561 (1 ID + 2,560 embedding dimensions)
 
 ### 3.3 Vector Array
 
 **File:** `index.npy`
 
 ```python
-# Shape: (num_tracks, 256)
+# Shape: (num_tracks, 2560)
 # Dtype: float32
 # Content: L2-normalized embedding vectors
 
 vectors = np.load("data/index.npy")
-# vectors.shape → (4000, 256) for 4000 tracks
+# vectors.shape → (4000, 2560) for 4000 tracks
 ```
 
 ### 3.4 Track ID Mapping
@@ -211,7 +211,7 @@ def save_index_data(meta_df, embeddings_df, vectors, track_ids):
     # Embeddings (for recomputation/verification)
     embeddings_df.to_parquet(EMB_PQ, index=False)
 
-    # Vectors (for FAISS index rebuilding)
+    # Vectors (for exact cosine index rebuilding)
     np.save(IDX_NPY, vectors)
 
     # ID mapping
@@ -221,88 +221,62 @@ def save_index_data(meta_df, embeddings_df, vectors, track_ids):
 
 ---
 
-## 4. FAISS Index
+## 4. Exact NumPy Index
 
-### 4.1 Index Type: HNSW
+The in-memory index is one normalized float32 matrix. Every query computes
+cosine similarity against the entire collection, so candidate selection has no
+approximation or recall loss.
 
-**HNSW** (Hierarchical Navigable Small World) is a graph-based approximate nearest neighbor algorithm.
-
-```
-Layer 3:  ●───────────────────●  (sparse, long-range)
-          │                   │
-Layer 2:  ●─────●─────●───────●  (medium density)
-          │     │     │       │
-Layer 1:  ●──●──●──●──●──●──●──●  (dense, local)
-          │  │  │  │  │  │  │  │
-Layer 0:  ●●●●●●●●●●●●●●●●●●●●●●  (all nodes)
-```
-
-### 4.2 Configuration
+### 4.1 Configuration
 
 **Location:** `src/core/index_builder.py`
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
-| `dim` | 256 | Vector dimension |
-| `M` | 32 | Neighbors per node in graph |
-| `efConstruction` | 200 | Build-time search depth (quality) |
-| `efSearch` | 64 | Query-time search depth (accuracy) |
-| `metric` | Inner Product | Cosine on normalized vectors |
+| `dim` | 2,560 | Vector dimension |
+| `dtype` | float32 | Matrix and query representation |
+| `metric` | Inner product | Exact cosine on normalized vectors |
+| `selection` | `argpartition` + sort | Select top-k, then order descending |
 
-### 4.3 Implementation
+### 4.2 Implementation
 
 ```python
-class FaissCosIndex:
+class NumpyCosIndex:
     def __init__(self, dim: int):
-        # HNSW with inner product (cosine on normalized vectors)
-        self.index = faiss.IndexHNSWFlat(dim, 32, faiss.METRIC_INNER_PRODUCT)
-        self.index.hnsw.efSearch = 64
-        self.index.hnsw.efConstruction = 200
+        self.dim = dim
+        self.matrix = np.empty((0, dim), dtype=np.float32)
         self.ids: List[str] = []
 
-    def add(self, track_id: str, v: np.ndarray):
-        # Normalize defensively
+    def add(self, track_id: str, v: np.ndarray) -> None:
         v = v.astype("float32")
         n = np.linalg.norm(v)
         if n > 0:
             v = v / n
-        self.index.add(v[np.newaxis, :])
+        self.matrix = np.concatenate((self.matrix, v[np.newaxis, :]))
         self.ids.append(track_id)
 
     def search(self, v: np.ndarray, k: int = 50) -> List[Tuple[str, float]]:
-        # Normalize query
+        k = min(k, len(self.ids))
+        if k <= 0:
+            return []
         v = v.astype("float32")
         n = np.linalg.norm(v)
         if n > 0:
             v = v / n
-
-        D, I = self.index.search(v[np.newaxis, :], k)
-
-        results = []
-        for j, i in enumerate(I[0]):
-            if i != -1:
-                results.append((self.ids[i], float(D[0, j])))
-        return results
+        scores = self.matrix @ v
+        candidates = np.argpartition(scores, len(scores) - k)[-k:]
+        ranked = candidates[np.argsort(-scores[candidates])]
+        return [(self.ids[i], float(scores[i])) for i in ranked]
 ```
 
-### 4.4 Performance Characteristics
+### 4.3 Performance Characteristics
 
-| Operation | Complexity | 10K tracks | 100K tracks |
-|-----------|------------|------------|-------------|
-| Build | O(n log n) | ~2 sec | ~30 sec |
-| Query | O(log n) | <5 ms | <20 ms |
-| Memory | O(n × M) | ~15 MB | ~150 MB |
-
-### 4.5 Why HNSW?
-
-| Algorithm | Query Speed | Accuracy | Memory |
-|-----------|-------------|----------|--------|
-| Brute Force | Slow | 100% | Low |
-| IVF | Medium | ~95% | Medium |
-| **HNSW** | **Fast** | **~98%** | **Medium** |
-| PQ | Very Fast | ~90% | Very Low |
-
-HNSW provides the best balance of speed and accuracy for this use case.
+| Operation | Complexity | Accuracy |
+|-----------|------------|----------|
+| Add | O(n × d) matrix copy | Exact stored vector |
+| Query scores | O(n × d) | 100% of collection scored |
+| Top-k selection | O(n) average + O(k log k) sort | Exact top-k |
+| Memory | O(n × d) | No graph/index overhead |
 
 ---
 
@@ -324,20 +298,14 @@ HNSW provides the best balance of speed and accuracy for this use case.
          │
          ▼
 ┌─────────────────┐
-│  FAISS Search   │
-│  k=200 + 1      │
+│ Exact Cosine    │
+│ Search k=200+1  │
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
 │  Filter Self    │
 │  (deleted tracks are removed at index time) │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  Recompute      │
-│  Exact Cosine   │
 └────────┬────────┘
          │
          ▼
@@ -367,7 +335,7 @@ def recommend_for(
     track_id: str,
     meta_ix: pd.DataFrame,
     emb_ix: pd.DataFrame,
-    idx: FaissCosIndex,
+    idx: NumpyCosIndex,
     topk: int = 200,
     final_top: int = 15
 ) -> List[Dict]:
@@ -379,21 +347,15 @@ def recommend_for(
 
     src = meta_ix.loc[track_id]
 
-    # FAISS approximate search
+    # Exact cosine search over the full collection
     nbrs = idx.search(v, k=topk + 1)
 
     out = []
-    for tid, _ in nbrs:
+    for tid, cos in nbrs:
         if tid == track_id:
             continue
 
         m = meta_ix.loc[tid]
-        v2 = vector_for(tid, emb_ix)
-        if v2 is None:
-            continue
-
-        # Exact cosine similarity
-        cos = float(np.dot(v, v2))
 
         # Musical compatibility
         ks = key_compat(src.get("key"), m.get("key"))
@@ -422,11 +384,11 @@ def recommend_for(
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `topk` | 200 | Candidates from FAISS |
+| `topk` | 200 | Exact cosine candidates |
 | `final_top` | 15 | Results returned by default |
 
 **Why 200 → 15?**
-- FAISS returns approximate results; retrieving more candidates improves accuracy
+- Every collection vector is scored before the top 200 are selected
 - Key/BPM scoring reranks candidates; diverse pool needed
 - Final 15 provides good UX without overwhelming user
 
@@ -562,7 +524,7 @@ def bpm_compat(sbpm: float, dbpm: float, pct: float = 0.06) -> float:
 | File | Purpose |
 |------|---------|
 | `src/processing/embeddings.py` | `DiscogsEffnetEmbedder` class |
-| `src/core/index_builder.py` | `FaissCosIndex` class |
+| `src/core/index_builder.py` | `NumpyCosIndex` class |
 | `src/core/persistence.py` | Save/load functions |
 | `src/recommendations/engine.py` | `recommend_for()` function |
 | `src/recommendations/scoring.py` | Key/BPM scoring functions |
@@ -576,7 +538,7 @@ embedder = DiscogsEffnetEmbedder(model_path)
 vector = embedder.embed_file("/path/to/audio.mp3")
 
 # Index building
-index = FaissCosIndex(dim=256)
+index = NumpyCosIndex(dim=2560)
 index.add(track_id, vector)
 
 # Similarity search
@@ -596,14 +558,14 @@ score = final_score(0.85, 0.8, 1.0)  # → 0.855
 ```
                          INDEXING
 ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
-│  Audio   │───▶│ Essentia │───▶│  Store   │───▶│  FAISS   │
-│  Files   │    │ Embedder │    │ Parquet  │    │  Index   │
+│  Audio   │───▶│ Essentia │───▶│  Store   │───▶│  NumPy   │
+│  Files   │    │ Embedder │    │ Parquet  │    │  Matrix  │
 └──────────┘    └──────────┘    └──────────┘    └──────────┘
 
                          QUERYING
 ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
-│  Track   │───▶│  FAISS   │───▶│  Score   │───▶│  Top 15  │
-│  Select  │    │  Search  │    │ Key/BPM  │    │ Results  │
+│  Track   │───▶│  Exact   │───▶│  Score   │───▶│  Top 15  │
+│  Select  │    │  Cosine  │    │ Key/BPM  │    │ Results  │
 └──────────┘    └──────────┘    └──────────┘    └──────────┘
 ```
 
