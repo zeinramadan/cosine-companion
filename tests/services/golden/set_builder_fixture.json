@@ -1,0 +1,271 @@
+{
+  "anchor_first": {
+    "anchors": {
+      "1": "f10"
+    },
+    "exclude": null,
+    "total": 4,
+    "tracks": [
+      {
+        "artist": "Jeff Mills",
+        "display_name": "Jeff Mills \u2013 The Bells",
+        "icon": "\ud83d\udd12",
+        "is_anchor": true,
+        "position": 1,
+        "score": 1.0,
+        "title": "The Bells",
+        "track_id": "f10"
+      },
+      {
+        "artist": "Kangding Ray",
+        "display_name": "Kangding Ray \u2013 Amber Decay",
+        "icon": "\ud83e\udd16",
+        "is_anchor": false,
+        "position": 2,
+        "score": 0.8963279128074646,
+        "title": "Amber Decay",
+        "track_id": "f11"
+      },
+      {
+        "artist": "Alva Noto",
+        "display_name": "Alva Noto \u2013 Xerrox",
+        "icon": "\ud83e\udd16",
+        "is_anchor": false,
+        "position": 3,
+        "score": 0.35626181960105896,
+        "title": "Xerrox",
+        "track_id": "f01"
+      },
+      {
+        "artist": "Blawan",
+        "display_name": "Blawan \u2013 Why They Hide",
+        "icon": "\ud83e\udd16",
+        "is_anchor": false,
+        "position": 4,
+        "score": 0.9669962525367737,
+        "title": "Why They Hide",
+        "track_id": "f02"
+      }
+    ]
+  },
+  "single_anchor_mid": {
+    "anchors": {
+      "3": "f01"
+    },
+    "exclude": null,
+    "total": 6,
+    "tracks": [
+      {
+        "artist": "Blawan",
+        "display_name": "Blawan \u2013 Why They Hide",
+        "icon": "\ud83e\udd16",
+        "is_anchor": false,
+        "position": 1,
+        "score": 0.9669962525367737,
+        "title": "Why They Hide",
+        "track_id": "f02"
+      },
+      {
+        "artist": "Claro Intelecto",
+        "display_name": "Claro Intelecto \u2013 Peace Of Mind",
+        "icon": "\ud83e\udd16",
+        "is_anchor": false,
+        "position": 2,
+        "score": 0.9391191601753235,
+        "title": "Peace Of Mind",
+        "track_id": "f03"
+      },
+      {
+        "artist": "Alva Noto",
+        "display_name": "Alva Noto \u2013 Xerrox",
+        "icon": "\ud83d\udd12",
+        "is_anchor": true,
+        "position": 3,
+        "score": 1.0,
+        "title": "Xerrox",
+        "track_id": "f01"
+      },
+      {
+        "artist": "Insolate",
+        "display_name": "Insolate \u2013 Rotor",
+        "icon": "\ud83e\udd16",
+        "is_anchor": false,
+        "position": 4,
+        "score": 0.3763177990913391,
+        "title": "Rotor",
+        "track_id": "f09"
+      },
+      {
+        "artist": "Huerco S.",
+        "display_name": "Huerco S. \u2013 Plucked",
+        "icon": "\ud83e\udd16",
+        "is_anchor": false,
+        "position": 5,
+        "score": 0.8546031713485718,
+        "title": "Plucked",
+        "track_id": "f08"
+      },
+      {
+        "artist": "Grouper",
+        "display_name": "Grouper \u2013 Alien Observer",
+        "icon": "\ud83e\udd16",
+        "is_anchor": false,
+        "position": 6,
+        "score": 0.4449121057987213,
+        "title": "Alien Observer",
+        "track_id": "f07"
+      }
+    ]
+  },
+  "two_anchors": {
+    "anchors": {
+      "1": "f01",
+      "5": "f06"
+    },
+    "exclude": null,
+    "total": 8,
+    "tracks": [
+      {
+        "artist": "Alva Noto",
+        "display_name": "Alva Noto \u2013 Xerrox",
+        "icon": "\ud83d\udd12",
+        "is_anchor": true,
+        "position": 1,
+        "score": 1.0,
+        "title": "Xerrox",
+        "track_id": "f01"
+      },
+      {
+        "artist": "Blawan",
+        "display_name": "Blawan \u2013 Why They Hide",
+        "icon": "\ud83e\udd16",
+        "is_anchor": false,
+        "position": 2,
+        "score": 0.804133728146553,
+        "title": "Why They Hide",
+        "track_id": "f02"
+      },
+      {
+        "artist": "Claro Intelecto",
+        "display_name": "Claro Intelecto \u2013 Peace Of Mind",
+        "icon": "\ud83e\udd16",
+        "is_anchor": false,
+        "position": 3,
+        "score": 0.778302289545536,
+        "title": "Peace Of Mind",
+        "track_id": "f03"
+      },
+      {
+        "artist": "Efdemin",
+        "display_name": "Efdemin \u2013 Decay",
+        "icon": "\ud83e\udd16",
+        "is_anchor": false,
+        "position": 4,
+        "score": 0.5111947149038315,
+        "title": "Decay",
+        "track_id": "f05"
+      },
+      {
+        "artist": "Function",
+        "display_name": "Function \u2013 Voiceprint",
+        "icon": "\ud83d\udd12",
+        "is_anchor": true,
+        "position": 5,
+        "score": 1.0,
+        "title": "Voiceprint",
+        "track_id": "f06"
+      },
+      {
+        "artist": "Grouper",
+        "display_name": "Grouper \u2013 Alien Observer",
+        "icon": "\ud83e\udd16",
+        "is_anchor": false,
+        "position": 6,
+        "score": 0.9592419862747192,
+        "title": "Alien Observer",
+        "track_id": "f07"
+      },
+      {
+        "artist": "Huerco S.",
+        "display_name": "Huerco S. \u2013 Plucked",
+        "icon": "\ud83e\udd16",
+        "is_anchor": false,
+        "position": 7,
+        "score": 0.4449121057987213,
+        "title": "Plucked",
+        "track_id": "f08"
+      },
+      {
+        "artist": "Insolate",
+        "display_name": "Insolate \u2013 Rotor",
+        "icon": "\ud83e\udd16",
+        "is_anchor": false,
+        "position": 8,
+        "score": 0.8546031713485718,
+        "title": "Rotor",
+        "track_id": "f09"
+      }
+    ]
+  },
+  "unfillable": {
+    "anchors": {
+      "1": "f01"
+    },
+    "exclude": [
+      "f02",
+      "f03",
+      "f04",
+      "f05",
+      "f06",
+      "f07",
+      "f08",
+      "f09",
+      "f10",
+      "f11",
+      "f12"
+    ],
+    "total": 4,
+    "tracks": [
+      {
+        "artist": "Alva Noto",
+        "display_name": "Alva Noto \u2013 Xerrox",
+        "icon": "\ud83d\udd12",
+        "is_anchor": true,
+        "position": 1,
+        "score": 1.0,
+        "title": "Xerrox",
+        "track_id": "f01"
+      },
+      {
+        "artist": "No suitable track found",
+        "display_name": "No suitable track found \u2013 (Unknown Title)",
+        "icon": "\ud83e\udd16",
+        "is_anchor": false,
+        "position": 2,
+        "score": 0.0,
+        "title": "",
+        "track_id": "empty_2"
+      },
+      {
+        "artist": "No suitable track found",
+        "display_name": "No suitable track found \u2013 (Unknown Title)",
+        "icon": "\ud83e\udd16",
+        "is_anchor": false,
+        "position": 3,
+        "score": 0.0,
+        "title": "",
+        "track_id": "empty_3"
+      },
+      {
+        "artist": "No suitable track found",
+        "display_name": "No suitable track found \u2013 (Unknown Title)",
+        "icon": "\ud83e\udd16",
+        "is_anchor": false,
+        "position": 4,
+        "score": 0.0,
+        "title": "",
+        "track_id": "empty_4"
+      }
+    ]
+  }
+}

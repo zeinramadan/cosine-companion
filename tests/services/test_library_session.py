@@ -5,8 +5,11 @@ meta_ix, emb_ix, idx, V, ids) and the deletion logic that lived in
 library_tab.py:213-273.
 
 Read-only assertions run against the real 1,307-track library in data/, which is
-treated as immutable input. Every destructive test builds its own small library
-under tmp_path; nothing here writes to data/.
+treated as immutable input and skipped when that directory is absent (it is
+gitignored, so on CI it always is). Every destructive test builds its own small
+library under tmp_path; nothing here writes to data/.
+
+The three divergent track searches are characterised in test_track_searches.py.
 
 Known defects are pinned as CURRENT behaviour, not fixed - see
 docs/UI_FEATURE_INVENTORY.md section 4 and spec 3.2.
@@ -18,26 +21,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import core.deleted_tracks as deleted_tracks_module
-from services.library_session import LibrarySession
-
-REAL_DATA_DIR = None  # resolved by the fixture below
-
-
-@pytest.fixture(scope="module")
-def real_library():
-    """The real 1,307-track library. READ ONLY - never mutate through this."""
-    from config import DATA
-
-    return LibrarySession.load(DATA)
+from services.library_session import LibrarySession, LibrarySnapshot
 
 
 @pytest.fixture
-def tmp_library(tmp_path, monkeypatch):
+def tmp_library(tmp_path, isolated_deleted_tracks):
     """A four-track library on disk, plus an isolated deleted_tracks.json."""
-    monkeypatch.setattr(
-        deleted_tracks_module, "DELETED_TRACKS_JSON", tmp_path / "deleted_tracks.json"
-    )
     _write_library(
         tmp_path,
         [
@@ -136,58 +125,43 @@ def test_get_track_includes_path_local(real_library):
 
 
 # --------------------------------------------------------------------------
-# search_tracks - exposes implementation A (recommendations/search.py)
+# snapshot
 # --------------------------------------------------------------------------
 
 
-def test_search_tracks_matches_the_implementation_the_ui_dialogs_call(real_library):
-    """AddAnchorDialog and TrackSelectorDialog both call
-    recommendations.search.search_tracks. LibrarySession exposes THAT one, not
-    the regex variant in pick_current nor the album/key variant in
-    filter_library. The three are NOT unified in this PR."""
-    from recommendations.search import search_tracks
+def test_snapshot_carries_every_object_a_long_running_reader_needs(tmp_library):
+    session = LibrarySession.load(tmp_library)
 
-    for query in ["boris", "compression", "SUPERFUNK", "no such artist anywhere"]:
-        assert real_library.search_tracks(query, limit=20) == search_tracks(
-            query, real_library.meta_ix, limit=20
-        )
+    snapshot = session.snapshot()
 
-
-def test_search_tracks_returns_display_name_with_an_en_dash(real_library):
-    result = real_library.search_tracks("compression", limit=20)[0]
-
-    assert set(result) == {"track_id", "artist", "title", "display_name"}
-    assert result["display_name"] == "Boris S. – Compression"
+    assert isinstance(snapshot, LibrarySnapshot)
+    assert snapshot.meta is session.meta
+    assert snapshot.meta_ix is session.meta_ix
+    assert snapshot.emb_ix is session.emb_ix
+    assert snapshot.index is session.index
+    assert snapshot.vectors is session.vectors
+    assert snapshot.ids is session.ids
 
 
-def test_search_tracks_returns_nothing_for_a_blank_query(real_library):
-    """CURRENT BEHAVIOUR, NOT A BUG FIX. This is why AddAnchorDialog and
-    TrackSelectorDialog both open showing an EMPTY list despite their
-    '# Initialize with all tracks' intent. Inventory defect #9."""
-    assert real_library.search_tracks("", limit=100) == []
-    assert real_library.search_tracks("   ", limit=100) == []
+def test_snapshot_is_frozen(tmp_library):
+    snapshot = LibrarySession.load(tmp_library).snapshot()
+
+    with pytest.raises(Exception):
+        snapshot.meta_ix = None
 
 
-def test_search_tracks_treats_the_query_literally_not_as_a_regex(real_library):
-    """The divergence from pick_current, which uses pandas str.contains and so
-    reads the query as a regular expression. Documented, not unified."""
-    literal = real_library.search_tracks("s.", limit=100)
-    regex = real_library.meta[
-        real_library.meta["artist"].str.lower().str.contains("s.", na=False)
-        | real_library.meta["title"].str.lower().str.contains("s.", na=False)
-    ].head(100)
+def test_snapshot_keeps_the_pre_delete_view(tmp_library):
+    """The export/delete race, pinned: a snapshot taken before a delete still
+    sees the deleted track, which is what the legacy export worker saw."""
+    session = LibrarySession.load(tmp_library)
+    snapshot = session.snapshot()
 
-    assert len(literal) == 3
-    assert len(regex) == 100
-    assert all("s." in (r["artist"] + " " + r["title"]).lower() for r in literal)
+    session.delete_tracks(["t2"])
 
-
-def test_search_tracks_honours_the_limit(real_library):
-    assert len(real_library.search_tracks("a", limit=5)) == 5
-
-
-def test_search_tracks_defaults_to_a_limit_of_twenty(real_library):
-    assert len(real_library.search_tracks("a")) == 20
+    assert "t2" in snapshot.meta_ix.index
+    assert snapshot.index.ids == ["t1", "t2", "t3", "t4"]
+    assert "t2" not in session.meta_ix.index
+    assert session.index.ids == ["t1", "t3", "t4"]
 
 
 # --------------------------------------------------------------------------
@@ -233,20 +207,24 @@ def test_delete_tracks_persists_to_all_four_files(tmp_library):
     assert np.load(tmp_library / "index.npy").shape == (3, 4)
 
 
-def test_delete_tracks_records_artist_and_title_in_deleted_tracks_json(tmp_library):
+def test_delete_tracks_records_artist_and_title_in_deleted_tracks_json(
+    tmp_library, isolated_deleted_tracks
+):
     LibrarySession.load(tmp_library).delete_tracks(["t2"])
 
-    recorded = json.loads((tmp_library / "deleted_tracks.json").read_text())
+    recorded = json.loads(isolated_deleted_tracks.read_text())
     assert recorded == {"t2": {"artist": "Artist B", "title": "Title Two"}}
 
 
-def test_delete_tracks_appends_to_an_existing_deleted_list(tmp_library):
+def test_delete_tracks_appends_to_an_existing_deleted_list(
+    tmp_library, isolated_deleted_tracks
+):
     session = LibrarySession.load(tmp_library)
 
     session.delete_tracks(["t2"])
     session.delete_tracks(["t3"])
 
-    recorded = json.loads((tmp_library / "deleted_tracks.json").read_text())
+    recorded = json.loads(isolated_deleted_tracks.read_text())
     assert set(recorded) == {"t2", "t3"}
 
 
@@ -263,6 +241,111 @@ def test_delete_tracks_with_an_empty_selection_changes_nothing(tmp_library):
 
     assert session.delete_tracks([]) == 0
     assert session.track_count == 4
+
+
+# --------------------------------------------------------------------------
+# Deletion leaves `meta` STALE. Inventory defect #14.
+#
+# perform_track_deletion never rebuilt App.meta, so every consumer that reads
+# `meta` rather than `meta_ix` kept showing deleted tracks until the app was
+# restarted. Rebuilding it in the service would silently repair that, and a
+# baseline that quietly improves behaviour proves nothing about the next PR.
+# --------------------------------------------------------------------------
+
+
+def test_deletion_leaves_meta_stale(tmp_library):
+    session = LibrarySession.load(tmp_library)
+    before = session.meta
+
+    session.delete_tracks(["t2"])
+
+    assert session.meta is before, "meta was rebuilt; it must not be"
+    assert "t2" in list(session.meta["track_id"].values)
+    assert len(session.meta) == 4
+
+
+def test_deletion_updates_meta_ix_ids_and_index_while_meta_lags(tmp_library):
+    """The exact split: the Library tab (meta_ix) refreshes, the Explore picker
+    and the all-tracks export (meta) do not."""
+    session = LibrarySession.load(tmp_library)
+
+    session.delete_tracks(["t2"])
+
+    assert "t2" not in session.meta_ix.index      # Library tab: updated
+    assert "t2" not in session.emb_ix.index       # recommendations: updated
+    assert "t2" not in session.ids                # index: updated
+    assert session.index.ids == ["t1", "t3", "t4"]
+    assert session.track_count == 3
+    assert "t2" in list(session.meta["track_id"].values)  # meta: STALE
+    assert len(session.meta) == 4
+
+
+def test_the_explore_picker_still_finds_a_deleted_track(tmp_library):
+    """recommendations_tab.pick_current filters `library.meta`, so the deleted
+    track is still offered - and choosing it then raises a KeyError from
+    meta_ix.loc. Current behaviour; PR 3 backlog."""
+    session = LibrarySession.load(tmp_library)
+
+    session.delete_tracks(["t2"])
+
+    meta = session.meta
+    q = "artist b"
+    m = meta[
+        (meta["artist"].str.lower().str.contains(q, na=False))
+        | (meta["title"].str.lower().str.contains(q, na=False))
+    ].head(50)
+    assert list(m["track_id"].values) == ["t2"]
+
+    with pytest.raises(KeyError):
+        session.meta_ix.loc["t2"]
+
+
+def test_the_all_tracks_export_list_still_includes_a_deleted_track(tmp_library):
+    """playlist_export_tab.get_export_track_ids reads
+    list(meta['track_id'].values), so 'All tracks in collection' still exports
+    the deleted one - it is skipped later, when create_m3u_playlist cannot find
+    it in meta_ix."""
+    session = LibrarySession.load(tmp_library)
+
+    session.delete_tracks(["t2"])
+
+    assert list(session.meta["track_id"].values) == ["t1", "t2", "t3", "t4"]
+
+
+def test_the_all_tracks_count_label_reads_the_stale_table(tmp_library):
+    """update_export_selection_info must use len(meta), NOT track_count, so the
+    label and the export it describes agree. Using track_count made the label
+    drop to 3 while the export still sent 4 ids."""
+    session = LibrarySession.load(tmp_library)
+
+    session.delete_tracks(["t2"])
+
+    assert len(session.meta) == 4                       # what the label shows
+    assert len(list(session.meta["track_id"].values)) == 4  # what it exports
+    assert session.track_count == 3                     # the tempting wrong one
+
+
+def test_the_export_tab_label_source_reads_len_meta():
+    """Guard against the label quietly reverting to track_count."""
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[2] / "src" / "ui" / "playlist_export_tab.py").read_text()
+
+    assert "count = len(self.library.meta)" in source
+    assert "self.library.track_count" not in source
+
+
+def test_reload_is_what_finally_refreshes_meta(tmp_library):
+    """Restarting the app (or reload()) is the only thing that catches meta up -
+    which is exactly why the user must restart to stop seeing deleted tracks."""
+    session = LibrarySession.load(tmp_library)
+    session.delete_tracks(["t2"])
+    assert len(session.meta) == 4
+
+    session.reload()
+
+    assert len(session.meta) == 3
+    assert "t2" not in list(session.meta["track_id"].values)
 
 
 # --------------------------------------------------------------------------
@@ -326,11 +409,12 @@ def test_the_four_file_rewrite_is_not_atomic(tmp_library, monkeypatch):
         LibrarySession.load(tmp_library)
 
 
-def test_delete_tracks_mutates_in_place_so_concurrent_readers_see_the_swap(tmp_library):
+def test_delete_tracks_rebinds_rather_than_mutating(tmp_library):
     """CURRENT BEHAVIOUR, NOT A BUG FIX. The export worker captures meta_ix /
     emb_ix / idx when it starts, then the main thread rebinds them here. This is
     the export/delete race in spec 3.2; the test pins that the rebind happens
-    rather than pretending it is safe."""
+    rather than pretending it is safe. What a captured view then *does* with
+    that is covered by the interleaving tests in test_export_service.py."""
     session = LibrarySession.load(tmp_library)
     captured_index = session.index
     captured_meta_ix = session.meta_ix

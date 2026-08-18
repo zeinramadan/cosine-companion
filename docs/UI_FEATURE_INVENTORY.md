@@ -1,7 +1,8 @@
 # Cosine Companion — Tkinter UI Feature Inventory
 
 **Status:** Acceptance contract for the UI rewrite (PR 3).
-**Captured from:** `feat/services-layer` @ `a9e7886` (fork of `main` @ `91afe15`).
+**Captured from:** `feat/services-layer` (fork of `main` @ `91afe15`), re-verified surface by
+surface against `src/ui/*.py` after the service-layer extraction.
 **Scope:** every tab, window, dialog, control, rendered string, per-track field and its
 formatting, mouse/keyboard binding, default value, sort order, and conditional
 enabled/disabled state across the 12 files of `src/ui/` (3,437 lines) plus `src/utils/icon.py`.
@@ -37,7 +38,7 @@ enabled/disabled state across the 12 files of `src/ui/` (3,437 lines) plus `src/
 
 ### 1.2 `needs_onboarding()` decision table
 
-Evaluated in this order (`src/ui/onboarding.py:619-639`):
+Evaluated in this order (`src/ui/onboarding.py:597-613`):
 
 | Condition | Result |
 |---|---|
@@ -60,9 +61,10 @@ darwin/linux it uses `iconphoto(True, photo)`; on win32 it looks for `coco_logo_
 
 ### 1.4 Startup data load
 
-`App.__init__` calls `_load_app_data(self)` → `core.loader.load_all()`, which returns
-`(meta, meta_ix, emb_ix, idx, V, ids)`. Measured at **0.79 s** for the 1,307-track library, with
-no splash screen — the window simply does not appear until the load finishes.
+`App.__init__` calls `_load_app_data(self)` → `LibrarySession.load()` → `core.loader.load_all()`,
+which returns `(meta, meta_ix, emb_ix, idx, V, ids)` into the session. Measured at **0.79 s** for
+the 1,307-track library, with no splash screen — the window simply does not appear until the load
+finishes.
 
 If `load_all()` raises `ValueError` (the index-consistency validations in
 `core/loader.py:38-82`), an error dialog is shown and the process exits:
@@ -135,10 +137,16 @@ Cancelling returns to the current screen unchanged (no state is cleared).
 - Log `tk.Text`, height 10, `wrap=WORD`, Courier 9, with a vertical scrollbar; auto-scrolls to the end
 - **No Cancel button on this screen** (unlike `ReindexWindow`)
 
-Indexing runs on a daemon thread. `sys.stdout` is replaced process-wide by a `QueueWriter` that
-splits on `\n` and enqueues non-blank lines; the UI drains at most 10 messages every 200 ms
-(`check_indexing_status`). `index_library(self.xml_path, force_full=False, sample_size=None)` —
-onboarding never passes `cancel_check`. On finish the bar is `stop()`ped.
+Indexing runs on a daemon thread. It calls
+`IndexingService(...).run(self.xml_path, force_full=False, progress=on_progress)`, and each
+`ProgressEvent`'s `message` is queued as one log line; the UI drains at most 10 messages every
+200 ms (`check_indexing_status`). Onboarding passes no `cancel`, so it still offers no
+cancellation. On finish the bar is `stop()`ped.
+
+> Until the service layer existed this was a process-global `sys.stdout` swap onto a `QueueWriter`
+> that split on `\n` and dropped blank lines. That is the **one** mechanism PR 2 was permitted to
+> change (§4 defect #7); the lines rendered in the log pane are byte-identical, because events
+> carry the same strings and are never blank.
 
 Terminal log lines appended by the window itself:
 - success: `\n✅ Indexing completed successfully!`
@@ -219,7 +227,7 @@ If reading the active tab raises, the fallback is
 
 ---
 
-### 2.3 Menu bar (`app.py:137-160`)
+### 2.3 Menu bar (`app.py:146-169`)
 
 | Menu | Item | Action |
 |---|---|---|
@@ -309,10 +317,10 @@ existing selection, then pops the menu at the pointer.
 
 #### Recommendation computation
 
-`refresh_suggestions()` calls
-`recommend_for(current_id, meta_ix, emb_ix, idx, topk=500, final_top=200)` and then sorts the
-returned list **by `cosine` descending**. See §3.3 for what that composition means. The full
-200 are retained in `current_recommendations`; only the first `topn` are rendered.
+`refresh_suggestions()` calls `self.explore.recommend(current_id, topk=500, final_top=200)`,
+which applies the shared ranking policy — `recommend_for(...)` then a sort **by `cosine`
+descending** (§3.3). The full 200 are retained in `current_recommendations` as `Recommendation`
+objects; only the first `topn` are rendered.
 
 #### Sorting
 
@@ -428,8 +436,12 @@ Rendered in ascending position order. A row is skipped entirely if its `track_id
 - `score_text` is ` ({score:.0%} match)` — shown **only** for non-anchors with `score > 0`.
   Anchors carry `score=1.0` but never show it. Note `:.0%` rounds to whole percent, and
   transition scores are cosines, so a value above 1.0 would render above 100 %.
-- Unfillable slots render as `[ n] 🤖 No suitable track found – ` (artist
-  `"No suitable track found"`, empty title, `track_id = empty_{n}`).
+- Unfillable slots render as `[ n] 🤖 No suitable track found – (Unknown Title)`. The slot is
+  built with artist `"No suitable track found"`, an **empty** title and `track_id = empty_{n}`,
+  and `SetTrack.display_name` (`recommendations/models.py:23`) then takes its
+  *artist-but-no-title* branch, which appends `– (Unknown Title)`. There is **no** bare trailing
+  en dash. No score suffix is shown, because the placeholder's score is `0.0`.
+  Pinned by `tests/services/test_set_builder.py::test_unfillable_slots_render_the_unknown_title_suffix`.
 
 #### `Generate Set` validation, in order
 
@@ -532,6 +544,9 @@ falsy and the whole string `.strip()`ped (§3.1). Track IDs absent from `meta_ix
 
 1. Track ids: mode `all` → `list(meta['track_id'].values)` in parquet order; mode `manual` →
    `list(export_selected_track_ids)` — **a `set`, so the order is arbitrary**.
+   Both the count label and this list read `meta`, **not** `meta_ix`, and deletion leaves `meta`
+   stale (§4 defect #14) — so after deleting a track the label and the export agree with each
+   other and both still describe the pre-deletion collection until the app is restarted.
 2. Empty → `messagebox.showwarning("No Tracks Selected", "Please select tracks to export playlists for.")`
 3. Empty output path → `messagebox.showwarning("No Output Directory", "Please select an output directory.")`
 4. Confirmation `messagebox.askyesno("Confirm Export", …)`:
@@ -570,6 +585,11 @@ falsy and the whole string `.strip()`ped (§3.1). Track IDs absent from `meta_ix
 
 Measured full-collection export: **≈ 6.8 minutes**. There is **no cancel control** once started,
 and closing the main window does not stop the daemon thread.
+
+The worker calls `self.after(0, …)` from the background thread to marshal progress and completion
+back to Tk (`playlist_export_tab.py:397,434`). Tk is not thread-safe and `after` is not one of the
+documented exceptions, so this is a latent crash rather than correct marshalling — it happens to
+work in practice. **Pre-existing on `main`; deliberately not fixed here** (§4 defect #15).
 
 See §4 for the combined-mode `playlists_created` defect and the export/delete race.
 
@@ -640,7 +660,8 @@ Confirmation `messagebox.askyesno("Confirm Deletion", …)`:
 - several:
   `Delete {n} selected tracks from your library?\n\nThis will remove them from recommendations but won't delete the audio files.`
 
-On confirm, `perform_track_deletion` (`library_tab.py:213-273`):
+On confirm, `LibrarySession.delete_tracks` (moved verbatim from
+`library_tab.py:213-273` on `main`):
 
 1. Appends the tracks to `deleted_tracks.json` with `{artist, title}` so they are excluded from
    future indexing runs.
@@ -651,6 +672,9 @@ On confirm, `perform_track_deletion` (`library_tab.py:213-273`):
    `ids.json` — **four separate writes, no atomicity, no rollback** (§4).
 5. Returns the count of removed metadata rows.
 
+It does **not** rebuild `meta`. Everything that reads `meta_ix` refreshes immediately; everything
+that reads `meta` keeps showing the deleted track until the app is restarted (§4 defect #14).
+
 Afterwards the tab restores the scroll position (`first_visible` minus the number of deleted rows
 above it), refreshes the list, and reports `✅ Deleted {n} tracks from library` or
 `❌ No tracks were deleted`. If the current Explore track was deleted, it is cleared: the header
@@ -660,6 +684,18 @@ returns to `Current track: —` and the suggestions list is emptied. Any excepti
 
 Deletion does **not** clear Explore history, Set Creator anchors, or the Playlist Export
 selection, all of which may still reference the removed ids.
+
+**Stale consumers after a deletion** — what refreshes and what does not:
+
+| Surface | Reads | After a delete |
+|---|---|---|
+| Library tab list and stats | `meta_ix` | **updated** immediately |
+| Explore recommendations | `meta_ix` / `emb_ix` / `idx` | **updated** immediately |
+| Set Creator anchor list | `meta_ix` | **updated** (rows for missing ids are skipped) |
+| Explore `Set Current Track` picker | **`meta`** | **stale** — still offers the deleted track, and choosing it raises `KeyError` from `meta_ix.loc` |
+| Playlist Export all-tracks count | **`meta`** | **stale** — still counts the deleted track |
+| Playlist Export all-tracks id list | **`meta`** | **stale** — still exports the id, which `create_m3u_playlist` then silently skips |
+| A running export | its start-of-run snapshot | **stale by design** — see §4 defect #1 |
 
 ---
 
@@ -702,11 +738,18 @@ construction, so they are not normally visible.
 | Index size | `Index Size: {mb:.1f} MB` — the summed size of every `*.parquet`, `*.npy` and `*.json` in the data directory (so it includes `settings.json` and `deleted_tracks.json`) |
 
 Any exception while loading statistics is swallowed after printing
-`Error loading statistics: {e}` to stdout, leaving the placeholder text in place.
+`Error loading statistics: {e}` to stdout, leaving the placeholder text in place — for these three
+labels **and** for `Deleted Tracks: Loading...` below, which is set last and so is the most likely
+to survive.
 
 #### `Deleted Tracks` (Helvetica 13 bold)
 
-- `Deleted Tracks: {count:,}` (Helvetica 10)
+- Pre-load placeholder `Deleted Tracks: Loading...` (`settings_window.py:186`), replaced with
+  `Deleted Tracks: {count:,}` (Helvetica 10) at the **end** of `load_statistics()`. It is the last
+  thing that method sets, so **any** exception raised earlier in it — a missing or unreadable
+  `meta.parquet`, an unstattable data file — leaves `Deleted Tracks: Loading...` on screen
+  permanently, alongside whichever of the three statistics placeholders had not yet been replaced.
+  Only `Error loading statistics: {e}` on stdout says otherwise.
 - `Deleted tracks won't be re-added during re-indexing` (Helvetica 9, grey)
 - `Manage Deleted Tracks...` → `DeletedTracksDialog` (§2.10); statistics are reloaded on close
 - `Clear All` → when the list is empty, `messagebox.showinfo("No Deleted Tracks", "There are no deleted tracks to clear.")`.
@@ -852,9 +895,12 @@ Indexing starts automatically 100 ms after the window opens.
 - Log `tk.Text`, height 12, `wrap=WORD`, Courier 9, with a vertical scrollbar; auto-scrolls
 - `Cancel` button (Helvetica 11 bold, padx 30, pady 8)
 
-Progress plumbing is identical to onboarding: a daemon thread, a process-global `sys.stdout`
-swap onto a queue writer, and a 200 ms drain of at most 10 messages per tick. Unlike onboarding,
-`cancel_check=lambda: self.cancel_requested` **is** passed to `index_library`.
+Progress plumbing is identical to onboarding: a daemon thread, one queued log line per
+`ProgressEvent`, and a 200 ms drain of at most 10 messages per tick. Unlike onboarding, a
+cancellation token **is** supplied — `service.run(..., cancel=self.cancel_event)`, where
+`cancel_requested` is a property over that `threading.Event` so every existing read and write of
+the flag still works. (On `main` this was `cancel_check=lambda: self.cancel_requested` passed
+straight to `index_library`, under a process-global `sys.stdout` swap; §4 defect #7.)
 
 `Cancel` first asks
 `messagebox.askyesno("Cancel Indexing", "Are you sure you want to cancel? Progress will be lost.")`.
@@ -870,8 +916,21 @@ Terminal states — the bar stops and the `Cancel` button is destroyed, then:
 | Success | `✅ Library updated successfully!` (Helvetica 12 bold, **green**) | `Done` (Helvetica 12 bold) |
 | Error | `❌ An error occurred` (Helvetica 12 bold, **red**) | `Close` (Helvetica 12) |
 
-Log lines appended by the window: `\n⚠️ Indexing cancelled by user`, `\n⚠️ Indexing cancelled`,
-`\n✅ Indexing completed successfully!`, or `\n❌ Error during indexing: {msg}` plus the traceback.
+Log lines appended by the window: `\n✅ Indexing completed successfully!`, or
+`\n❌ Error during indexing: {msg}` plus the traceback.
+
+**The two cancellation lines are dead code and are never appended.** `run_indexing` writes
+`\n⚠️ Indexing cancelled by user` after a successful `service.run(...)` and
+`\n⚠️ Indexing cancelled` in its `except Exception` handler — but a cancelled run raises
+`KeyboardInterrupt`, which derives from `BaseException`, so it satisfies neither branch. It
+propagates out of `run_indexing` (`reindex_window.py:186`), the worker thread dies with an
+unhandled exception printed to stderr, and **no** further message is queued. The only cancellation
+text the user ever sees in the log pane is `\n⚠️ Cancellation requested...`, queued by the Cancel
+button itself. The window still reaches its orange cancelled state, because `cancel_indexing()`
+set the flag that `check_indexing_status` reads.
+
+Pinned by `tests/services/test_indexing_service.py::test_cancel_raises_keyboardinterrupt_which_is_not_an_exception`;
+the manual harness `tests/manual/smoke.py` asserts the two lines' **absence**.
 
 **`Done` → `finish()`** shows
 `messagebox.askyesno("Restart Required", "Library has been updated!\n\nTo see new tracks in the UI, you should restart Cosine Companion.\n\nRestart now?")`.
@@ -954,7 +1013,10 @@ exactly `Current track: —` (em dash).
 
 ### 3.3 Ranking policy
 
-Both the Explore tab and the playlist exporter use the same two-step policy:
+Both the Explore tab and the playlist exporter use the same two-step policy, which since the
+service-layer extraction has exactly one implementation —
+`recommendations/ranking.py::ranked_recommendations`, called by `ExploreSession.recommend`, by
+`export_recommendations_as_playlists` and by `export_single_playlist`:
 
 1. `recommend_for(seed, meta_ix, emb_ix, idx, topk=500, final_top=200)`
    — exact cosine search for `topk + 1 = 501` neighbours, the seed itself skipped, each candidate
@@ -1003,10 +1065,20 @@ dialogs on open; only C searches album and key.
 These are compatibility scaffolding, not behaviour the rewrite must reproduce — but they are
 listed so their disappearance is not mistaken for a lost feature.
 
-- **Fake `Label` buttons.** All nine onboarding buttons are `tk.Label`s inside a coloured `tk.Frame`
-  with `relief="raised", bd=2`, wired to `<Button-1>`, `<Enter>` and `<Leave>`, because
+- **Fake `Label` buttons.** All **seven** onboarding buttons are `tk.Label`s inside a coloured
+  `tk.Frame` with `relief="raised", bd=2`, wired to `<Button-1>`, `<Enter>` and `<Leave>`, because
   `tk.Button` ignores `bg` under the macOS theme. Each has a hover shade and a 100 ms delay
-  before acting. They have **no keyboard focus and no keyboard activation**.
+  before acting. They have **no keyboard focus and no keyboard activation**. The seven, by screen:
+
+  | Screen | Buttons |
+  |---|---|
+  | 1 Welcome | `Get Started` (green `#4CAF50`), `Exit` (grey `#757575`) |
+  | 3 Ready to Index | `Start Indexing` (green), `Choose Different File` (grey) |
+  | 5a Success | `Start Using Cosine Companion` (green) |
+  | 5b Failure | `Try Again` (orange `#FF9800`), `Exit` (grey) |
+
+  Screens 2 and 4 have none: screen 2 is a native file dialog and screen 4 is the progress view,
+  which deliberately offers no Cancel.
 - **Repeated re-styling** of the Set Creator `+ Add Anchor` button at five different moments (§2.2).
 - **`deiconify()` / `lift()` / `focus_force()` / `update()`** after constructing `App`,
   `SettingsWindow`, `ReindexWindow`, `OnboardingWindow` and `DeletedTracksDialog`.
@@ -1034,11 +1106,16 @@ listed so their disappearance is not mistaken for a lost feature.
   on disk are **silently skipped** — they do not appear in the file and are not counted anywhere.
 - Line separator is `\n` (the file is opened in text mode without `newline=`, so on macOS `\n`).
 
-Per-seed filenames: `artist` and `title` are filtered to characters where
-`c.isalnum() or c in (' ', '-', '_')`, `.strip()`ped, joined as `{safe_artist} - {safe_title}.m3u`,
-and if the result exceeds 200 characters it is truncated to `filename[:200] + ".m3u"` (which
-yields a 204-character name and can leave a doubled `.m3u`). Two different seeds that sanitise to
-the same name overwrite each other silently.
+Per-seed filenames (`recommendations/playlist_exporter.py::playlist_filename`): `artist` and
+`title` are filtered to characters where `c.isalnum() or c in (' ', '-', '_')`, `.strip()`ped,
+joined as `{safe_artist} - {safe_title}.m3u`, and if the result exceeds 200 characters it is
+truncated to `filename[:200] + ".m3u"`, yielding a **204-character** name cut mid-title. The
+boundary is strictly greater than 200, so a name of exactly 200 characters is left alone.
+
+A **doubled `.m3u` is impossible**, contrary to what this document previously claimed: the
+sanitiser drops `.`, so the only dot in the name is the extension the function appends, and when
+the name exceeds 200 characters that extension sits beyond the cut. Two different seeds that
+sanitise to the same name overwrite each other silently.
 
 ### 3.7 Settings file
 
@@ -1126,20 +1203,28 @@ them and say so.
 | # | Defect | Location | Current observable behaviour |
 |---|---|---|---|
 | 1 | Export/delete data race | export worker thread vs `library_tab` delete | The export thread holds references to `meta_ix`/`emb_ix`/`idx` captured at start while deletion rebinds them on the main thread. A delete mid-export can yield `KeyError`, an `IndexError` from the index, or playlists built from a stale index. Nothing warns the user |
-| 2 | Non-atomic four-file rewrite | `library_tab.py:257-270` | `meta.parquet`, `embeddings.parquet`, `index.npy`, `ids.json` are written in sequence with no temp-file-and-rename and no rollback. A crash or full disk between writes leaves the four files mutually inconsistent, and the next launch fails the `load_all` validation → the `Inconsistent Index Data` dialog |
-| 3 | Deleting every track leaves `idx = None` | `library_tab.py:251-255` | `V = np.array([])`, `ids = []`, `idx = None`, and `index.npy` is **not** rewritten, so it retains the pre-delete vectors and disagrees with the now-empty `ids.json` |
-| 4 | Cancel discards all work | `pipeline.py:87-90` | `KeyboardInterrupt` is raised at the next per-track checkpoint; every embedding computed so far is dropped. A cancelled 6.8-minute run leaves nothing behind |
+| 2 | Non-atomic four-file rewrite | `services/library_session.py::_persist` (was `library_tab.py:257-270`) | `meta.parquet`, `embeddings.parquet`, `index.npy`, `ids.json` are written in sequence with no temp-file-and-rename and no rollback. A crash or full disk between writes leaves the four files mutually inconsistent, and the next launch fails the `load_all` validation → the `Inconsistent Index Data` dialog |
+| 3 | Deleting every track leaves `idx = None` | `services/library_session.py::delete_tracks` (was `library_tab.py:251-255`) | `V = np.array([])`, `ids = []`, `idx = None`, and `index.npy` is **not** rewritten, so it retains the pre-delete vectors and disagrees with the now-empty `ids.json` |
+| 4 | Cancel discards all work | `pipeline.py:143-147` | `KeyboardInterrupt` is raised at the next per-track checkpoint; every embedding computed so far is dropped. A cancelled 6.8-minute run leaves nothing behind |
 | 5 | `sys.exit(0)` after indexing | `reindex_window.py:304-321` | Choosing "Restart now?" kills the process without relaunching. Declining leaves the app running on a stale index with no indication |
-| 6 | Indeterminate progress bar | `reindex_window.py:77-81`, `onboarding.py:335-341` | The pipeline prints `[ i/N]` per track but the bar is `mode='indeterminate'`; the ratio is only readable in the log pane |
-| 7 | Process-global `sys.stdout` swap | `reindex_window.py:164-194`, `onboarding.py:400-416` | A worker thread replaces `sys.stdout` for the whole process for the duration of indexing, so any other thread's output is captured too. **This is the single mechanism Task 8 is permitted to replace** |
+| 6 | Indeterminate progress bar | `reindex_window.py:92-97`, `onboarding.py:335-341` | The pipeline prints `[ i/N]` per track but the bar is `mode='indeterminate'`; the ratio is only readable in the log pane |
+| 7 | Process-global `sys.stdout` swap | *(resolved in PR 2)* | A worker thread used to replace `sys.stdout` for the whole process for the duration of indexing, so any other thread's output was captured too. **This is the single mechanism Task 8 was permitted to replace**, and it has been: `IndexingService` emits a `ProgressEvent` per pipeline message and both windows queue `event.message`. The rendered log lines are unchanged, so the contract below is unaffected |
 | 8 | ~350 lines of macOS Tk workarounds | across the UI | §3.5 |
 | 9 | Blank query returns nothing | `search.py:21-22` | `AddAnchorDialog` and `TrackSelectorDialog` both open with an **empty** result list, contradicting their `# Initialize with all tracks` intent and the `limit = 100 if not query` branch |
-| 10 | Combined export shows no success dialog | `playlist_export_tab.py:437-453` | `export_single_playlist` returns stats without a `playlists_created` key, so `export_complete` raises `KeyError` while building the message. The button is re-enabled and the progress block hidden first, so the user sees the export simply stop with **no confirmation** and a traceback on stderr. The playlist file is written correctly |
-| 11 | Combined export reports no progress | `playlist_export_tab.py:406-414` | `export_single_playlist` takes no `progress_callback`, so the determinate bar sits at 0 % for the whole run |
-| 12 | Duplicate ranking policy | `recommendations_tab.py:236-247` vs `playlist_exporter.py:101-116`, `185-202` | Three copies of the same `recommend_for(topk=500, final_top=200)` + cosine re-sort. **Verified behaviourally identical**; only the caller-supplied truncation differs |
-| 13 | Selection is an unordered `set` | `playlist_export_tab.py:335-344` | Manual-mode export order is arbitrary and varies between runs; the progress readout therefore visits tracks in no particular order |
+| 10 | Combined export shows no success dialog | `playlist_export_tab.py:440-456` | `export_single_playlist` returns stats without a `playlists_created` key, so `export_complete` raises `KeyError` while building the message. The button is re-enabled and the progress block hidden first, so the user sees the export simply stop with **no confirmation** and a traceback on stderr. The playlist file is written correctly |
+| 11 | Combined export reports no progress | `playlist_export_tab.py:403-412` | `export_single_playlist` takes no `progress_callback`, so the determinate bar sits at 0 % for the whole run |
+| 12 | Duplicate ranking policy | *(resolved in PR 2)* | There were three copies of the same `recommend_for(topk=500, final_top=200)` + cosine re-sort, in `recommendations_tab.py` and twice in `playlist_exporter.py`. **Verified behaviourally identical** before consolidation (harness: `tests/manual/ranking_equivalence.py`); only the caller-supplied truncation differed. All three now call `recommendations/ranking.py::ranked_recommendations` |
+| 13 | Selection is an unordered `set` | `playlist_export_tab.py:338-347` | Manual-mode export order is arbitrary and varies between runs; the progress readout therefore visits tracks in no particular order |
+| 14 | Deletion leaves `meta` stale | `services/library_session.py::delete_tracks` (was `library_tab.py:213-273`) | Deletion rebuilds `meta_ix`, `emb_ix`, `V`, `ids` and the index, but **not** `meta`. Explore's `Set Current Track` picker still offers the deleted track (and raises `KeyError` from `meta_ix.loc` if it is chosen), and the Playlist Export all-tracks count and id list still include it, until the app is restarted. See the stale-consumer table in §2.7 |
+| 15 | `after()` called from a worker thread | `playlist_export_tab.py:397,434` | The export worker marshals progress and completion back to Tk with `self.after(0, …)` from a background thread. Tk is not thread-safe and `after` is not an exception to that; it happens to work. **Pre-existing on `main` and deliberately untouched by PR 2** — fixing it would be a behaviour change in a PR whose contract forbids one |
+| 16 | Cancellation log lines are unreachable | `reindex_window.py:180-189` | `\n⚠️ Indexing cancelled by user` and `\n⚠️ Indexing cancelled` are written in branches a `KeyboardInterrupt` never reaches, so neither is ever appended (§2.13). Pre-existing on `main` |
 
 Backlog references: `backlog-n3-ids-lag-race` (#1, #3), spec §3.2 (#1–#8), spec §10.
+
+**Deliberately fixed in PR 3, not here:** #14 (recompute or invalidate `meta` on delete), #15 (marshal
+through a queue the main thread drains, as `ReindexWindow` already does), #16 (catch `BaseException`
+or stop using `KeyboardInterrupt` as a control-flow signal), #1 (a real read/write discipline around
+the library), #10 and #11 (the combined-export dialog and progress).
 
 ---
 
@@ -1171,6 +1256,13 @@ Every row is a user-reachable workflow catalogued above. Task 9 records pass/fai
 | 20 | Library ▸ double-click ▸ becomes current and the app switches to Explore | §2.7 |
 | 21 | Library ▸ Set as Current with no selection ▸ warning dialog | §2.7 |
 | 22 | Library ▸ Delete Selected ▸ confirmation ▸ track gone, status updated | §2.7 |
+| 22a | …then Library ▸ Refresh ▸ the deleted track is **gone** from the list and the stats count drops | §2.7 |
+| 22b | …then Explore ▸ Set Current Track ▸ search for the deleted track ▸ it is **still offered** (stale `meta`), and choosing it raises `KeyError` | §2.7, §4 #14 |
+| 22c | …then Playlist Export ▸ All tracks radio ▸ the count is **unchanged** (still counts the deleted track) | §2.7, §4 #14 |
+| 22d | …then Playlist Export ▸ All tracks ▸ export ▸ the deleted id is sent and silently skipped; no playlist is written for it | §2.7, §4 #14 |
+| 22e | …then Set Creator ▸ an anchor on the deleted track disappears from the anchor list on next render | §2.5, §2.7 |
+| 22f | Restart the app ▸ every stale surface above is now correct | §2.7, §4 #14 |
+| 22g | Start a full export, delete a track while it runs ▸ the export finishes against its start-of-run snapshot; the deleted track still appears in playlists written after the delete | §2.6, §4 #1 |
 | 23 | Playlist Export ▸ + Add Tracks ▸ search, multi-select, Add ▸ selection list and info label update | §2.6, §2.11 |
 | 24 | Playlist Export ▸ Clear All ▸ orange warning label | §2.6 |
 | 25 | Playlist Export ▸ All tracks radio ▸ label shows the full collection count | §2.6 |
@@ -1183,7 +1275,14 @@ Every row is a user-reachable workflow catalogued above. Task 9 records pass/fai
 | 32 | Settings ▸ Clear All deleted tracks ▸ confirmation and result dialogs | §2.8 |
 | 33 | Settings ▸ Update Library (Incremental) ▸ `ReindexWindow` runs and reports | §2.8, §2.13 |
 | 34 | Reindex ▸ Cancel ▸ confirmation ▸ orange cancelled state and `Close` | §2.13 |
+| 34a | Reindex ▸ Cancel ▸ the log pane's **last** line is `⚠️ Cancellation requested...` — `⚠️ Indexing cancelled by user` and `⚠️ Indexing cancelled` must **NOT** appear, and neither must `✅ Indexing completed successfully!` | §2.13, §4 #16 |
+| 34b | Reindex ▸ Cancel ▸ an unhandled `KeyboardInterrupt` traceback appears on stderr, and no data files are written | §2.13, §4 #4 |
+| 34c | Reindex ▸ let it finish ▸ the log pane ends with `🚀 Ready to use! …` then `✅ Indexing completed successfully!` | §2.13 |
 | 35 | Reindex ▸ Done ▸ Restart Required dialog ▸ declining leaves the app running | §2.13 |
 | 36 | Menu ▸ Library ▸ Update Library (Incremental) ▸ same reindex window | §2.3 |
 | 37 | Tab switching ▸ status hint changes per tab | §2.2 |
 | 38 | Onboarding (fresh data directory) ▸ welcome ▸ file ▸ confirm ▸ index ▸ Start Using | §2.1 |
+| 39 | Onboarding ▸ all seven fake buttons respond to click and to hover, and none can be reached by Tab | §2.1, §3.5 |
+| 40 | Settings ▸ open with an unreadable `meta.parquet` ▸ `Total Tracks: Loading...` **and** `Deleted Tracks: Loading...` remain on screen, and `Error loading statistics: …` is printed to stdout | §2.8, §4 |
+| 41 | Set Creator ▸ generate a set larger than the candidates available ▸ unfillable rows read exactly `[ n] 🤖 No suitable track found – (Unknown Title)` | §2.5 |
+| 42 | Playlist Export ▸ combined mode ▸ the progress bar stays at 0 % for the whole run and no completion dialog appears | §2.6, §4 #10, #11 |

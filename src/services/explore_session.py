@@ -1,23 +1,24 @@
 #!/usr/bin/env python3
 """ExploreSession - seed track to ranked recommendations.
 
-Holds the ranking policy that was duplicated in three places:
-``ui/recommendations_tab.py:236-247``, ``recommendations/playlist_exporter.py:101-116``
-and ``recommendations/playlist_exporter.py:185-202``. All three ran
+The ranking policy itself lives in ``recommendations.ranking``, not here. It
+used to be written out three times - ``ui/recommendations_tab.py:236-247`` and
+twice in ``recommendations/playlist_exporter.py`` - and consolidating it *in
+this service* would have left both exporter copies in the source, merely
+unreachable. So the policy went into the pure layer, and Explore, both
+exporters and ExportService all call the same function. This class adds only
+what the UI needs on top: ``Recommendation`` objects carrying ``path_local``.
 
-    recommend_for(seed, meta_ix, emb_ix, idx, topk=..., final_top=...)
-    recs.sort(key=lambda x: x["cosine"], reverse=True)
+Note what the policy's two steps compose into: the *membership* of the result
+set is decided by the weighted score (0.7 cosine + 0.2 key + 0.1 bpm), while
+the *order* is by raw cosine. It is neither pure-score nor pure-cosine ranking,
+and it is preserved exactly - pinned by committed golden values in
+``tests/services/test_explore_session.py``.
 
-then truncated by a caller-supplied count. Diffed over 60 seeds x 3 truncation
-counts before this refactor: zero ordering and zero value mismatches. They are
-behaviourally identical, so there was no discrepancy to arbitrate.
-
-Note what the two steps compose into: the *membership* of the result set is
-decided by the weighted score (0.7 cosine + 0.2 key + 0.1 bpm), while the
-*order* is by raw cosine. Measured over 40 seeds, that differs from a pure
-cosine ranking of the same candidate pool in 40/40 seeds at top-200 and 11/40
-at top-25. It is neither pure-score nor pure-cosine ranking, and it is
-preserved exactly.
+The three implementations were diffed before the refactor and found
+behaviourally identical; the harness that measures that is committed as
+``tests/manual/ranking_equivalence.py`` so the claim can be re-run rather than
+merely asserted.
 
 This module must never depend on a UI toolkit; see
 tests/test_services_are_ui_free.py, which enforces that with an AST walk.
@@ -27,7 +28,7 @@ from dataclasses import dataclass
 from typing import Any, List, Optional
 
 from config import DEFAULT_FINAL_TOP, DEFAULT_TOPK
-from recommendations.engine import recommend_for
+from recommendations.ranking import ranked_recommendations
 
 
 @dataclass
@@ -69,7 +70,7 @@ class ExploreSession:
         playlist exporter uses the same configuration and then truncates to the
         user's per-track count.
         """
-        results = recommend_for(
+        results = ranked_recommendations(
             track_id,
             self.library.meta_ix,
             self.library.emb_ix,
@@ -77,10 +78,6 @@ class ExploreSession:
             topk=topk,
             final_top=final_top,
         )
-
-        # Sort by cosine similarity (pure audio similarity). Stable, so ties keep
-        # the score ordering recommend_for produced.
-        results.sort(key=lambda x: x["cosine"], reverse=True)
 
         return [self._to_recommendation(r) for r in results]
 

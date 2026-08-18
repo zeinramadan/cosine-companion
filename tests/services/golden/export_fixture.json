@@ -1,0 +1,63 @@
+{
+  "combined": {
+    "2": [
+      "f02",
+      "f03",
+      "f07",
+      "f08",
+      "f11",
+      "f09"
+    ],
+    "5": [
+      "f02",
+      "f03",
+      "f09",
+      "f11",
+      "f05",
+      "f07",
+      "f08",
+      "f04",
+      "f12",
+      "f01"
+    ]
+  },
+  "per_seed": {
+    "2": {
+      "Alva Noto - Xerrox.m3u": [
+        "f02",
+        "f03"
+      ],
+      "Function - Voiceprint.m3u": [
+        "f07",
+        "f08"
+      ],
+      "Jeff Mills - The Bells.m3u": [
+        "f11",
+        "f09"
+      ]
+    },
+    "5": {
+      "Alva Noto - Xerrox.m3u": [
+        "f02",
+        "f03",
+        "f09",
+        "f11",
+        "f05"
+      ],
+      "Function - Voiceprint.m3u": [
+        "f07",
+        "f08",
+        "f04",
+        "f05",
+        "f12"
+      ],
+      "Jeff Mills - The Bells.m3u": [
+        "f11",
+        "f09",
+        "f12",
+        "f07",
+        "f01"
+      ]
+    }
+  }
+}

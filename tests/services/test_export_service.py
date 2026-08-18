@@ -1,10 +1,16 @@
 """Characterisation tests for ExportService.
 
-The legacy functions recommendations.playlist_exporter.
-export_recommendations_as_playlists and export_single_playlist are deliberately
-LEFT IN PLACE and unused by the UI, so these tests can diff ExportService's
-output against them byte-for-byte in perpetuity. That is the strongest available
-evidence that the extraction preserved behaviour.
+**What changed and why.** These tests used to diff the service's output against
+``recommendations.playlist_exporter``'s two functions. That was meaningful only
+while the service carried its own copy of the export loops - and carrying that
+copy was the defect. Now the service *orchestrates* those functions, so diffing
+against them would compare a thing with itself. The expectations therefore come
+from ``golden/export_fixture.json``: committed playlist filenames and committed
+ordered track ids, from which the exact bytes are reconstructed.
+
+The legacy comparison survives where it still means something: as a check that
+driving the pure exporter directly and driving it through the service produce
+the same files, which is what proves the service adds no behaviour of its own.
 
 Known defects are pinned as CURRENT behaviour: tracks whose audio file is
 missing are silently skipped, and combined mode reports no playlists_created
@@ -12,126 +18,313 @@ key (which is why the tab raises KeyError and shows no completion dialog -
 inventory defect #10).
 """
 
-import json
+import threading
 from pathlib import Path
 
-import numpy as np
-import pandas as pd
 import pytest
 
-from config import DATA
+from fixture_library import GOLDEN_SEEDS, load_golden
 from recommendations.playlist_exporter import (
     export_recommendations_as_playlists,
     export_single_playlist,
+    playlist_filename,
 )
-from services.explore_session import ExploreSession
 from services.export_service import ExportResult, ExportService
-from services.library_session import LibrarySession
 
-SEEDS = ["64638770", "24614611", "36999061"]
+GOLDEN = load_golden("export_fixture")
 
-
-@pytest.fixture(scope="module")
-def library():
-    return LibrarySession.load(DATA)
-
-
-@pytest.fixture(scope="module")
-def service(library):
-    return ExportService(library, ExploreSession(library))
+REAL_SEEDS = ["64638770", "24614611", "36999061"]
 
 
 @pytest.fixture
-def tmp_library(tmp_path):
-    """A four-track library whose audio files really exist, plus one that does not."""
-    audio = tmp_path / "audio"
-    audio.mkdir()
-    rows = []
-    for i, (tid, artist, title) in enumerate(
-        [
-            ("t1", "Artist A", "Title One"),
-            ("t2", "Artist B/C: Two", "Title *Two*"),
-            ("t3", "Artist C", "Title Three"),
-            ("t4", "Ghost", "Missing File"),
-        ]
-    ):
-        path = audio / f"{tid}.mp3"
-        if tid != "t4":  # t4's file is deliberately absent
-            path.write_bytes(b"\x00")
-        vec = np.zeros(4, dtype="float32")
-        vec[i] = 1.0
-        vec[(i + 1) % 4] = 0.5
-        rows.append((tid, artist, title, str(path), vec))
-
-    data_dir = tmp_path / "data"
-    data_dir.mkdir()
-    meta = pd.DataFrame(
-        [
-            {"track_id": t, "path": "", "artist": a, "title": ti, "album": "",
-             "bpm": 128.0, "key": "8A", "path_local": p}
-            for t, a, ti, p, _ in rows
-        ]
-    )
-    vectors = np.array([v for *_, v in rows], dtype="float32")
-    emb = pd.concat(
-        [pd.DataFrame({"track_id": [r[0] for r in rows]}),
-         pd.DataFrame(vectors, columns=[f"v{i}" for i in range(4)])],
-        axis=1,
-    )
-    meta.to_parquet(data_dir / "meta.parquet", index=False)
-    emb.to_parquet(data_dir / "embeddings.parquet", index=False)
-    np.save(data_dir / "index.npy", vectors)
-    (data_dir / "ids.json").write_text(json.dumps([r[0] for r in rows]))
-    return data_dir
+def service(fixture_library):
+    return ExportService(fixture_library)
 
 
-def _tree(directory):
+@pytest.fixture
+def real_service(real_library):
+    return ExportService(real_library)
+
+
+def m3u_bytes(library, track_ids):
+    """The exact file create_m3u_playlist writes for these ids, from meta."""
+    lines = ["#EXTM3U"]
+    for track_id in track_ids:
+        track = library.meta_ix.loc[track_id]
+        path_local = track["path_local"]
+        if not path_local or not Path(path_local).exists():
+            continue  # silently skipped, exactly as the writer does
+        lines.append(f"#EXTINF:-1,{track['artist']} - {track['title']}")
+        lines.append(path_local)
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def tree(directory):
     return {p.name: p.read_bytes() for p in sorted(Path(directory).glob("*.m3u"))}
 
 
 # --------------------------------------------------------------------------
-# Byte-for-byte equivalence with the legacy implementation
+# Golden: exact filenames and exact bytes
 # --------------------------------------------------------------------------
 
 
-def test_per_seed_output_is_byte_identical_to_the_legacy_exporter(library, service, tmp_path):
-    legacy_dir = tmp_path / "legacy"
-    new_dir = tmp_path / "new"
+@pytest.mark.parametrize("per_track", sorted(GOLDEN["per_seed"], key=int))
+def test_per_seed_output_matches_the_golden_files(fixture_library, service, tmp_path, per_track):
+    expected = GOLDEN["per_seed"][per_track]
+    out = tmp_path / f"out{per_track}"
 
-    legacy_stats = export_recommendations_as_playlists(
-        SEEDS, str(legacy_dir), 10, library.meta_ix, library.emb_ix, library.index
+    result = service.export_per_seed(GOLDEN_SEEDS, str(out), int(per_track))
+
+    written = tree(out)
+    assert sorted(written) == sorted(expected), "playlist filenames drifted"
+    for filename, track_ids in expected.items():
+        assert written[filename] == m3u_bytes(fixture_library, track_ids), filename
+    assert result.playlists_created == len(expected)
+
+
+@pytest.mark.parametrize("per_track", sorted(GOLDEN["combined"], key=int))
+def test_combined_output_matches_the_golden_file(fixture_library, service, tmp_path, per_track):
+    expected_ids = GOLDEN["combined"][per_track]
+    out = tmp_path / f"combined{per_track}.m3u"
+
+    result = service.export_combined(GOLDEN_SEEDS, str(out), int(per_track))
+
+    assert out.read_bytes() == m3u_bytes(fixture_library, expected_ids)
+    assert result.total_recommendations == len(expected_ids)
+
+
+def test_the_golden_export_is_not_empty():
+    """Guard the guard: an empty golden would make the assertions vacuous."""
+    assert GOLDEN["per_seed"]["2"]
+    assert all(ids for ids in GOLDEN["per_seed"]["2"].values())
+    assert GOLDEN["combined"]["2"]
+
+
+# --------------------------------------------------------------------------
+# The service adds no behaviour of its own
+# --------------------------------------------------------------------------
+
+
+def test_service_and_direct_call_produce_identical_files(fixture_library, service, tmp_path):
+    """Not a tautology: it is what makes 'orchestrates, does not reimplement'
+    checkable. The service must be a pass-through plus a snapshot."""
+    direct = tmp_path / "direct"
+    through_service = tmp_path / "service"
+
+    direct_stats = export_recommendations_as_playlists(
+        GOLDEN_SEEDS, str(direct), 5,
+        fixture_library.meta_ix, fixture_library.emb_ix, fixture_library.index,
     )
-    result = service.export_per_seed(SEEDS, str(new_dir), 10)
+    result = service.export_per_seed(GOLDEN_SEEDS, str(through_service), 5)
 
-    assert _tree(new_dir) == _tree(legacy_dir)
-    assert _tree(new_dir), "nothing was written"
-    assert result.as_legacy_stats() == legacy_stats
+    assert tree(through_service) == tree(direct)
+    assert result.as_legacy_stats() == direct_stats
 
 
-def test_combined_output_is_byte_identical_to_the_legacy_exporter(library, service, tmp_path):
-    legacy = tmp_path / "legacy.m3u"
-    new = tmp_path / "new.m3u"
+def test_service_and_direct_call_produce_identical_combined_files(fixture_library, service, tmp_path):
+    direct = tmp_path / "direct.m3u"
+    through_service = tmp_path / "service.m3u"
 
-    legacy_stats = export_single_playlist(
-        SEEDS, str(legacy), "Cosine Recommendations",
-        library.meta_ix, library.emb_ix, library.index, 10,
+    direct_stats = export_single_playlist(
+        GOLDEN_SEEDS, str(direct), "Cosine Recommendations",
+        fixture_library.meta_ix, fixture_library.emb_ix, fixture_library.index, 5,
     )
-    result = service.export_combined(SEEDS, str(new), 10)
+    result = service.export_combined(GOLDEN_SEEDS, str(through_service), 5)
 
-    assert new.read_bytes() == legacy.read_bytes()
-    assert new.read_bytes(), "nothing was written"
-    assert result.as_legacy_stats() == legacy_stats
+    assert through_service.read_bytes() == direct.read_bytes()
+    assert result.as_legacy_stats() == direct_stats
 
 
-def test_equivalence_holds_across_several_per_track_counts(library, service, tmp_path):
-    for n in (1, 5, 25):
-        legacy_dir = tmp_path / f"legacy{n}"
-        new_dir = tmp_path / f"new{n}"
-        export_recommendations_as_playlists(
-            SEEDS[:1], str(legacy_dir), n, library.meta_ix, library.emb_ix, library.index
-        )
-        service.export_per_seed(SEEDS[:1], str(new_dir), n)
-        assert _tree(new_dir) == _tree(legacy_dir), n
+def test_export_service_does_not_reimplement_the_loops(service, fixture_library, tmp_path, monkeypatch):
+    """The loops live in recommendations.playlist_exporter; the service calls
+    them once each. Pinned so a future edit cannot quietly inline them again."""
+    import services.export_service as module
+
+    calls = []
+    monkeypatch.setattr(
+        module, "export_recommendations_as_playlists",
+        lambda *a, **k: calls.append(("per_seed", a, k)) or {
+            "total_tracks": 1, "successful": 1, "failed": 0,
+            "playlists_created": 1, "total_recommendations": 3,
+        },
+    )
+
+    result = service.export_per_seed(["f01"], str(tmp_path / "o"), 3)
+
+    assert [c[0] for c in calls] == ["per_seed"]
+    assert result.playlists_created == 1
+
+
+def test_real_library_export_matches_a_direct_call(real_library, real_service, tmp_path):
+    direct = tmp_path / "direct"
+    through_service = tmp_path / "service"
+
+    export_recommendations_as_playlists(
+        REAL_SEEDS, str(direct), 10,
+        real_library.meta_ix, real_library.emb_ix, real_library.index,
+    )
+    service_result = real_service.export_per_seed(REAL_SEEDS, str(through_service), 10)
+
+    assert tree(through_service) == tree(direct)
+    assert tree(through_service), "nothing was written"
+    assert service_result.playlists_created == 3
+
+
+# --------------------------------------------------------------------------
+# The export/delete race: one snapshot per run
+# --------------------------------------------------------------------------
+
+
+DOOMED = "f07"  # belongs to a LATER seed's playlist than the pause point
+
+
+def pristine_bytes(tmp_path, track_ids):
+    """The undisturbed export bytes, built from a second, untouched library."""
+    from fixture_library import write_fixture_library
+    from services.library_session import LibrarySession
+
+    pristine = write_fixture_library(tmp_path / "pristine", audio_dir=tmp_path / "audio")
+    return m3u_bytes(LibrarySession.load(pristine), track_ids)
+
+
+def delete_at_first_seed(library, track_id=DOOMED):
+    """A progress callback that deletes ``track_id`` after the first seed."""
+    def progress(current, total, name):
+        if current == 1:
+            library.delete_tracks([track_id])
+    return progress
+
+
+def test_export_uses_one_library_snapshot_for_the_whole_run(
+    fixture_library, service, tmp_path, isolated_deleted_tracks
+):
+    """DETERMINISTIC INTERLEAVING. The export is paused at its first seed, a
+    track that a LATER seed recommends is deleted, and the export resumes.
+
+    The legacy Tkinter worker passed meta_ix / emb_ix / idx as arguments at
+    export start, so the whole run finished against the pre-delete view. The
+    first draft of this service re-read the live session per seed, during
+    recommendation conversion and again while writing, so a delete could switch
+    views mid-export - even between the three arguments of one recommend_for
+    call. This pins the legacy behaviour: the deleted track still appears.
+    """
+    assert DOOMED in GOLDEN["per_seed"]["2"]["Function - Voiceprint.m3u"]
+    assert DOOMED not in GOLDEN["per_seed"]["2"]["Alva Noto - Xerrox.m3u"]
+    out = tmp_path / "out"
+    seen = []
+
+    def progress(current, total, name):
+        seen.append(current)
+        if current == 1:
+            fixture_library.delete_tracks([DOOMED])
+
+    service.export_per_seed(GOLDEN_SEEDS, str(out), 2, progress=progress)
+
+    # The delete really landed on the session...
+    assert DOOMED not in fixture_library.meta_ix.index
+    assert DOOMED not in fixture_library.ids
+    # ...and the export nonetheless finished against the view it started with.
+    assert seen == [1, 2, 3]
+    written = tree(out)
+    assert sorted(written) == sorted(GOLDEN["per_seed"]["2"])
+    assert written["Function - Voiceprint.m3u"] == pristine_bytes(
+        tmp_path, GOLDEN["per_seed"]["2"]["Function - Voiceprint.m3u"]
+    )
+    assert f"{DOOMED}.mp3" in written["Function - Voiceprint.m3u"].decode()
+
+
+def test_the_same_interleaving_matches_the_legacy_exporter(tmp_path, isolated_deleted_tracks):
+    """Same interleaving, two runs on two identical libraries: one straight
+    through the pure exporter with its arguments captured up front, the way the
+    Tkinter worker captured them, and one through the service. They must agree.
+    """
+    from fixture_library import write_fixture_library
+    from services.library_session import LibrarySession
+
+    legacy_lib = LibrarySession.load(
+        write_fixture_library(tmp_path / "legacy-data", audio_dir=tmp_path / "audio")
+    )
+    service_lib = LibrarySession.load(
+        write_fixture_library(tmp_path / "service-data", audio_dir=tmp_path / "audio")
+    )
+    legacy_dir, service_dir = tmp_path / "legacy", tmp_path / "service"
+
+    # Legacy shape: evaluate the three arguments once, then delete midway.
+    export_recommendations_as_playlists(
+        GOLDEN_SEEDS, str(legacy_dir), 2,
+        legacy_lib.meta_ix, legacy_lib.emb_ix, legacy_lib.index,
+        progress_callback=delete_at_first_seed(legacy_lib),
+    )
+    ExportService(service_lib).export_per_seed(
+        GOLDEN_SEEDS, str(service_dir), 2, progress=delete_at_first_seed(service_lib)
+    )
+
+    assert tree(service_dir) == tree(legacy_dir)
+    assert DOOMED not in legacy_lib.ids and DOOMED not in service_lib.ids
+    assert f"{DOOMED}.mp3" in tree(legacy_dir)["Function - Voiceprint.m3u"].decode()
+
+
+def test_a_live_reading_export_would_have_produced_something_different(
+    fixture_library, tmp_path, isolated_deleted_tracks
+):
+    """Proves the two tests above are not vacuous: had the export re-read the
+    library after the delete, the later seed's playlist WOULD have changed."""
+    from recommendations.ranking import ranked_recommendations
+
+    def rank():
+        return [
+            r["track_id"]
+            for r in ranked_recommendations(
+                "f06", fixture_library.meta_ix, fixture_library.emb_ix,
+                fixture_library.index, topk=500, final_top=200, limit=2,
+            )
+        ]
+
+    before = rank()
+    fixture_library.delete_tracks([DOOMED])
+    after = rank()
+
+    assert before != after
+    assert DOOMED in before
+    assert DOOMED not in after
+
+
+def test_snapshot_survives_a_delete(fixture_library, isolated_deleted_tracks):
+    snapshot = fixture_library.snapshot()
+
+    fixture_library.delete_tracks([DOOMED])
+
+    assert DOOMED in snapshot.meta_ix.index
+    assert DOOMED in snapshot.index.ids
+    assert snapshot.index is not fixture_library.index
+    assert snapshot.meta_ix is not fixture_library.meta_ix
+
+
+def test_combined_export_also_snapshots(
+    fixture_library, service, tmp_path, isolated_deleted_tracks
+):
+    out = tmp_path / "combined.m3u"
+
+    service.export_combined(
+        GOLDEN_SEEDS, str(out), 2, progress=delete_at_first_seed(fixture_library)
+    )
+
+    assert out.read_bytes() == pristine_bytes(tmp_path, GOLDEN["combined"]["2"])
+    assert DOOMED not in fixture_library.ids
+
+
+def test_the_service_takes_exactly_one_snapshot_per_export(fixture_library, tmp_path, monkeypatch):
+    """One capture point per run - not one per seed, which is what made the
+    race materially worse than the legacy worker's."""
+    real = fixture_library.snapshot
+    calls = []
+    monkeypatch.setattr(
+        fixture_library, "snapshot", lambda: calls.append(1) or real()
+    )
+
+    ExportService(fixture_library).export_per_seed(GOLDEN_SEEDS, str(tmp_path / "o"), 2)
+
+    assert len(calls) == 1
 
 
 # --------------------------------------------------------------------------
@@ -139,11 +332,8 @@ def test_equivalence_holds_across_several_per_track_counts(library, service, tmp
 # --------------------------------------------------------------------------
 
 
-def test_m3u_format(tmp_library, tmp_path):
-    library = LibrarySession.load(tmp_library)
-    service = ExportService(library, ExploreSession(library))
-
-    service.export_combined(["t1"], str(tmp_path / "out.m3u"), 3)
+def test_m3u_format(fixture_library, service, tmp_path):
+    service.export_combined(["f01"], str(tmp_path / "out.m3u"), 3)
 
     lines = (tmp_path / "out.m3u").read_text(encoding="utf-8").split("\n")
     assert lines[0] == "#EXTM3U"
@@ -153,73 +343,108 @@ def test_m3u_format(tmp_library, tmp_path):
     assert lines[-1] == ""  # trailing newline after the last path
 
 
-def test_duration_is_always_minus_one(tmp_library, tmp_path):
+def test_duration_is_always_minus_one(service, tmp_path):
     """CoCo never captures track duration."""
-    library = LibrarySession.load(tmp_library)
-    service = ExportService(library, ExploreSession(library))
-
-    service.export_combined(["t1"], str(tmp_path / "out.m3u"), 3)
+    service.export_combined(["f01"], str(tmp_path / "out.m3u"), 3)
 
     for line in (tmp_path / "out.m3u").read_text().splitlines():
         if line.startswith("#EXTINF"):
             assert line.startswith("#EXTINF:-1,")
 
 
-def test_tracks_whose_audio_file_is_missing_are_silently_skipped(tmp_library, tmp_path):
-    """CURRENT BEHAVIOUR, NOT A BUG FIX. t4's file does not exist, so it never
+def test_tracks_whose_audio_file_is_missing_are_silently_skipped(tmp_path):
+    """CURRENT BEHAVIOUR, NOT A BUG FIX. A track whose file does not exist never
     reaches the playlist and is not counted anywhere - no warning, no failed
     tally. 46 of the real library's 1,307 tracks are in this state."""
-    library = LibrarySession.load(tmp_library)
-    service = ExportService(library, ExploreSession(library))
+    from fixture_library import write_fixture_library
+    from services.library_session import LibrarySession
 
-    result = service.export_combined(["t1", "t2", "t3"], str(tmp_path / "out.m3u"), 5)
+    data = write_fixture_library(
+        tmp_path / "data", audio_dir=tmp_path / "audio", missing=("f02",)
+    )
+    library = LibrarySession.load(data)
+    service = ExportService(library)
+
+    result = service.export_combined(["f01"], str(tmp_path / "out.m3u"), 5)
 
     body = (tmp_path / "out.m3u").read_text()
-    assert "t4.mp3" not in body
-    assert "Missing File" not in body
+    assert "f02.mp3" not in body
+    assert "Why They Hide" not in body
     assert result.failed == 0  # the skip is invisible in the stats
+    assert result.total_recommendations == 5  # ...and it is still counted here
 
 
-def test_filename_scheme_and_sanitisation(tmp_library, tmp_path):
+def test_filename_scheme_and_sanitisation():
     """{safe_artist} - {safe_title}.m3u, keeping only alphanumerics, space,
-    hyphen and underscore."""
-    library = LibrarySession.load(tmp_library)
-    service = ExportService(library, ExploreSession(library))
-
-    service.export_per_seed(["t1", "t2"], str(tmp_path / "out"), 2)
-
-    names = sorted(p.name for p in (tmp_path / "out").glob("*.m3u"))
-    # "Artist B/C: Two" -> "/" and ":" dropped, surrounding spaces kept;
-    # "Title *Two*" -> asterisks dropped.
-    assert names == ["Artist A - Title One.m3u", "Artist BC Two - Title Two.m3u"]
+    hyphen and underscore. Exercises the production helper directly."""
+    assert playlist_filename("Artist A", "Title One") == "Artist A - Title One.m3u"
+    assert playlist_filename("Artist B/C: Two", "Title *Two*") == "Artist BC Two - Title Two.m3u"
+    assert playlist_filename("  padded  ", "  title  ") == "padded - title.m3u"
+    assert playlist_filename("", "") == " - .m3u"
 
 
-def test_long_filenames_are_truncated_to_204_characters(tmp_path):
-    """CURRENT BEHAVIOUR: filename[:200] + '.m3u' yields 204 characters and can
-    leave a doubled extension."""
-    from recommendations.playlist_exporter import export_recommendations_as_playlists as legacy
+def test_long_filenames_are_truncated_to_204_characters():
+    """CURRENT BEHAVIOUR: filename[:200] + '.m3u' yields a 204-character name,
+    cut mid-title.
 
-    artist = "A" * 150
-    title = "B" * 150
-    filename = f"{artist} - {title}.m3u"
-    assert len(filename) > 200
-    truncated = filename[:200] + ".m3u"
-    assert len(truncated) == 204
+    This used to re-implement the formula in the test body and never call the
+    production code at all, so it would have passed with the helper broken. It
+    now exercises the real helper - and doing so disproved the claim it used to
+    carry. A "doubled .m3u" is **impossible**: the sanitiser keeps only
+    alphanumerics, space, hyphen and underscore, so the only dot in the name is
+    the extension the function appends, and when the name exceeds 200
+    characters that extension sits beyond the cut. The inventory said otherwise
+    and has been corrected.
+    """
+    name = playlist_filename("A" * 150, "B" * 150)
+
+    assert len(name) == 204
+    assert name == "A" * 150 + " - " + "B" * 47 + ".m3u"
+    assert name.count(".m3u") == 1
+    assert not name.endswith(".m3u.m3u")
 
 
-def test_output_directory_is_created_for_per_seed(library, service, tmp_path):
+def test_a_doubled_extension_is_unreachable():
+    """Because sanitisation drops '.', no truncated name can end in '.m3u'."""
+    for artist, title in [
+        ("A" * 210, "whatever.m3u"),
+        ("x" * 196, "m3u tail that is long enough to force the cut" * 5),
+        ("." * 300, "." * 300),
+    ]:
+        name = playlist_filename(artist, title)
+        assert name.count(".m3u") == 1, name
+
+
+def test_a_filename_at_the_limit_is_left_alone():
+    """The boundary the truncation branch turns on: >200, not >=200."""
+    artist, title = "A" * 98, "B" * 95
+    name = playlist_filename(artist, title)
+
+    assert len(name) == 200
+    assert not name.endswith(".m3u.m3u")
+
+
+def test_filenames_are_generated_by_the_helper_the_exporter_uses(fixture_library, service, tmp_path):
+    service.export_per_seed(["f01"], str(tmp_path / "out"), 2)
+
+    track = fixture_library.meta_ix.loc["f01"]
+    expected = playlist_filename(track["artist"], track["title"])
+    assert [p.name for p in (tmp_path / "out").glob("*.m3u")] == [expected]
+
+
+def test_output_directory_is_created_for_per_seed(service, tmp_path):
     target = tmp_path / "does" / "not" / "exist"
 
-    service.export_per_seed(SEEDS[:1], str(target), 3)
+    service.export_per_seed(["f01"], str(target), 3)
 
     assert target.is_dir() and list(target.glob("*.m3u"))
 
 
-def test_combined_does_not_create_its_output_directory(library, service, tmp_path):
+def test_combined_does_not_create_its_output_directory(service, tmp_path):
     """CURRENT BEHAVIOUR: export_single_playlist never made the directory, so a
     missing one raises into the tab's 'Export Error' dialog."""
     with pytest.raises(FileNotFoundError):
-        service.export_combined(SEEDS[:1], str(tmp_path / "nope" / "out.m3u"), 3)
+        service.export_combined(["f01"], str(tmp_path / "nope" / "out.m3u"), 3)
 
 
 # --------------------------------------------------------------------------
@@ -227,8 +452,8 @@ def test_combined_does_not_create_its_output_directory(library, service, tmp_pat
 # --------------------------------------------------------------------------
 
 
-def test_per_seed_stats_shape(library, service, tmp_path):
-    result = service.export_per_seed(SEEDS, str(tmp_path / "out"), 5)
+def test_per_seed_stats_shape(service, tmp_path):
+    result = service.export_per_seed(GOLDEN_SEEDS, str(tmp_path / "out"), 5)
 
     assert set(result.as_legacy_stats()) == {
         "total_tracks", "successful", "failed", "playlists_created",
@@ -241,11 +466,11 @@ def test_per_seed_stats_shape(library, service, tmp_path):
     assert result.total_recommendations == 15
 
 
-def test_combined_stats_omit_playlists_created(library, service, tmp_path):
+def test_combined_stats_omit_playlists_created(service, tmp_path):
     """CURRENT BEHAVIOUR, NOT A BUG FIX. This missing key is exactly why
     playlist_export_tab.export_complete raises KeyError in combined mode and the
     user gets no completion dialog. Inventory defect #10."""
-    result = service.export_combined(SEEDS, str(tmp_path / "out.m3u"), 5)
+    result = service.export_combined(GOLDEN_SEEDS, str(tmp_path / "out.m3u"), 5)
 
     stats = result.as_legacy_stats()
     assert "playlists_created" not in stats
@@ -253,29 +478,27 @@ def test_combined_stats_omit_playlists_created(library, service, tmp_path):
         stats["playlists_created"]
 
 
-def test_unknown_track_ids_count_as_failed(library, service, tmp_path):
-    result = service.export_per_seed(
-        ["no-such-track", SEEDS[0]], str(tmp_path / "out"), 3
-    )
+def test_unknown_track_ids_count_as_failed(service, tmp_path):
+    result = service.export_per_seed(["no-such-track", "f01"], str(tmp_path / "out"), 3)
 
     assert result.total_tracks == 2
     assert result.failed == 1
     assert result.successful == 1
 
 
-def test_combined_deduplicates_across_seeds(library, service, tmp_path):
+def test_combined_deduplicates_across_seeds(service, tmp_path):
     out = tmp_path / "out.m3u"
 
-    result = service.export_combined(SEEDS, str(out), 25)
+    result = service.export_combined(GOLDEN_SEEDS, str(out), 5)
 
     paths = [l for l in out.read_text().splitlines() if not l.startswith("#")]
     assert len(paths) == len(set(paths))
     assert result.total_recommendations >= len(paths)
 
 
-def test_result_is_an_export_result(library, service, tmp_path):
-    assert isinstance(service.export_per_seed(SEEDS[:1], str(tmp_path / "a"), 2), ExportResult)
-    assert isinstance(service.export_combined(SEEDS[:1], str(tmp_path / "b.m3u"), 2), ExportResult)
+def test_result_is_an_export_result(service, tmp_path):
+    assert isinstance(service.export_per_seed(["f01"], str(tmp_path / "a"), 2), ExportResult)
+    assert isinstance(service.export_combined(["f01"], str(tmp_path / "b.m3u"), 2), ExportResult)
 
 
 # --------------------------------------------------------------------------
@@ -283,35 +506,29 @@ def test_result_is_an_export_result(library, service, tmp_path):
 # --------------------------------------------------------------------------
 
 
-def test_per_seed_progress_matches_the_legacy_callback_contract(library, service, tmp_path):
+def test_per_seed_progress_matches_the_legacy_callback_contract(fixture_library, service, tmp_path):
     """progress(current, total, "{artist} - {title}") fired BEFORE each seed's
     recommendations are computed, current starting at 1."""
     seen = []
-    legacy_seen = []
 
-    export_recommendations_as_playlists(
-        SEEDS, str(tmp_path / "legacy"), 3, library.meta_ix, library.emb_ix,
-        library.index, progress_callback=lambda c, t, n: legacy_seen.append((c, t, n)),
-    )
     service.export_per_seed(
-        SEEDS, str(tmp_path / "new"), 3, progress=lambda c, t, n: seen.append((c, t, n))
+        GOLDEN_SEEDS, str(tmp_path / "new"), 3, progress=lambda c, t, n: seen.append((c, t, n))
     )
 
-    assert seen == legacy_seen
-    assert seen[0][0] == 1 and seen[-1][0] == 3
-    assert all(t == 3 for _, t, _ in seen)
-    assert " - " in seen[0][2]
+    assert seen == [
+        (1, 3, "Alva Noto - Xerrox"),
+        (2, 3, "Function - Voiceprint"),
+        (3, 3, "Jeff Mills - The Bells"),
+    ]
 
 
-def test_progress_is_optional(library, service, tmp_path):
-    assert service.export_per_seed(SEEDS[:1], str(tmp_path / "out"), 2).successful == 1
+def test_progress_is_optional(service, tmp_path):
+    assert service.export_per_seed(["f01"], str(tmp_path / "out"), 2).successful == 1
 
 
-def test_cancel_event_stops_a_per_seed_export(library, service, tmp_path):
+def test_cancel_event_stops_a_per_seed_export(service, tmp_path):
     """Plumbing for PR 3. The Tkinter tab has no cancel control and passes None,
     so this changes nothing user-visible today."""
-    import threading
-
     cancel = threading.Event()
 
     def progress(current, total, name):
@@ -319,7 +536,7 @@ def test_cancel_event_stops_a_per_seed_export(library, service, tmp_path):
             cancel.set()
 
     result = service.export_per_seed(
-        SEEDS, str(tmp_path / "out"), 3, progress=progress, cancel=cancel
+        GOLDEN_SEEDS, str(tmp_path / "out"), 3, progress=progress, cancel=cancel
     )
 
     assert result.cancelled is True
@@ -327,23 +544,20 @@ def test_cancel_event_stops_a_per_seed_export(library, service, tmp_path):
     assert len(list((tmp_path / "out").glob("*.m3u"))) < 3
 
 
-def test_an_unset_cancel_event_does_not_stop_anything(library, service, tmp_path):
-    import threading
-
+def test_an_unset_cancel_event_does_not_stop_anything(service, tmp_path):
     result = service.export_per_seed(
-        SEEDS, str(tmp_path / "out"), 3, cancel=threading.Event()
+        GOLDEN_SEEDS, str(tmp_path / "out"), 3, cancel=threading.Event()
     )
 
     assert result.cancelled is False
     assert result.successful == 3
 
 
-def test_cancel_event_stops_a_combined_export(library, service, tmp_path):
-    import threading
-
+def test_cancel_event_stops_a_combined_export(service, tmp_path):
     cancel = threading.Event()
+
     result = service.export_combined(
-        SEEDS, str(tmp_path / "out.m3u"), 3,
+        GOLDEN_SEEDS, str(tmp_path / "out.m3u"), 3,
         progress=lambda c, t, n: cancel.set(), cancel=cancel,
     )
 

@@ -21,14 +21,25 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import core.deleted_tracks as deleted_tracks_module
-import core.loader as loader_module
-import core.persistence as persistence_module
-import processing.pipeline as pipeline_module
-from services.indexing_service import IndexingService, IndexResult, ProgressEvent
-from services.settings_store import SettingsStore
+pytest.importorskip("lxml", reason="processing.xml_parser needs lxml to read the fixture XML")
+
+import core.deleted_tracks as deleted_tracks_module  # noqa: E402
+import core.loader as loader_module  # noqa: E402
+import core.persistence as persistence_module  # noqa: E402
+import processing.pipeline as pipeline_module  # noqa: E402
+from services.indexing_service import (  # noqa: E402
+    STATUS_INDEXED,
+    STATUS_NO_EMBEDDINGS,
+    STATUS_UP_TO_DATE,
+    IndexingService,
+    IndexResult,
+    ProgressEvent,
+)
+from services.settings_store import SettingsStore  # noqa: E402
 
 DIM = 8
+
+SEPARATOR = "=" * 50
 
 
 class FakeEmbedder:
@@ -182,29 +193,131 @@ def test_phases_appear_in_pipeline_order(indexing):
 # --------------------------------------------------------------------------
 
 
-def test_event_messages_are_the_exact_lines_the_log_pane_used_to_show(indexing):
-    service, xml, data, _ = indexing
+def timeline(events):
+    """The complete ordered event list: (phase, current, total, message)."""
+    return [(e.phase, e.current, e.total, e.message) for e in events]
+
+
+def data_saved_line():
+    from config import DATA
+
+    return f"   • Data saved to: {DATA}/"
+
+
+def test_a_first_run_emits_exactly_this_ordered_event_list(indexing):
+    """THE COMPLETE, ORDERED timeline - not a subset.
+
+    This test used to assert `"..." in messages` for a dozen strings, which
+    passes even if messages are lost, reordered or duplicated: the log pane is a
+    transcript, and a transcript with the right lines in the wrong order is
+    wrong. Every event, in order, with its phase and its current/total.
+    """
+    service, xml, _, _ = indexing
+
+    _, events = collect(service, xml)
+
+    assert timeline(events) == [
+        ("start", 0, 0, "🎵 Cosine Companion - Incremental Indexing"),
+        ("start", 0, 0, SEPARATOR),
+        ("read_xml", 0, 0, "📖 Reading Rekordbox XML..."),
+        ("read_xml", 0, 0, "   Found 5 tracks in XML"),
+        ("duplicates", 0, 0, "🔍 Checking for duplicate tracks..."),
+        ("duplicates", 0, 0, "   No duplicates found"),
+        ("deleted", 0, 0, "🔍 Checking for previously deleted tracks..."),
+        # "Found N new tracks to process" is absent on a first run: find_new_tracks
+        # returns early WITHOUT reporting when there is no existing data.
+        ("plan", 0, 0, "🎯 Processing 5 new tracks..."),
+        ("embed", 1, 5, "   [  1/5] Artist 1 - Title 1"),
+        ("embed", 2, 5, "   [  2/5] Artist 2 - Title 2"),
+        ("embed", 3, 5, "   [  3/5] Artist 3 - Title 3"),
+        ("embed", 4, 5, "   [  4/5] Artist 4 - Title 4"),
+        ("embed", 5, 5, "   [  5/5] Artist 5 - Title 5"),
+        ("embed", 5, 5, "✨ Generated 5 new embeddings"),
+        ("merge", 0, 0, "🔄 Merging with existing data..."),
+        ("complete", 0, 0, SEPARATOR),
+        ("complete", 0, 0, "✅ Indexing complete!"),
+        ("complete", 0, 0, "   • Total tracks indexed: 5"),
+        ("complete", 0, 0, "   • New tracks added: 5"),
+        ("complete", 0, 0, data_saved_line()),
+        ("complete", 0, 0, "🚀 Ready to use! Run 'python cosine_companion.py ui' to start the application."),
+    ]
+
+
+def test_an_up_to_date_run_emits_exactly_this_ordered_event_list(indexing):
+    service, xml, _, _ = indexing
+    service.run(str(xml), progress=lambda e: None)  # first pass creates data
+
+    _, events = collect(service, xml)
+
+    assert timeline(events) == [
+        ("start", 0, 0, "🎵 Cosine Companion - Incremental Indexing"),
+        ("start", 0, 0, SEPARATOR),
+        ("start", 0, 0, "Found existing data: 5 tracks already indexed"),
+        ("read_xml", 0, 0, "📖 Reading Rekordbox XML..."),
+        ("read_xml", 0, 0, "   Found 5 tracks in XML"),
+        ("duplicates", 0, 0, "🔍 Checking for duplicate tracks..."),
+        ("duplicates", 0, 0, "   No duplicates found"),
+        ("deleted", 0, 0, "🔍 Checking for previously deleted tracks..."),
+        ("plan", 0, 0, "Found 0 new tracks to process"),
+        ("complete", 0, 0, "✅ No new tracks to process! Your index is up to date."),
+    ]
+
+
+def test_a_full_reindex_emits_exactly_this_ordered_event_list(indexing):
+    service, xml, _, _ = indexing
+    service.run(str(xml), progress=lambda e: None)
+
+    _, events = collect(service, xml, force_full=True)
+
+    assert timeline(events)[:4] == [
+        ("start", 0, 0, "🎵 Cosine Companion - Full Reindex"),
+        ("start", 0, 0, SEPARATOR),
+        # No "Found existing data" line: force_full skips load_existing_data.
+        ("start", 0, 0, "🔄 Force full reindex requested - ignoring existing data"),
+        ("read_xml", 0, 0, "📖 Reading Rekordbox XML..."),
+    ]
+    assert timeline(events)[-1] == (
+        "complete", 0, 0,
+        "🚀 Ready to use! Run 'python cosine_companion.py ui' to start the application.",
+    )
+    assert ("embed", 5, 5, "✨ Generated 5 new embeddings") in timeline(events)
+
+
+def test_a_run_where_nothing_can_be_embedded_emits_exactly_this_list(indexing, tmp_path):
+    service, _, _, audio = indexing
+    missing = audio / "gone.mp3"  # never created
+    xml = _write_xml(tmp_path / "allbad.xml", [("3001", "Gone", "C", missing)])
+
+    _, events = collect(service, xml)
+
+    assert timeline(events) == [
+        ("start", 0, 0, "🎵 Cosine Companion - Incremental Indexing"),
+        ("start", 0, 0, SEPARATOR),
+        ("read_xml", 0, 0, "📖 Reading Rekordbox XML..."),
+        ("read_xml", 0, 0, "   Found 1 tracks in XML"),
+        ("duplicates", 0, 0, "🔍 Checking for duplicate tracks..."),
+        ("duplicates", 0, 0, "   No duplicates found"),
+        ("deleted", 0, 0, "🔍 Checking for previously deleted tracks..."),
+        ("plan", 0, 0, "🎯 Processing 1 new tracks..."),
+        ("embed", 1, 1, "   [  1/1] C - Gone"),
+        ("embed", 1, 1, f"      ⚠️  File not found: {missing}"),
+        ("complete", 0, 0, "❌ No new embeddings generated. Check audio paths/codecs."),
+    ]
+
+
+def test_no_message_is_lost_reordered_or_duplicated(indexing):
+    """What the subset assertion could not see: the ordered list above would
+    still contain every expected string if two of them swapped places."""
+    service, xml, _, _ = indexing
 
     _, events = collect(service, xml)
     messages = [e.message for e in events]
 
-    assert messages[0] == "🎵 Cosine Companion - Incremental Indexing"
-    assert messages[1] == "=" * 50
-    assert "📖 Reading Rekordbox XML..." in messages
-    assert "   Found 5 tracks in XML" in messages
-    assert "🔍 Checking for duplicate tracks..." in messages
-    assert "   No duplicates found" in messages
-    assert "🔍 Checking for previously deleted tracks..." in messages
-    # "Found N new tracks to process" comes from core.loader.find_new_tracks,
-    # which returns early WITHOUT reporting when there is no existing data - so
-    # it is absent on a first run. Asserted for a second run below.
-    assert "Found 5 new tracks to process" not in messages
-    assert "🎯 Processing 5 new tracks..." in messages
-    assert "✨ Generated 5 new embeddings" in messages
-    assert "✅ Indexing complete!" in messages
-    assert "   • Total tracks indexed: 5" in messages
-    assert "   • New tracks added: 5" in messages
-    assert "🚀 Ready to use! Run 'python cosine_companion.py ui' to start the application." in messages
+    assert len(messages) == len(set(messages)) + 1  # only SEPARATOR repeats
+    assert messages.count(SEPARATOR) == 2
+    assert messages.index("🎯 Processing 5 new tracks...") < messages.index(
+        "   [  1/5] Artist 1 - Title 1"
+    )
 
 
 def test_per_track_message_keeps_its_exact_padding_and_hyphen(indexing):
@@ -362,8 +475,12 @@ def test_returns_an_index_result(indexing):
     result = service.run(str(xml), progress=lambda e: None)
 
     assert isinstance(result, IndexResult)
+    assert result.status == STATUS_INDEXED
     assert result.total_tracks_indexed == 5
     assert result.new_tracks_added == 5
+    assert result.new_tracks_found == 5
+    assert result.up_to_date is False
+    assert result.failed is False
 
 
 def test_second_run_finds_nothing_new(indexing):
@@ -373,6 +490,76 @@ def test_second_run_finds_nothing_new(indexing):
     result = service.run(str(xml), progress=lambda e: None)
 
     assert result.new_tracks_added == 0
+
+
+# --------------------------------------------------------------------------
+# The two empty outcomes are DIFFERENT
+#
+# Both used to return a bare None from index_library and surface as
+# up_to_date=True, so a run in which new tracks existed and not one of them
+# could be embedded reported itself as a success. PR 3 consumes this API.
+# --------------------------------------------------------------------------
+
+
+def test_an_up_to_date_run_says_up_to_date(indexing):
+    service, xml, _, _ = indexing
+    service.run(str(xml), progress=lambda e: None)
+
+    result = service.run(str(xml), progress=lambda e: None)
+
+    assert result.status == STATUS_UP_TO_DATE
+    assert result.up_to_date is True
+    assert result.failed is False
+    assert result.new_tracks_found == 0
+    assert result.new_tracks_added == 0
+
+
+def test_a_run_where_nothing_could_be_embedded_is_not_up_to_date(indexing, tmp_path):
+    """Three tracks, every file missing. The index gained nothing and the user
+    needs to know - this is a failure, not an up-to-date index."""
+    service, _, data, audio = indexing
+    xml = _write_xml(tmp_path / "allbad.xml", [
+        ("3001", "Gone", "A", audio / "missing1.mp3"),
+        ("3002", "Gone", "B", audio / "missing2.mp3"),
+        ("3003", "Gone", "C", audio / "missing3.mp3"),
+    ])
+
+    result = service.run(str(xml), progress=lambda e: None)
+
+    assert result.status == STATUS_NO_EMBEDDINGS
+    assert result.up_to_date is False
+    assert result.failed is True
+    assert result.new_tracks_found == 3
+    assert result.new_tracks_added == 0
+    assert not (data / "meta.parquet").exists()
+
+
+def test_the_two_empty_outcomes_are_distinguishable(indexing, tmp_path):
+    """The regression itself: these two runs must not compare equal."""
+    service, xml, _, audio = indexing
+    service.run(str(xml), progress=lambda e: None)
+
+    up_to_date = service.run(str(xml), progress=lambda e: None)
+    nothing_embeddable = service.run(
+        str(_write_xml(tmp_path / "bad.xml", [("4001", "Gone", "A", audio / "nope.mp3")])),
+        progress=lambda e: None,
+    )
+
+    assert up_to_date.status != nothing_embeddable.status
+    assert up_to_date.up_to_date and not nothing_embeddable.up_to_date
+    assert nothing_embeddable.failed and not up_to_date.failed
+    assert up_to_date != nothing_embeddable
+
+
+def test_the_service_statuses_match_the_pipelines(indexing):
+    """The service mirrors the constants rather than importing them, so that
+    importing it stays free of Essentia. They must not drift apart."""
+    import processing.pipeline as pipeline
+
+    assert STATUS_INDEXED == pipeline.STATUS_INDEXED
+    assert STATUS_UP_TO_DATE == pipeline.STATUS_UP_TO_DATE
+    assert STATUS_NO_EMBEDDINGS == pipeline.STATUS_NO_EMBEDDINGS
+    assert len({STATUS_INDEXED, STATUS_UP_TO_DATE, STATUS_NO_EMBEDDINGS}) == 3
 
 
 def test_writes_the_four_data_files(indexing):

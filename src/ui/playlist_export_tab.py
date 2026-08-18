@@ -303,7 +303,11 @@ class PlaylistExportTabMixin:
         mode = self.export_selection_var.get()
         
         if mode == "all":
-            count = self.library.track_count
+            # len(meta), not track_count (which counts meta_ix). meta is the
+            # exact table get_export_track_ids reads its ids from, and deletion
+            # leaves it stale - so label and export agree, both showing the
+            # pre-deletion collection until restart. Inventory defect #14.
+            count = len(self.library.meta)
             self.export_selection_info.config(
                 text=f"✓ Will generate playlists for all {count} tracks in your collection",
                 fg="blue"

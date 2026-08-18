@@ -48,6 +48,10 @@ from tkinter import messagebox, filedialog, simpledialog
 RESULTS = []
 CHECKS = []
 
+# Filled in by workflow 22 and read by 22a-22g, which characterise which
+# surfaces refresh after a deletion and which stay stale (inventory defect #14).
+DELETED = {}
+
 
 def check(cid, name):
     def deco(fn):
@@ -326,6 +330,12 @@ def _():
     app.library_listbox.selection_clear(0, tk.END)
     app.library_listbox.selection_set(0)
     victim = app.filtered_library_tracks[0]["track_id"]
+    DELETED.update({
+        "track_id": victim,
+        "artist": app.filtered_library_tracks[0]["artist"],
+        "title": app.filtered_library_tracks[0]["title"],
+        "meta_len_before": len(app.library.meta),
+    })
     app.delete_selected_tracks(); pump()
     assert ("askyesno", "Confirm Deletion") == SCRIPT.calls[0][:2], SCRIPT.calls
     assert app.library.track_count == before - 1, (before, app.library.track_count)
@@ -334,6 +344,72 @@ def _():
     assert victim in json.loads((TMP / "deleted_tracks.json").read_text())
     assert len(LibrarySession.load().ids) == before - 1  # persisted to disk
     SCRIPT.answers.pop("askyesno", None)
+
+
+@check("22a", "Post-delete: Library list and stats DO refresh")
+def _():
+    victim = DELETED["track_id"]
+    app.refresh_library(); pump()
+    assert victim not in [t["track_id"] for t in app.library_tracks]
+    assert victim not in app.library.meta_ix.index
+    assert app.library_stats_label.cget("text").startswith(f"{app.library.track_count} ")
+
+
+@check("22b", "Post-delete: Explore picker is STALE - still offers the deleted track")
+def _():
+    victim = DELETED["track_id"]
+    meta = app.library.meta
+    assert victim in list(meta["track_id"].values), "meta was rebuilt; it must stay stale"
+    q = str(DELETED["title"]).lower()
+    m = meta[(meta["artist"].str.lower().str.contains(q, na=False, regex=False))
+             | (meta["title"].str.lower().str.contains(q, na=False, regex=False))].head(50)
+    assert victim in list(m["track_id"].values), "the picker no longer offers the deleted track"
+    try:
+        app.library.meta_ix.loc[victim]
+    except KeyError:
+        pass
+    else:
+        raise AssertionError("meta_ix still holds the deleted track")
+
+
+@check("22c", "Post-delete: all-tracks count label is STALE")
+def _():
+    app.export_selection_var.set("all")
+    app.on_export_selection_change(); pump()
+    n = DELETED["meta_len_before"]
+    assert app.export_selection_info.cget("text") == (
+        f"✓ Will generate playlists for all {n} tracks in your collection"
+    ), app.export_selection_info.cget("text")
+    assert n == app.library.track_count + 1
+    app.export_selection_var.set("manual"); app.on_export_selection_change(); pump()
+
+
+@check("22d", "Post-delete: all-tracks export id list is STALE and the id is skipped")
+def _():
+    app.export_selection_var.set("all")
+    ids = app.get_export_track_ids()
+    app.export_selection_var.set("manual"); app.on_export_selection_change(); pump()
+    assert DELETED["track_id"] in ids, "the stale id list no longer contains the deleted track"
+    assert len(ids) == DELETED["meta_len_before"]
+
+
+@check("22e", "Post-delete: a Set Creator anchor on the deleted track disappears")
+def _():
+    app.anchor_tracks.clear()
+    app.anchor_tracks[1] = DELETED["track_id"]
+    app.update_anchor_listbox(); pump()
+    assert rows(app.anchor_listbox) == [], rows(app.anchor_listbox)
+    app.anchor_tracks.clear(); app.update_anchor_listbox(); pump()
+
+
+@check("22f", "Post-delete: reload() is what finally refreshes meta")
+def _():
+    victim = DELETED["track_id"]
+    assert victim in list(app.library.meta["track_id"].values)
+    app.library.reload()
+    assert victim not in list(app.library.meta["track_id"].values)
+    assert len(app.library.meta) == app.library.track_count
+    app.refresh_library(); pump()
 
 
 @check(23, "Export: TrackSelectorDialog multi-select -> selection list + info label")
@@ -368,8 +444,12 @@ def _():
 def _():
     app.export_selection_var.set("all")
     app.on_export_selection_change(); pump()
-    n = app.library.track_count
+    # len(meta), NOT track_count: the label must describe the same table
+    # get_export_track_ids reads from, including after a delete has made it
+    # stale (inventory defect #14).
+    n = len(app.library.meta)
     assert app.export_selection_info.cget("text") == f"✓ Will generate playlists for all {n} tracks in your collection"
+    assert app.get_export_track_ids() == list(app.library.meta["track_id"].values)
     app.export_selection_var.set("manual"); app.on_export_selection_change(); pump()
 
 
@@ -698,7 +778,7 @@ def main():
     startup = time.time() - t0
     pump(5)
     for cid, name, fn in CHECKS:
-        if only and cid not in only:
+        if only and str(cid) not in only:
             continue
         try:
             fn()
@@ -710,7 +790,13 @@ def main():
 
     print("\n| # | Workflow | Result |")
     print("|---|---|---|")
-    for cid, name, status, detail in sorted(RESULTS):
+    def order(row):
+        """Sort '22a' after 22: numeric prefix first, then any suffix."""
+        cid = str(row[0])
+        digits = "".join(c for c in cid if c.isdigit())
+        return (int(digits or 0), cid)
+
+    for cid, name, status, detail in sorted(RESULTS, key=order):
         mark = "PASS" if status == "PASS" else f"**FAIL** {detail}"
         print(f"| {cid} | {name} | {mark} |")
     failed = [r for r in RESULTS if r[2] != "PASS"]

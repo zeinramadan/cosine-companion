@@ -1,74 +1,160 @@
-"""Characterisation tests for SetBuilder.
+"""Characterisation tests for SetBuilder, pinned to committed golden sequences.
 
-SetBuilder wraps recommendations.set_generator.generate_set, which the Set
-Creator tab called directly. The plan sketched
-``.build(seed_track_id, length, **params)`` but also said to "mirror the current
-set_generator signature exactly; read it before designing" - and generate_set
-takes {position: track_id} anchors, not a single seed, and returns SetTrack
-objects carrying position / is_anchor / icon / display_name that a
-Recommendation cannot express. The mirroring instruction wins, because it is the
-behaviour-preserving reading. Recorded in the PR description.
+**Why golden values.** The first version of this file built its "expected" set
+by calling ``generate_set`` - the function ``SetBuilder.build`` wraps. Every
+assertion was ``f(x) == f(x)``, so it would have passed unchanged if the
+transition scoring, the candidate pool or the anchor placement changed. That is
+a tautology, and this PR exists to be a baseline.
 
-Assertions run against the real 1,307-track library; generate_set is
-deterministic given its inputs.
+The expectations now come from ``golden/set_builder_*.json``: for fixed anchors,
+the exact ordered ``SetTrack`` sequence, including position, is_anchor, score,
+artist, title, the rendered ``display_name`` and the icon.
+``test_golden_values_actually_fail.py`` proves these goldens are discriminating.
+
+SetBuilder wraps ``recommendations.set_generator.generate_set``, which the Set
+Creator tab called directly. The plan sketched ``.build(seed_track_id, length,
+**params)`` but also said to "mirror the current set_generator signature
+exactly; read it before designing" - and generate_set takes {position:
+track_id} anchors, not a single seed, and returns SetTrack objects carrying
+position / is_anchor / icon / display_name that a Recommendation cannot
+express. The mirroring instruction wins, because it is the behaviour-preserving
+reading. Recorded in the PR description.
 """
 
 import pytest
 
-from config import DATA
+from fixture_library import load_golden
 from recommendations.models import SetTrack
-from recommendations.set_generator import generate_set
-from services.library_session import LibrarySession
 from services.set_builder import SetBuilder
 
-ANCHOR = "64638770"   # Boris S. - Compression
-ANCHOR_2 = "24614611"  # Lars Huismann - Superfunk 1
+FLOAT_TOLERANCE = 1e-6
+
+ANCHOR = "f01"
+ANCHOR_2 = "f06"
+
+REAL_ANCHOR = "64638770"   # Boris S. - Compression
+REAL_ANCHOR_2 = "24614611"  # Lars Huismann - Superfunk 1
+
+GOLDEN = load_golden("set_builder_fixture")
+GOLDEN_REAL = load_golden("set_builder_real")
 
 
-@pytest.fixture(scope="module")
-def library():
-    return LibrarySession.load(DATA)
+@pytest.fixture
+def builder(fixture_library):
+    return SetBuilder(fixture_library)
 
 
-@pytest.fixture(scope="module")
-def builder(library):
-    return SetBuilder(library)
+@pytest.fixture
+def real_builder(real_library):
+    return SetBuilder(real_library)
 
 
-def _current_ui_path(library, anchors, total, exclude=None):
-    """The exact call the Set Creator tab made before this service existed."""
-    return generate_set(
-        anchors, total, library.meta_ix, library.emb_ix, library.index,
-        exclude_tracks=exclude,
-    )
+def assert_matches_golden(got, case):
+    expected = case["tracks"]
+
+    assert [t.track_id for t in got] == [e["track_id"] for e in expected]
+    assert [t.position for t in got] == [e["position"] for e in expected]
+    assert [t.is_anchor for t in got] == [e["is_anchor"] for e in expected]
+    assert [t.artist for t in got] == [e["artist"] for e in expected]
+    assert [t.title for t in got] == [e["title"] for e in expected]
+    assert [t.display_name for t in got] == [e["display_name"] for e in expected]
+    assert [t.icon for t in got] == [e["icon"] for e in expected]
+
+    for t, e in zip(got, expected):
+        assert t.score == pytest.approx(e["score"], abs=FLOAT_TOLERANCE), t.track_id
 
 
-def test_matches_the_current_ui_path_exactly(library, builder):
-    expected = _current_ui_path(library, {3: ANCHOR}, 6)
-
-    got = builder.build({3: ANCHOR}, 6)
-
-    assert [t.track_id for t in got] == [t.track_id for t in expected]
-    assert [t.position for t in got] == [t.position for t in expected]
-    assert [t.score for t in got] == [t.score for t in expected]
-    assert [t.is_anchor for t in got] == [t.is_anchor for t in expected]
+def run_case(builder, case):
+    anchors = {int(k): v for k, v in case["anchors"].items()}
+    return builder.build(anchors, case["total"], exclude_tracks=case.get("exclude"))
 
 
-def test_matches_the_current_ui_path_with_several_anchors(library, builder):
-    anchors = {1: ANCHOR, 5: ANCHOR_2}
-    expected = _current_ui_path(library, anchors, 8)
+# --------------------------------------------------------------------------
+# Golden: exact generated sequences
+# --------------------------------------------------------------------------
 
-    got = builder.build(anchors, 8)
 
-    assert [(t.position, t.track_id, t.score) for t in got] == [
-        (t.position, t.track_id, t.score) for t in expected
-    ]
+@pytest.mark.parametrize("name", sorted(GOLDEN))
+def test_generated_set_matches_the_golden_sequence(builder, name):
+    case = GOLDEN[name]
+
+    got = run_case(builder, case)
+
+    assert_matches_golden(got, case)
+    assert len(got) == case["total"]
+
+
+@pytest.mark.parametrize("name", sorted(GOLDEN_REAL))
+def test_generated_set_matches_the_golden_sequence_on_the_real_library(real_builder, name):
+    case = GOLDEN_REAL[name]
+
+    got = run_case(real_builder, case)
+
+    assert_matches_golden(got, case)
+
+
+def test_the_golden_sets_are_not_all_anchors(builder):
+    """Guard the guard: a golden file of nothing but anchors would pin the
+    placement and none of the generation."""
+    generated = [t for t in run_case(builder, GOLDEN["two_anchors"]) if not t.is_anchor]
+
+    assert len(generated) >= 5
+
+
+# --------------------------------------------------------------------------
+# The rendered row, from the golden display names
+# --------------------------------------------------------------------------
+
+
+def test_rendered_set_line_matches_the_golden_strings(builder):
+    """The exact string format from set_creator_tab.update_set_listbox."""
+    case = GOLDEN["single_anchor_mid"]
+    got = run_case(builder, case)
+
+    lines = []
+    for track in got:
+        score_text = ""
+        if not track.is_anchor and track.score > 0:
+            score_text = f" ({track.score:.0%} match)"
+        lines.append(f"[{track.position:2d}] {track.icon} {track.display_name}{score_text}")
+
+    expected = []
+    for e in case["tracks"]:
+        score_text = ""
+        if not e["is_anchor"] and e["score"] > 0:
+            score_text = f" ({e['score']:.0%} match)"
+        expected.append(f"[{e['position']:2d}] {e['icon']} {e['display_name']}{score_text}")
+
+    assert lines == expected
+    assert lines[2].startswith("[ 3] 🔒 Alva Noto – Xerrox")
+    assert lines[0].startswith("[ 1] 🤖 ")
+    assert "match)" in lines[0]
+
+
+def test_unfillable_slots_render_the_unknown_title_suffix(builder):
+    """CURRENT BEHAVIOUR. When no candidate survives filtering the slot gets
+    artist='No suitable track found', an EMPTY title and track_id='empty_{n}' -
+    and SetTrack.display_name (models.py:23) then appends '– (Unknown Title)'
+    because the title is falsy. The inventory used to claim a bare trailing en
+    dash; it does not render that way."""
+    got = run_case(builder, GOLDEN["unfillable"])
+
+    placeholders = [t for t in got if t.track_id.startswith("empty_")]
+    assert len(placeholders) == 3
+    assert placeholders[0].artist == "No suitable track found"
+    assert placeholders[0].title == ""
+    assert placeholders[0].score == 0.0
+    assert placeholders[0].display_name == "No suitable track found – (Unknown Title)"
+    assert not placeholders[0].display_name.endswith("– ")
+
+
+# --------------------------------------------------------------------------
+# Structure and validation
+# --------------------------------------------------------------------------
 
 
 def test_returns_set_tracks_not_recommendations(builder):
-    got = builder.build({1: ANCHOR}, 4)
-
-    assert all(isinstance(t, SetTrack) for t in got)
+    assert all(isinstance(t, SetTrack) for t in builder.build({1: ANCHOR}, 4))
 
 
 def test_produces_the_requested_length(builder):
@@ -88,13 +174,13 @@ def test_anchors_land_on_their_positions_and_are_marked(builder):
 
 
 def test_no_track_is_used_twice(builder):
-    got = builder.build({1: ANCHOR}, 20)
+    got = builder.build({1: ANCHOR}, 12)
 
     ids = [t.track_id for t in got if not t.track_id.startswith("empty_")]
     assert len(ids) == len(set(ids))
 
 
-def test_generated_tracks_carry_the_transition_score(library, builder):
+def test_generated_tracks_carry_the_transition_score(fixture_library, builder):
     """0.8 * cos(prev -> candidate) + 0.2 * cos(candidate -> next), from
     recommendations.transitions.calculate_transition_score.
 
@@ -110,34 +196,34 @@ def test_generated_tracks_carry_the_transition_score(library, builder):
     second = next(t for t in got if t.position == 2)
     third = next(t for t in got if t.position == 3)
     assert second.score == pytest.approx(
-        calculate_transition_score(ANCHOR, second.track_id, ANCHOR_2, library.emb_ix)
+        calculate_transition_score(ANCHOR, second.track_id, ANCHOR_2, fixture_library.emb_ix)
     )
     # ...and position 3 then looks back at 2 and forward to the anchor at 4.
     assert third.score == pytest.approx(
-        calculate_transition_score(second.track_id, third.track_id, ANCHOR_2, library.emb_ix)
+        calculate_transition_score(second.track_id, third.track_id, ANCHOR_2, fixture_library.emb_ix)
     )
 
 
-def test_transition_scoring_weights_are_eighty_twenty(library):
+def test_transition_scoring_weights_are_eighty_twenty(fixture_library):
     """Pins the weighting itself, independent of any particular set."""
     import numpy as np
     from recommendations.engine import vector_for
     from recommendations.transitions import calculate_transition_score
 
-    a, b, c = library.ids[0], library.ids[1], library.ids[2]
-    va, vb, vc = (vector_for(t, library.emb_ix) for t in (a, b, c))
+    a, b, c = fixture_library.ids[0], fixture_library.ids[1], fixture_library.ids[2]
+    va, vb, vc = (vector_for(t, fixture_library.emb_ix) for t in (a, b, c))
 
-    assert calculate_transition_score(a, b, c, library.emb_ix) == pytest.approx(
+    assert calculate_transition_score(a, b, c, fixture_library.emb_ix) == pytest.approx(
         0.8 * float(np.dot(va, vb)) + 0.2 * float(np.dot(vb, vc))
     )
     # With no next track it is the plain cosine.
-    assert calculate_transition_score(a, b, None, library.emb_ix) == pytest.approx(
+    assert calculate_transition_score(a, b, None, fixture_library.emb_ix) == pytest.approx(
         float(np.dot(va, vb))
     )
 
 
-def test_per_hop_candidate_pool_is_topk_100_final_top_50(library, builder, monkeypatch):
-    """set_generator.py:90-106 requests topk=100, final_top=50 for every hop."""
+def test_per_hop_candidate_pool_is_topk_100_final_top_50(builder, monkeypatch):
+    """set_generator.py requests topk=100, final_top=50 for every hop."""
     import recommendations.set_generator as sg
 
     calls = []
@@ -176,40 +262,5 @@ def test_rejects_an_anchor_beyond_the_set_length(builder):
         builder.build({9: ANCHOR}, 5)
 
 
-def test_unfillable_slots_become_placeholders(library):
-    """CURRENT BEHAVIOUR. When no candidate survives filtering, the slot is
-    filled with artist='No suitable track found' and track_id='empty_{n}',
-    which the tab renders and its clipboard export then skips."""
-    small = LibrarySession.load(DATA)
-    builder = SetBuilder(small)
-    everything = [t for t in small.ids if t != ANCHOR]
-
-    got = builder.build({1: ANCHOR}, 3, exclude_tracks=everything)
-
-    placeholders = [t for t in got if t.track_id.startswith("empty_")]
-    assert len(placeholders) == 2
-    assert placeholders[0].artist == "No suitable track found"
-    assert placeholders[0].title == ""
-    assert placeholders[0].score == 0.0
-    assert placeholders[0].display_name == "No suitable track found – (Unknown Title)"
-
-
-def test_rendered_set_line_is_unchanged(builder):
-    """The exact string format from set_creator_tab.update_set_listbox."""
-    got = builder.build({3: ANCHOR}, 4)
-
-    lines = []
-    for track in got:
-        score_text = ""
-        if not track.is_anchor and track.score > 0:
-            score_text = f" ({track.score:.0%} match)"
-        lines.append(f"[{track.position:2d}] {track.icon} {track.display_name}{score_text}")
-
-    assert lines[2].startswith("[ 3] 🔒 ")
-    assert lines[0].startswith("[ 1] 🤖 ")
-    assert "match)" in lines[0]
-    assert " – " in lines[0]
-
-
-def test_reads_the_library_live(library, builder):
-    assert builder.library is library
+def test_reads_the_library_live(fixture_library, builder):
+    assert builder.library is fixture_library

@@ -1,0 +1,420 @@
+{
+  "limits": {
+    "1": [
+      "f02"
+    ],
+    "3": [
+      "f02",
+      "f03",
+      "f09"
+    ],
+    "5": [
+      "f02",
+      "f03",
+      "f09",
+      "f11",
+      "f05"
+    ]
+  },
+  "seeds": {
+    "f01": [
+      {
+        "artist": "Blawan",
+        "bpm": 130.0,
+        "bpm_score": 1.0,
+        "cosine": 0.9669962525367737,
+        "key": "9A",
+        "key_score": 0.8,
+        "score": 0.9368973767757416,
+        "title": "Why They Hide",
+        "track_id": "f02"
+      },
+      {
+        "artist": "Claro Intelecto",
+        "bpm": 124.0,
+        "bpm_score": 1.0,
+        "cosine": 0.8978942036628723,
+        "key": "8B",
+        "key_score": 0.6,
+        "score": 0.8485259425640106,
+        "title": "Peace Of Mind",
+        "track_id": "f03"
+      },
+      {
+        "artist": "Insolate",
+        "bpm": 133.0,
+        "bpm_score": 1.0,
+        "cosine": 0.3763177990913391,
+        "key": "7A",
+        "key_score": 0.8,
+        "score": 0.5234224593639374,
+        "title": "Rotor",
+        "track_id": "f09"
+      },
+      {
+        "artist": "Kangding Ray",
+        "bpm": 129.0,
+        "bpm_score": 1.0,
+        "cosine": 0.3562617897987366,
+        "key": "10A",
+        "key_score": 0.4,
+        "score": 0.4293832528591156,
+        "title": "Amber Decay",
+        "track_id": "f11"
+      },
+      {
+        "artist": "Efdemin",
+        "bpm": 132.0,
+        "bpm_score": 1.0,
+        "cosine": 0.3562617897987366,
+        "key": "5A",
+        "key_score": 0.0,
+        "score": 0.3493832528591156,
+        "title": "Decay",
+        "track_id": "f05"
+      },
+      {
+        "artist": "Lucy",
+        "bpm": 126.0,
+        "bpm_score": 1.0,
+        "cosine": 0.2272874116897583,
+        "key": "8A",
+        "key_score": 1.0,
+        "score": 0.45910118818283085,
+        "title": "Follow The Leader",
+        "track_id": "f12"
+      },
+      {
+        "artist": "Donato Dozzy",
+        "bpm": 127.0,
+        "bpm_score": 1.0,
+        "cosine": 0.2171463966369629,
+        "key": "8A",
+        "key_score": 1.0,
+        "score": 0.452002477645874,
+        "title": "Menta",
+        "track_id": "f04"
+      },
+      {
+        "artist": "Jeff Mills",
+        "bpm": 150.0,
+        "bpm_score": 0.0,
+        "cosine": 0.19695964455604553,
+        "key": "11B",
+        "key_score": 0.0,
+        "score": 0.13787175118923187,
+        "title": "The Bells",
+        "track_id": "f10"
+      },
+      {
+        "artist": "Grouper",
+        "bpm": 64.0,
+        "bpm_score": 0.7,
+        "cosine": 0.14757569134235382,
+        "key": "8A",
+        "key_score": 1.0,
+        "score": 0.37330298393964767,
+        "title": "Alien Observer",
+        "track_id": "f07"
+      },
+      {
+        "artist": "Huerco S.",
+        "bpm": 115.0,
+        "bpm_score": 0.0,
+        "cosine": 0.04495517164468765,
+        "key": "3B",
+        "key_score": 0.0,
+        "score": 0.03146862015128136,
+        "title": "Plucked",
+        "track_id": "f08"
+      },
+      {
+        "artist": "Function",
+        "bpm": 140.0,
+        "bpm_score": 0.0,
+        "cosine": 0.01149425283074379,
+        "key": "12A",
+        "key_score": 0.0,
+        "score": 0.008045976981520653,
+        "title": "Voiceprint",
+        "track_id": "f06"
+      }
+    ],
+    "f06": [
+      {
+        "artist": "Grouper",
+        "bpm": 64.0,
+        "bpm_score": 0.0,
+        "cosine": 0.9592419862747192,
+        "key": "8A",
+        "key_score": 0.0,
+        "score": 0.6714693903923035,
+        "title": "Alien Observer",
+        "track_id": "f07"
+      },
+      {
+        "artist": "Huerco S.",
+        "bpm": 115.0,
+        "bpm_score": 0.0,
+        "cosine": 0.32592499256134033,
+        "key": "3B",
+        "key_score": 0.0,
+        "score": 0.22814749479293822,
+        "title": "Plucked",
+        "track_id": "f08"
+      },
+      {
+        "artist": "Donato Dozzy",
+        "bpm": 127.0,
+        "bpm_score": 0.0,
+        "cosine": 0.30857646465301514,
+        "key": "8A",
+        "key_score": 0.0,
+        "score": 0.21600352525711058,
+        "title": "Menta",
+        "track_id": "f04"
+      },
+      {
+        "artist": "Efdemin",
+        "bpm": 132.0,
+        "bpm_score": 1.0,
+        "cosine": 0.24174907803535461,
+        "key": "5A",
+        "key_score": 0.0,
+        "score": 0.26922435462474825,
+        "title": "Decay",
+        "track_id": "f05"
+      },
+      {
+        "artist": "Lucy",
+        "bpm": 126.0,
+        "bpm_score": 0.0,
+        "cosine": 0.21592304110527039,
+        "key": "8A",
+        "key_score": 0.0,
+        "score": 0.15114612877368927,
+        "title": "Follow The Leader",
+        "track_id": "f12"
+      },
+      {
+        "artist": "Insolate",
+        "bpm": 133.0,
+        "bpm_score": 1.0,
+        "cosine": 0.2063678503036499,
+        "key": "7A",
+        "key_score": 0.0,
+        "score": 0.24445749521255491,
+        "title": "Rotor",
+        "track_id": "f09"
+      },
+      {
+        "artist": "Blawan",
+        "bpm": 130.0,
+        "bpm_score": 0.0,
+        "cosine": 0.15268363058567047,
+        "key": "9A",
+        "key_score": 0.0,
+        "score": 0.10687854140996933,
+        "title": "Why They Hide",
+        "track_id": "f02"
+      },
+      {
+        "artist": "Jeff Mills",
+        "bpm": 150.0,
+        "bpm_score": 0.0,
+        "cosine": 0.14224863052368164,
+        "key": "11B",
+        "key_score": 0.0,
+        "score": 0.09957404136657715,
+        "title": "The Bells",
+        "track_id": "f10"
+      },
+      {
+        "artist": "Claro Intelecto",
+        "bpm": 124.0,
+        "bpm_score": 0.0,
+        "cosine": 0.09380985051393509,
+        "key": "8B",
+        "key_score": 0.0,
+        "score": 0.06566689535975456,
+        "title": "Peace Of Mind",
+        "track_id": "f03"
+      },
+      {
+        "artist": "Kangding Ray",
+        "bpm": 129.0,
+        "bpm_score": 0.0,
+        "cosine": 0.025447271764278412,
+        "key": "10A",
+        "key_score": 0.4,
+        "score": 0.0978130902349949,
+        "title": "Amber Decay",
+        "track_id": "f11"
+      },
+      {
+        "artist": "Alva Noto",
+        "bpm": 128.0,
+        "bpm_score": 0.0,
+        "cosine": 0.01149425283074379,
+        "key": "8A",
+        "key_score": 0.0,
+        "score": 0.008045976981520653,
+        "title": "Xerrox",
+        "track_id": "f01"
+      }
+    ],
+    "f10": [
+      {
+        "artist": "Kangding Ray",
+        "bpm": 129.0,
+        "bpm_score": 0.0,
+        "cosine": 0.8963279724121094,
+        "key": "10A",
+        "key_score": 0.0,
+        "score": 0.6274295806884765,
+        "title": "Amber Decay",
+        "track_id": "f11"
+      },
+      {
+        "artist": "Insolate",
+        "bpm": 133.0,
+        "bpm_score": 0.0,
+        "cosine": 0.32357513904571533,
+        "key": "7A",
+        "key_score": 0.0,
+        "score": 0.2265025973320007,
+        "title": "Rotor",
+        "track_id": "f09"
+      },
+      {
+        "artist": "Lucy",
+        "bpm": 126.0,
+        "bpm_score": 0.0,
+        "cosine": 0.2380082756280899,
+        "key": "8A",
+        "key_score": 0.0,
+        "score": 0.16660579293966293,
+        "title": "Follow The Leader",
+        "track_id": "f12"
+      },
+      {
+        "artist": "Grouper",
+        "bpm": 64.0,
+        "bpm_score": 0.0,
+        "cosine": 0.23414644598960876,
+        "key": "8A",
+        "key_score": 0.0,
+        "score": 0.1639025121927261,
+        "title": "Alien Observer",
+        "track_id": "f07"
+      },
+      {
+        "artist": "Alva Noto",
+        "bpm": 128.0,
+        "bpm_score": 0.0,
+        "cosine": 0.19695964455604553,
+        "key": "8A",
+        "key_score": 0.0,
+        "score": 0.13787175118923187,
+        "title": "Xerrox",
+        "track_id": "f01"
+      },
+      {
+        "artist": "Blawan",
+        "bpm": 130.0,
+        "bpm_score": 0.0,
+        "cosine": 0.14535048604011536,
+        "key": "9A",
+        "key_score": 0.0,
+        "score": 0.10174534022808074,
+        "title": "Why They Hide",
+        "track_id": "f02"
+      },
+      {
+        "artist": "Function",
+        "bpm": 140.0,
+        "bpm_score": 0.0,
+        "cosine": 0.14224864542484283,
+        "key": "12A",
+        "key_score": 0.0,
+        "score": 0.09957405179738998,
+        "title": "Voiceprint",
+        "track_id": "f06"
+      },
+      {
+        "artist": "Huerco S.",
+        "bpm": 115.0,
+        "bpm_score": 0.0,
+        "cosine": 0.13908717036247253,
+        "key": "3B",
+        "key_score": 0.0,
+        "score": 0.09736101925373077,
+        "title": "Plucked",
+        "track_id": "f08"
+      },
+      {
+        "artist": "Efdemin",
+        "bpm": 132.0,
+        "bpm_score": 0.0,
+        "cosine": 0.13323794305324554,
+        "key": "5A",
+        "key_score": 0.0,
+        "score": 0.09326656013727187,
+        "title": "Decay",
+        "track_id": "f05"
+      },
+      {
+        "artist": "Claro Intelecto",
+        "bpm": 124.0,
+        "bpm_score": 0.0,
+        "cosine": 0.06378880143165588,
+        "key": "8B",
+        "key_score": 0.0,
+        "score": 0.044652161002159116,
+        "title": "Peace Of Mind",
+        "track_id": "f03"
+      },
+      {
+        "artist": "Donato Dozzy",
+        "bpm": 127.0,
+        "bpm_score": 0.0,
+        "cosine": 0.0543992705643177,
+        "key": "8A",
+        "key_score": 0.0,
+        "score": 0.03807948939502239,
+        "title": "Menta",
+        "track_id": "f04"
+      }
+    ]
+  },
+  "truncations": {
+    "1": [
+      "f02"
+    ],
+    "11": [
+      "f02",
+      "f03",
+      "f09",
+      "f11",
+      "f05",
+      "f12",
+      "f04",
+      "f10",
+      "f07",
+      "f08",
+      "f06"
+    ],
+    "3": [
+      "f02",
+      "f03",
+      "f09"
+    ],
+    "5": [
+      "f02",
+      "f03",
+      "f09",
+      "f12",
+      "f04"
+    ]
+  }
+}

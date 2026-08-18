@@ -12,8 +12,34 @@ from core.loader import load_existing_data, find_new_tracks
 from core.persistence import merge_embeddings, save_index_data
 from core.duplicates import remove_simple_duplicates
 from core.deleted_tracks import filter_deleted_tracks
-from processing.embeddings import DiscogsEffnetEmbedder
 from processing.xml_parser import read_rekordbox_xml
+
+# Bound on first use by _load_embedder(). NOT imported at module scope:
+# processing.embeddings does `import essentia.standard`, which loads TensorFlow,
+# and nothing that merely imports this module should pay that. It stays a module
+# attribute so `monkeypatch.setattr(pipeline, "DiscogsEffnetEmbedder", Fake)`
+# remains the seam the tests and tests/manual/real_indexing.py use.
+DiscogsEffnetEmbedder = None
+
+
+# index_library's three terminal outcomes. Both "nothing to do" outcomes used to
+# return a bare None, so a caller could not tell "your index is already up to
+# date" (success) from "there were new tracks and not one of them could be
+# embedded" (failure). The CLI never read the return value, but the service
+# layer does, and PR 3 would otherwise report a failed run as a success.
+STATUS_INDEXED = "indexed"
+STATUS_UP_TO_DATE = "up_to_date"
+STATUS_NO_EMBEDDINGS = "no_embeddings"
+
+
+def _load_embedder():
+    """Return the embedder class, importing Essentia the first time only."""
+    global DiscogsEffnetEmbedder
+    if DiscogsEffnetEmbedder is None:
+        from processing.embeddings import DiscogsEffnetEmbedder as _Embedder
+
+        DiscogsEffnetEmbedder = _Embedder
+    return DiscogsEffnetEmbedder
 
 
 def make_reporter(progress=None):
@@ -48,6 +74,12 @@ def index_library(rb_xml: str, force_full: bool = False, sample_size: int | None
         cancel_check: Optional callable that returns True if cancellation is requested
         progress: Optional callable(phase, current, total, message). When given,
             messages are reported through it instead of being printed.
+
+    Returns:
+        A summary dict whose ``status`` is one of ``STATUS_INDEXED`` (work was
+        done), ``STATUS_UP_TO_DATE`` (no new tracks) or ``STATUS_NO_EMBEDDINGS``
+        (new tracks existed but none could be embedded). Only the first carries
+        ``total_tracks_indexed`` / ``new_tracks_added``.
     """
     report = make_reporter(progress)
     printing = progress is None
@@ -97,11 +129,11 @@ def index_library(rb_xml: str, force_full: bool = False, sample_size: int | None
     
     if len(new_tracks) == 0:
         report("complete", "✅ No new tracks to process! Your index is up to date.")
-        return
+        return {"status": STATUS_UP_TO_DATE, "new_tracks_found": 0}
     
     # Process new tracks only
     report("plan", f"🎯 Processing {len(new_tracks)} new tracks...")
-    embedder = DiscogsEffnetEmbedder()
+    embedder = _load_embedder()()
     new_vectors = []
     new_track_ids = []
     total = len(new_tracks)
@@ -147,7 +179,7 @@ def index_library(rb_xml: str, force_full: bool = False, sample_size: int | None
     
     if not new_vectors:
         report("complete", "❌ No new embeddings generated. Check audio paths/codecs.")
-        return
+        return {"status": STATUS_NO_EMBEDDINGS, "new_tracks_found": total}
     
     report("embed", f"✨ Generated {len(new_vectors)} new embeddings", current=total, total=total)
     
@@ -215,6 +247,8 @@ def index_library(rb_xml: str, force_full: bool = False, sample_size: int | None
     report("complete", "🚀 Ready to use! Run 'python cosine_companion.py ui' to start the application.")
 
     return {
+        "status": STATUS_INDEXED,
         "total_tracks_indexed": len(combined_track_ids),
         "new_tracks_added": len(new_track_ids),
+        "new_tracks_found": total,
     }

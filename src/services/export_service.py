@@ -1,17 +1,28 @@
 #!/usr/bin/env python3
 """ExportService - M3U playlist writing.
 
-Replaces the two entry points ``ui/playlist_export_tab.py`` called directly,
-``recommendations.playlist_exporter.export_recommendations_as_playlists`` and
-``export_single_playlist``. Those functions are deliberately LEFT IN PLACE and
-untouched: they are no longer reachable from the UI, but
-``tests/services/test_export_service.py`` diffs this service's output against
-them byte-for-byte, which makes them a permanent regression oracle.
+**Orchestration, not reimplementation.** The two export loops live where they
+always did, in ``recommendations.playlist_exporter``; this service captures a
+library snapshot, supplies the progress and cancellation plumbing, calls them
+and adapts their stats dict into an ``ExportResult``. An earlier draft copied
+both loops - the ranking, the statistics, the cancellation points, the filename
+sanitisation and the error handling - and delegated only the final M3U write,
+which left the originals in the source but unreachable and consolidated the
+ranking policy in the service instead of at its source. That is undone: the
+policy is in ``recommendations.ranking`` and the loops have exactly one
+implementation each.
 
-Ranking comes from ExploreSession, so the policy exists once rather than three
-times. File writing still delegates to
-``recommendations.playlist_exporter.create_m3u_playlist``, so the M3U bytes are
-produced by exactly the same code as before.
+**One snapshot per run.** ``export_per_seed`` and ``export_combined`` call
+``LibrarySession.snapshot()`` once at entry and pass that single view all the
+way through ranking and writing. The first draft read ``self.library``'s live
+properties per seed, during recommendation conversion, and again while writing,
+so a concurrent deletion could switch snapshots mid-export - even between the
+three arguments of one ``recommend_for`` call. The legacy worker captured
+``meta_ix``/``emb_ix``/``idx`` once at export start, and so does this.
+
+This does not repair the export/delete race (inventory defect #1); a delete
+during an export still leaves the run finishing against a stale view, with no
+warning. It restores the legacy failure mode instead of a worse one.
 
 Preserved quirks, each pinned by a test:
 
@@ -24,25 +35,29 @@ Preserved quirks, each pinned by a test:
   exact per-mode dict shape so that defect survives the extraction.
 * Combined mode does not create its output directory.
 
-Signature note: the plan's sketch omitted ``recommendations_per_track``, which
-the tab supplies from a combo box; it is a required argument here. The
-``cancel`` parameter is plumbing for PR 3 - the Tkinter tab has no cancel
-control and passes ``None``, so it changes nothing user-visible today.
+Signature notes. The plan's sketch omitted ``recommendations_per_track``, which
+the tab supplies from a combo box; it is a required argument here. The sketch
+also listed ``ExploreSession`` as a collaborator, because at the time the
+ranking policy was to live there; now that it lives in the pure layer the
+service needs only the library, so that parameter is gone. The ``cancel``
+parameter is plumbing for PR 3 - the Tkinter tab has no cancel control and
+passes ``None``, so it changes nothing user-visible today.
 
 This module must never depend on a UI toolkit; see
 tests/test_services_are_ui_free.py, which enforces that with an AST walk.
 """
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from recommendations.playlist_exporter import create_m3u_playlist
+from recommendations.playlist_exporter import (
+    export_recommendations_as_playlists,
+    export_single_playlist,
+)
 
 ProgressCallback = Callable[[int, int, str], None]
 
-TOPK = 500
-FINAL_TOP = 200
+COMBINED_PLAYLIST_NAME = "Cosine Recommendations"
 
 
 @dataclass
@@ -55,6 +70,18 @@ class ExportResult:
     total_recommendations: int = 0
     playlists_created: Optional[int] = None  # None in combined mode
     cancelled: bool = False
+
+    @classmethod
+    def from_stats(cls, stats: Dict[str, Any], cancelled: bool = False) -> "ExportResult":
+        """Adapt an exporter's stats dict. A missing key stays missing."""
+        return cls(
+            total_tracks=stats["total_tracks"],
+            successful=stats["successful"],
+            failed=stats["failed"],
+            total_recommendations=stats["total_recommendations"],
+            playlists_created=stats.get("playlists_created"),
+            cancelled=cancelled,
+        )
 
     def as_legacy_stats(self) -> Dict[str, Any]:
         """Reproduce the exact stats dict the tab consumes, per mode.
@@ -73,13 +100,25 @@ class ExportResult:
         return stats
 
 
+def _cancel_check(cancel):
+    return cancel.is_set if cancel is not None else None
+
+
+def _was_cancelled(cancel) -> bool:
+    """Whether the run stopped early.
+
+    Read from the event rather than returned by the exporters, so their stats
+    dict keeps the exact shape the Tkinter tab consumes.
+    """
+    return cancel is not None and cancel.is_set()
+
+
 class ExportService:
     """Writes recommendation playlists as .m3u files."""
 
-    def __init__(self, library, explore):
-        """Bind to a LibrarySession and the ExploreSession that ranks for it."""
+    def __init__(self, library):
+        """Bind to a LibrarySession. Snapshots are taken per export, not here."""
         self.library = library
-        self.explore = explore
 
     def export_per_seed(
         self,
@@ -90,45 +129,20 @@ class ExportService:
         cancel=None,
     ) -> ExportResult:
         """Write one playlist per seed track into ``out_dir``."""
-        output_path = Path(out_dir)
-        output_path.mkdir(parents=True, exist_ok=True)
+        library = self.library.snapshot()
 
-        result = ExportResult(total_tracks=len(track_ids), playlists_created=0)
+        stats = export_recommendations_as_playlists(
+            track_ids,
+            out_dir,
+            recommendations_per_track,
+            library.meta_ix,
+            library.emb_ix,
+            library.index,
+            progress_callback=progress,
+            cancel_check=_cancel_check(cancel),
+        )
 
-        for i, track_id in enumerate(track_ids, 1):
-            if cancel is not None and cancel.is_set():
-                result.cancelled = True
-                break
-
-            track = self.library.get_track(track_id)
-            if track is None:
-                result.failed += 1
-                continue
-
-            artist = track.get("artist", "Unknown Artist")
-            title = track.get("title", "Unknown Title")
-
-            if progress:
-                progress(i, len(track_ids), f"{artist} - {title}")
-
-            recommendations = self._recommend(track_id, recommendations_per_track)
-            if not recommendations:
-                result.failed += 1
-                continue
-
-            playlist_path = output_path / self._playlist_filename(artist, title)
-            rec_track_ids = [rec.track_id for rec in recommendations]
-
-            try:
-                create_m3u_playlist(rec_track_ids, str(playlist_path), self.library.meta_ix)
-                result.successful += 1
-                result.playlists_created += 1
-                result.total_recommendations += len(rec_track_ids)
-            except Exception as e:
-                print(f"Failed to create playlist for {artist} - {title}: {e}")
-                result.failed += 1
-
-        return result
+        return ExportResult.from_stats(stats, cancelled=_was_cancelled(cancel))
 
     def export_combined(
         self,
@@ -139,59 +153,18 @@ class ExportService:
         cancel=None,
     ) -> ExportResult:
         """Write every seed's recommendations into one de-duplicated playlist."""
-        result = ExportResult(total_tracks=len(track_ids))
-        all_recommendations: List[str] = []
-        seen_tracks = set()
+        library = self.library.snapshot()
 
-        for i, track_id in enumerate(track_ids, 1):
-            if cancel is not None and cancel.is_set():
-                result.cancelled = True
-                break
+        stats = export_single_playlist(
+            track_ids,
+            out_path,
+            COMBINED_PLAYLIST_NAME,
+            library.meta_ix,
+            library.emb_ix,
+            library.index,
+            recommendations_per_track,
+            progress_callback=progress,
+            cancel_check=_cancel_check(cancel),
+        )
 
-            track = self.library.get_track(track_id)
-            if track is None:
-                result.failed += 1
-                continue
-
-            if progress:
-                progress(
-                    i,
-                    len(track_ids),
-                    f"{track.get('artist', 'Unknown Artist')} - {track.get('title', 'Unknown Title')}",
-                )
-
-            recommendations = self._recommend(track_id, recommendations_per_track)
-            if not recommendations:
-                result.failed += 1
-                continue
-
-            result.successful += 1
-
-            for rec in recommendations:
-                if rec.track_id not in seen_tracks:
-                    all_recommendations.append(rec.track_id)
-                    seen_tracks.add(rec.track_id)
-
-        # The legacy function wrote nothing at all when it collected no ids, and
-        # never created the output directory.
-        if all_recommendations:
-            create_m3u_playlist(all_recommendations, out_path, self.library.meta_ix)
-            result.total_recommendations = len(all_recommendations)
-
-        return result
-
-    def _recommend(self, track_id: str, per_track: int):
-        """Rank with the shared policy, then truncate to the user's count."""
-        return self.explore.recommend(track_id, topk=TOPK, final_top=FINAL_TOP)[:per_track]
-
-    @staticmethod
-    def _playlist_filename(artist: str, title: str) -> str:
-        """{safe_artist} - {safe_title}.m3u, truncated to 204 characters."""
-        safe_artist = "".join(c for c in artist if c.isalnum() or c in (' ', '-', '_')).strip()
-        safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).strip()
-        filename = f"{safe_artist} - {safe_title}.m3u"
-
-        # Limit filename length
-        if len(filename) > 200:
-            filename = filename[:200] + ".m3u"
-        return filename
+        return ExportResult.from_stats(stats, cancelled=_was_cancelled(cancel))

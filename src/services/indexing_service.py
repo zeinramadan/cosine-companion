@@ -30,12 +30,26 @@ progress bar determinate with it is PR 3 work.
 
 This module must never depend on a UI toolkit; see
 tests/test_services_are_ui_free.py, which enforces that with an AST walk.
+
+It must also never pull Essentia in at import time. ``processing.pipeline`` is
+imported inside :meth:`IndexingService.run`, not at module scope, because
+``processing/__init__.py`` re-exports ``DiscogsEffnetEmbedder`` and that module
+does ``import essentia.standard``. A module-level import here would drag a
+483 MB TensorFlow dependency into every consumer of the service layer - even
+``services.settings_store``, a 72-line JSON reader - and would break both the
+CI job (which installs only numpy/pandas/pyarrow/pytest) and PR 3's web server.
+``tests/test_services_are_lightweight.py`` enforces that.
 """
 
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-from processing.pipeline import index_library
+# Mirrored from processing.pipeline so that importing this module stays free of
+# Essentia. They are asserted equal to the pipeline's own constants by
+# tests/services/test_indexing_service.py.
+STATUS_INDEXED = "indexed"
+STATUS_UP_TO_DATE = "up_to_date"
+STATUS_NO_EMBEDDINGS = "no_embeddings"
 
 
 @dataclass
@@ -50,11 +64,38 @@ class ProgressEvent:
 
 @dataclass
 class IndexResult:
-    """Outcome of an indexing run."""
+    """Outcome of an indexing run.
 
+    ``status`` distinguishes the pipeline's three terminal outcomes. The two
+    empty ones used to be indistinguishable - both returned ``None`` from
+    ``index_library`` and both surfaced here as ``up_to_date=True`` - so a run in
+    which new tracks existed and *not one of them could be embedded* reported
+    itself as a success. PR 3 consumes this API; it must be able to tell them
+    apart.
+
+    * ``indexed`` - work was done. ``total_tracks_indexed`` and
+      ``new_tracks_added`` are meaningful.
+    * ``up_to_date`` - no new tracks were found. Nothing to do; a success.
+    * ``no_embeddings`` - ``new_tracks_found`` tracks were found and every one
+      of them failed to embed (missing file, unsupported codec). A FAILURE.
+
+    A cancelled run raises ``KeyboardInterrupt`` and produces no result at all.
+    """
+
+    status: str
     total_tracks_indexed: int = 0
     new_tracks_added: int = 0
-    up_to_date: bool = False
+    new_tracks_found: int = 0
+
+    @property
+    def up_to_date(self) -> bool:
+        """True only for a genuinely up-to-date index, never for a failed run."""
+        return self.status == STATUS_UP_TO_DATE
+
+    @property
+    def failed(self) -> bool:
+        """True when new tracks were found and none of them could be embedded."""
+        return self.status == STATUS_NO_EMBEDDINGS
 
 
 ProgressCallback = Callable[[ProgressEvent], None]
@@ -80,6 +121,12 @@ class IndexingService:
         Raises ``KeyboardInterrupt`` when ``cancel`` is set, exactly as the
         pipeline always has.
         """
+        # Imported here, not at module scope: processing/__init__.py re-exports
+        # DiscogsEffnetEmbedder, which does `import essentia.standard`. See the
+        # module docstring - a top-level import makes every service, including
+        # settings_store, require a 483 MB TensorFlow install.
+        from processing.pipeline import index_library
+
         callback = None
         if progress is not None:
             def callback(phase, current, total, message):
@@ -94,11 +141,9 @@ class IndexingService:
             progress=callback,
         )
 
-        if summary is None:
-            # Nothing new to process, or nothing embeddable.
-            return IndexResult(up_to_date=True)
-
         return IndexResult(
-            total_tracks_indexed=summary["total_tracks_indexed"],
-            new_tracks_added=summary["new_tracks_added"],
+            status=summary["status"],
+            total_tracks_indexed=summary.get("total_tracks_indexed", 0),
+            new_tracks_added=summary.get("new_tracks_added", 0),
+            new_tracks_found=summary.get("new_tracks_found", 0),
         )

@@ -21,12 +21,18 @@ preserved deliberately and are pinned by tests
   for a blank query (inventory defect #9). The regex variant in
   ``pick_current`` and the album/key variant in ``filter_library`` are
   documented in the inventory and deliberately NOT unified here.
+* ``delete_tracks`` updates ``meta_ix``/``emb_ix``/``index``/``ids`` but leaves
+  ``meta`` STALE until ``reload()``, because the Library tab's deletion code
+  never rebuilt ``App.meta`` either. Consumers that read ``meta`` - Explore's
+  track picker and the Playlist Export all-tracks count and id list - therefore
+  keep showing deleted tracks until restart (inventory defect #14).
 
 This module must never depend on a UI toolkit; see
 tests/test_services_are_ui_free.py, which enforces that with an AST walk.
 """
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -38,6 +44,33 @@ from core.deleted_tracks import add_deleted_tracks_with_metadata
 from core.index_builder import NumpyCosIndex
 from core.loader import index_file_paths, load_all
 from recommendations.search import search_tracks
+
+
+@dataclass(frozen=True)
+class LibrarySnapshot:
+    """One consistent view of the library, captured at a single instant.
+
+    A long-running reader - the playlist export, which takes ~6.8 minutes over
+    the full collection - must not re-read the session's properties as it goes.
+    ``delete_tracks`` **rebinds** ``meta_ix``, ``emb_ix``, ``index``, ``vectors``
+    and ``ids`` to new objects, so a reader that re-reads them mid-run can find
+    itself ranking against one index and writing against another. Capturing them
+    once, here, is what the Tkinter export worker always did by passing them as
+    arguments at the start of the run.
+
+    This is NOT a fix for the export/delete race (inventory defect #1): the
+    export still finishes against a snapshot that a concurrent delete has made
+    stale, exactly as before. It restores parity - one capture point per run -
+    rather than the per-seed re-reading the first draft of the service
+    introduced.
+    """
+
+    meta: Optional[pd.DataFrame]
+    meta_ix: Optional[pd.DataFrame]
+    emb_ix: Optional[pd.DataFrame]
+    index: Optional[NumpyCosIndex]
+    vectors: Optional[np.ndarray]
+    ids: Optional[List[str]]
 
 
 class LibrarySession:
@@ -113,6 +146,25 @@ class LibrarySession:
         """True when there is no usable index - the old ``idx is None`` condition."""
         return self._index is None
 
+    def snapshot(self) -> LibrarySnapshot:
+        """Capture the current library objects for the duration of one operation.
+
+        The capture itself is a plain sequence of attribute reads, so a delete
+        landing between two of them can still be observed half-applied - the
+        legacy export worker had precisely the same window when it evaluated
+        ``self.meta_ix, self.emb_ix, self.idx`` as call arguments. What matters
+        is that there is exactly ONE such window per run instead of one per
+        seed.
+        """
+        return LibrarySnapshot(
+            meta=self._meta,
+            meta_ix=self._meta_ix,
+            emb_ix=self._emb_ix,
+            index=self._index,
+            vectors=self._vectors,
+            ids=self._ids,
+        )
+
     def get_track(self, track_id: str) -> Optional[Dict[str, Any]]:
         """Return one track's metadata as a dict, or ``None`` if it is unknown."""
         if self._meta_ix is None or track_id not in self._meta_ix.index:
@@ -175,7 +227,14 @@ class LibrarySession:
             self._ids = []
             self._index = None
 
-        self._meta = self._meta_ix.reset_index()
+        # NOT rebuilt: ``self._meta``. The Library tab's perform_track_deletion
+        # never touched App.meta, so the full metadata table stayed STALE until
+        # the app was restarted - which is why a deleted track still appears in
+        # Explore's "Set Current Track" picker and in the Playlist Export tab's
+        # all-tracks count and export list. Rebuilding it here would silently
+        # repair that, and a baseline that quietly improves behaviour cannot
+        # prove the next PR preserved anything. Inventory defect #14; fixing it
+        # is PR 3 work.
         self._persist()
 
         return original_meta_count - len(self._meta_ix)

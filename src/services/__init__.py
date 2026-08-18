@@ -10,18 +10,29 @@ Services *orchestrate*. The pure layers - ``src/core/``, ``src/processing/`` and
 
 from services.explore_session import ExploreSession, Recommendation
 from services.export_service import ExportResult, ExportService
-from services.indexing_service import IndexingService, IndexResult, ProgressEvent
-from services.library_session import LibrarySession
+from services.indexing_service import (
+    STATUS_INDEXED,
+    STATUS_NO_EMBEDDINGS,
+    STATUS_UP_TO_DATE,
+    IndexingService,
+    IndexResult,
+    ProgressEvent,
+)
+from services.library_session import LibrarySession, LibrarySnapshot
 from services.set_builder import SetBuilder
 from services.settings_store import SettingsStore
 
 __all__ = [
+    'STATUS_INDEXED',
+    'STATUS_NO_EMBEDDINGS',
+    'STATUS_UP_TO_DATE',
     'ExploreSession',
     'ExportResult',
     'ExportService',
     'IndexResult',
     'IndexingService',
     'LibrarySession',
+    'LibrarySnapshot',
     'ProgressEvent',
     'Recommendation',
     'SetBuilder',

@@ -1,0 +1,116 @@
+"""A committed, fully explicit twelve-track library.
+
+Why this exists: `data/` is gitignored (it is the user's own music library), so
+CI has no 1,307-track fixture and every assertion made against it can only ever
+run on a developer's machine. Golden characterisation values that only run
+locally are not a baseline - the next PR is verified by CI.
+
+So the engine's behaviour is pinned twice:
+
+* here, against a library whose every byte is in the repository, so the golden
+  values run everywhere; and
+* in the ``_real_library`` tests, against the true 1,307 tracks, skipped when
+  `data/` is absent.
+
+Everything below is a literal. The vectors are small integers so the
+normalisation, the dot products and therefore the golden cosines are the same
+on any machine, and they are chosen to be pairwise distinct - no two candidates
+tie, so the sort order cannot flip.
+
+Keys and BPMs are spread across the compatibility classes that
+``recommendations.scoring`` distinguishes (identical / adjacent / relative /
+two-step / incompatible, and in-tolerance / half-time / unrelated) so that the
+weighted score is exercised rather than merely the cosine.
+"""
+
+import json
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+# track_id, artist, title, album, bpm, key, vector
+FIXTURE_TRACKS = [
+    ("f01", "Alva Noto",      "Xerrox",          "Xerrox Vol 1", 128.0, "8A", [9, 1, 0, 0, 2, 0, 1, 0]),
+    ("f02", "Blawan",         "Why They Hide",   "Wet Will",     130.0, "9A", [8, 2, 1, 0, 1, 1, 0, 0]),
+    ("f03", "Claro Intelecto", "Peace Of Mind",  "Metanarrative", 124.0, "8B", [7, 3, 0, 1, 0, 2, 1, 0]),
+    ("f04", "Donato Dozzy",   "Menta",           "K",            127.0, "8A", [1, 9, 2, 0, 0, 0, 1, 1]),
+    ("f05", "Efdemin",        "Decay",           "Decay",        132.0, "5A", [2, 8, 1, 1, 1, 0, 0, 0]),
+    ("f06", "Function",       "Voiceprint",      "Incubation",   140.0, "12A", [0, 1, 9, 2, 0, 1, 0, 0]),
+    ("f07", "Grouper",        "Alien Observer",  "AIA",           64.0, "8A", [1, 0, 8, 3, 1, 0, 1, 0]),
+    ("f08", "Huerco S.",      "Plucked",         "For Those",    115.0, "3B", [0, 2, 1, 9, 0, 0, 2, 1]),
+    ("f09", "Insolate",       "Rotor",           "Rotor EP",     133.0, "7A", [3, 0, 0, 8, 2, 1, 0, 0]),
+    ("f10", "Jeff Mills",     "The Bells",       "Waveform",     150.0, "11B", [0, 0, 1, 1, 9, 2, 0, 3]),
+    ("f11", "Kangding Ray",   "Amber Decay",     "Solens Arc",   129.0, "10A", [1, 1, 0, 0, 8, 1, 2, 0]),
+    ("f12", "Lucy",           "Follow The Leader", "Wordplay",   126.0, "8A", [2, 1, 1, 0, 0, 9, 1, 1]),
+]
+
+DIM = 8
+
+# The seeds the golden files are keyed on. f01 sits in the first cluster, f06 in
+# the second, f10 in the third, so between them they exercise every candidate
+# ordering the twelve tracks can produce.
+GOLDEN_SEEDS = ["f01", "f06", "f10"]
+
+
+def fixture_vectors() -> np.ndarray:
+    """The raw (un-normalised) matrix, in FIXTURE_TRACKS order."""
+    return np.array([v for *_, v in FIXTURE_TRACKS], dtype="float32")
+
+
+def write_fixture_library(data_dir, audio_dir=None, missing=()) -> Path:
+    """Write the four index files into ``data_dir`` and return it.
+
+    ``audio_dir`` - when given, an empty file is created per track and
+    ``path_local`` points at it, which is what the M3U exporter needs to not
+    silently skip everything. Track ids listed in ``missing`` deliberately get a
+    ``path_local`` that does not exist, to exercise the silent-skip path.
+    """
+    data_dir = Path(data_dir)
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    rows = []
+    for track_id, artist, title, album, bpm, key, _ in FIXTURE_TRACKS:
+        if audio_dir is None:
+            path_local = f"/nonexistent/{track_id}.mp3"
+        else:
+            audio = Path(audio_dir)
+            audio.mkdir(parents=True, exist_ok=True)
+            target = audio / f"{track_id}.mp3"
+            if track_id not in missing:
+                target.write_bytes(b"\x00")
+            path_local = str(target)
+        rows.append({
+            "track_id": track_id,
+            "path": f"file://localhost{path_local}",
+            "artist": artist,
+            "title": title,
+            "album": album,
+            "bpm": bpm,
+            "key": key,
+            "path_local": path_local,
+        })
+
+    vectors = fixture_vectors()
+    meta = pd.DataFrame(rows)
+    emb = pd.concat(
+        [
+            pd.DataFrame({"track_id": [r[0] for r in FIXTURE_TRACKS]}),
+            pd.DataFrame(vectors, columns=[f"v{i}" for i in range(DIM)]),
+        ],
+        axis=1,
+    )
+
+    meta.to_parquet(data_dir / "meta.parquet", index=False)
+    emb.to_parquet(data_dir / "embeddings.parquet", index=False)
+    np.save(data_dir / "index.npy", vectors)
+    (data_dir / "ids.json").write_text(json.dumps([r[0] for r in FIXTURE_TRACKS]))
+    return data_dir
+
+
+GOLDEN_DIR = Path(__file__).resolve().parent / "golden"
+
+
+def load_golden(name):
+    """Read a committed golden file. Never regenerated by the test run."""
+    return json.loads((GOLDEN_DIR / f"{name}.json").read_text(encoding="utf-8"))

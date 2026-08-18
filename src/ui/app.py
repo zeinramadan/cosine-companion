@@ -54,7 +54,7 @@ class App(RecommendationsTabMixin, SetCreatorTabMixin, LibraryTabMixin, Playlist
         self.library: LibrarySession = _load_app_data(self)
         self.explore: ExploreSession = ExploreSession(self.library)
         self.set_builder: SetBuilder = SetBuilder(self.library)
-        self.export_service: ExportService = ExportService(self.library, self.explore)
+        self.export_service: ExportService = ExportService(self.library)
         self.current_id: Optional[str] = None
         self.current_recommendations: List[Recommendation] = []
         
