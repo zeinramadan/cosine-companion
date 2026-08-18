@@ -5,17 +5,23 @@ from typing import Optional, List, Dict, Any
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from core.loader import load_all
+from services import (
+    ExploreSession,
+    ExportService,
+    LibrarySession,
+    Recommendation,
+    SetBuilder,
+)
 from ui.recommendations_tab import RecommendationsTabMixin
 from ui.set_creator_tab import SetCreatorTabMixin
 from ui.library_tab import LibraryTabMixin
 from ui.playlist_export_tab import PlaylistExportTabMixin
 
 
-def _load_app_data(parent):
-    """Load persisted index data or show a user-facing recovery path."""
+def _load_app_data(parent) -> LibrarySession:
+    """Load the library session, or show a user-facing recovery path."""
     try:
-        return load_all()
+        return LibrarySession.load()
     except ValueError as error:
         messagebox.showerror(
             "Inconsistent Index Data",
@@ -43,11 +49,14 @@ class App(RecommendationsTabMixin, SetCreatorTabMixin, LibraryTabMixin, Playlist
         from utils.icon import set_window_icon
         set_window_icon(self)
 
-        self.meta, self.meta_ix, self.emb_ix, self.idx, self.V, self.ids = (
-            _load_app_data(self)
-        )
+        # Single source of truth for meta / embeddings / index / ids. The tabs
+        # read through this session instead of mutating App attributes.
+        self.library: LibrarySession = _load_app_data(self)
+        self.explore: ExploreSession = ExploreSession(self.library)
+        self.set_builder: SetBuilder = SetBuilder(self.library)
+        self.export_service: ExportService = ExportService(self.library)
         self.current_id: Optional[str] = None
-        self.current_recommendations: List[Dict[str, Any]] = []
+        self.current_recommendations: List[Recommendation] = []
         
         # History tracking for back functionality
         self.history: List[Dict[str, Any]] = []  # List of {track_id, recommendations, sort_state}
@@ -168,22 +177,13 @@ class App(RecommendationsTabMixin, SetCreatorTabMixin, LibraryTabMixin, Playlist
         """Quick update library action."""
         from ui.settings_window import SettingsWindow
         from config import DATA
-        import json
-        
-        # Check if XML path is set
-        settings_file = DATA / "settings.json"
-        if not settings_file.exists():
-            messagebox.showinfo(
-                "Setup Required",
-                "Please configure your library settings first."
-            )
-            SettingsWindow(self)
-            return
-        
-        with open(settings_file, 'r') as f:
-            settings = json.load(f)
-            xml_path = settings.get("xml_path")
-        
+        from services import SettingsStore
+
+        # Check if XML path is set. A missing settings file reads as an empty
+        # document, which lands on the same "Setup Required" branch that the
+        # separate exists() check used to take.
+        xml_path = SettingsStore(DATA / "settings.json").xml_path
+
         if not xml_path:
             messagebox.showinfo(
                 "Setup Required",

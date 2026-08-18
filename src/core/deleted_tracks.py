@@ -8,18 +8,26 @@ from pathlib import Path
 from config import DELETED_TRACKS_JSON
 
 
-def load_deleted_tracks() -> Set[str]:
+def _report(progress, phase, message):
+    """Print, or hand the same string to a structured progress callback."""
+    if progress is None:
+        print(message)
+    else:
+        progress(phase, 0, 0, message)
+
+
+def load_deleted_tracks(progress=None) -> Set[str]:
     """
     Load the set of track IDs that have been manually deleted.
     
     Returns:
         Set of deleted track IDs
     """
-    data = load_deleted_tracks_with_info()
+    data = load_deleted_tracks_with_info(progress=progress)
     return set(data.keys())
 
 
-def load_deleted_tracks_with_info() -> Dict[str, Dict[str, str]]:
+def load_deleted_tracks_with_info(progress=None) -> Dict[str, Dict[str, str]]:
     """
     Load deleted tracks with their metadata.
     
@@ -41,7 +49,7 @@ def load_deleted_tracks_with_info() -> Dict[str, Dict[str, str]]:
             # New format (dict with metadata)
             return data
     except Exception as e:
-        print(f"Warning: Could not load deleted tracks list ({e})")
+        _report(progress, "deleted", f"Warning: Could not load deleted tracks list ({e})")
         return {}
 
 
@@ -122,18 +130,19 @@ def remove_from_deleted_tracks(track_ids: Set[str]) -> None:
     save_deleted_tracks_with_info(existing_deleted)
 
 
-def filter_deleted_tracks(df, track_id_column: str = 'track_id'):
+def filter_deleted_tracks(df, track_id_column: str = 'track_id', progress=None):
     """
     Filter out tracks that have been manually deleted by the user.
     
     Args:
         df: DataFrame with track data
         track_id_column: Name of the column containing track IDs
-        
+        progress: Optional callable(phase, current, total, message)
+
     Returns:
         Filtered DataFrame without deleted tracks
     """
-    deleted_ids = load_deleted_tracks()
+    deleted_ids = load_deleted_tracks(progress=progress)
     
     if not deleted_ids:
         return df
@@ -143,7 +152,7 @@ def filter_deleted_tracks(df, track_id_column: str = 'track_id'):
     filtered_count = original_count - len(filtered_df)
     
     if filtered_count > 0:
-        print(f"   Filtered out {filtered_count} previously deleted tracks")
+        _report(progress, "deleted", f"   Filtered out {filtered_count} previously deleted tracks")
     
     return filtered_df
 

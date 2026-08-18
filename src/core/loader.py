@@ -3,6 +3,7 @@
 
 import json
 import re
+from pathlib import Path
 from typing import Tuple, Optional, List
 
 import numpy as np
@@ -15,10 +16,40 @@ from core.index_builder import NumpyCosIndex
 VECTOR_COLUMN_PATTERN = re.compile(r"^v\d+$")
 
 
-def load_existing_data() -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
+def index_file_paths(data_dir: Optional[Path] = None) -> Tuple[Path, Path, Path, Path]:
+    """Return (meta.parquet, embeddings.parquet, index.npy, ids.json) for a data directory.
+
+    ``data_dir=None`` yields the configured application paths, which is what
+    every existing caller relies on. Passing a directory is what lets the
+    service layer be pointed at a fixture without touching the real library.
+    """
+    if data_dir is None:
+        return META_PQ, EMB_PQ, IDX_NPY, IDS_JSON
+    data_dir = Path(data_dir)
+    return (
+        data_dir / "meta.parquet",
+        data_dir / "embeddings.parquet",
+        data_dir / "index.npy",
+        data_dir / "ids.json",
+    )
+
+
+def _report(progress, phase, message):
+    """Print, or hand the same string to a structured progress callback."""
+    if progress is None:
+        print(message)
+    else:
+        progress(phase, 0, 0, message)
+
+
+def load_existing_data(progress=None) -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
     """
     Load existing metadata and embeddings if they exist.
-    
+
+    Args:
+        progress: Optional callable(phase, current, total, message). When given,
+            messages are reported through it instead of being printed.
+
     Returns:
         Tuple of (existing_meta_df, existing_embeddings_df) or (None, None) if no data exists
     """
@@ -28,10 +59,10 @@ def load_existing_data() -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]
     try:
         existing_meta = pd.read_parquet(META_PQ)
         existing_emb = pd.read_parquet(EMB_PQ)
-        print(f"Found existing data: {len(existing_meta)} tracks already indexed")
+        _report(progress, "start", f"Found existing data: {len(existing_meta)} tracks already indexed")
         return existing_meta, existing_emb
     except Exception as e:
-        print(f"Warning: Could not load existing data ({e}), starting fresh")
+        _report(progress, "start", f"Warning: Could not load existing data ({e}), starting fresh")
         return None, None
 
 
@@ -82,10 +113,15 @@ def _validate_index_data(V: np.ndarray, ids: List[str], emb: pd.DataFrame) -> No
         )
 
 
-def load_all() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, NumpyCosIndex, np.ndarray, List[str]]:
+def load_all(data_dir: Optional[Path] = None) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, NumpyCosIndex, np.ndarray, List[str]]:
     """
     Load all indexed data: metadata, embeddings, vectors, and cosine index.
-    
+
+    Args:
+        data_dir: Directory holding the four index files. ``None`` (the default)
+            uses the configured application data directory, which is the
+            behaviour every existing caller depends on.
+
     Returns:
         Tuple of (meta, meta_ix, emb_ix, idx, V, ids) where:
         - meta: Full metadata DataFrame
@@ -95,10 +131,12 @@ def load_all() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, NumpyCosIndex,
         - V: Vector array
         - ids: List of track IDs
     """
-    meta = pd.read_parquet(META_PQ)
-    emb = pd.read_parquet(EMB_PQ)
-    V = np.load(IDX_NPY)
-    with open(IDS_JSON, encoding="utf-8") as f:
+    meta_pq, emb_pq, idx_npy, ids_json = index_file_paths(data_dir)
+
+    meta = pd.read_parquet(meta_pq)
+    emb = pd.read_parquet(emb_pq)
+    V = np.load(idx_npy)
+    with open(ids_json, encoding="utf-8") as f:
         ids = json.load(f)
 
     _validate_index_data(V, ids, emb)
@@ -112,14 +150,16 @@ def load_all() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, NumpyCosIndex,
     return meta, meta_ix, emb_ix, idx, V, ids
 
 
-def find_new_tracks(current_meta: pd.DataFrame, existing_meta: Optional[pd.DataFrame]) -> pd.DataFrame:
+def find_new_tracks(current_meta: pd.DataFrame, existing_meta: Optional[pd.DataFrame],
+                    progress=None) -> pd.DataFrame:
     """
     Find tracks that need to be processed (new or changed).
     
     Args:
         current_meta: Current metadata from XML
         existing_meta: Previously processed metadata
-        
+        progress: Optional callable(phase, current, total, message)
+
     Returns:
         DataFrame of tracks that need processing
     """
@@ -129,6 +169,6 @@ def find_new_tracks(current_meta: pd.DataFrame, existing_meta: Optional[pd.DataF
     # Find tracks not in existing data
     existing_ids = set(existing_meta['track_id'].values)
     new_tracks = current_meta[~current_meta['track_id'].isin(existing_ids)]
-    
-    print(f"Found {len(new_tracks)} new tracks to process")
+
+    _report(progress, "plan", f"Found {len(new_tracks)} new tracks to process")
     return new_tracks

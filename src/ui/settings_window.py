@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Settings and library management window."""
 
-import json
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from pathlib import Path
 from datetime import datetime
 
 from config import DATA, META_PQ
+from services import SettingsStore
 
 
 class SettingsWindow(tk.Toplevel):
@@ -273,18 +273,20 @@ class SettingsWindow(tk.Toplevel):
     
     def load_settings(self):
         """Load and display current settings."""
-        settings_file = DATA / "settings.json"
-        
-        if settings_file.exists():
-            with open(settings_file, 'r') as f:
-                settings = json.load(f)
-                xml_path = settings.get("xml_path", "Not set")
-                
-                # Truncate long path
-                if len(xml_path) > 50:
-                    xml_path = "..." + xml_path[-47:]
-                
-                self.xml_path_label.config(text=xml_path, fg="black")
+        settings = SettingsStore(DATA / "settings.json")
+
+        # Only an existing file repaints the label. When it is absent the label
+        # keeps its grey "Not set" placeholder; when it exists without an
+        # xml_path the same text is shown in black. Preserved deliberately.
+        if settings.path.exists():
+            xml_path = settings.get("xml_path", "Not set")
+
+            # Truncate long path
+            if len(xml_path) > 50:
+                xml_path = "..." + xml_path[-47:]
+
+            self.xml_path_label.config(text=xml_path, fg="black")
+
         
         # Load statistics
         self.load_statistics()
@@ -336,17 +338,8 @@ class SettingsWindow(tk.Toplevel):
         )
         
         if new_path:
-            # Update settings
-            settings_file = DATA / "settings.json"
-            settings = {}
-            if settings_file.exists():
-                with open(settings_file, 'r') as f:
-                    settings = json.load(f)
-            
-            settings["xml_path"] = new_path
-            
-            with open(settings_file, 'w') as f:
-                json.dump(settings, f, indent=2)
+            # Update settings, merging into whatever is already there
+            SettingsStore(DATA / "settings.json").set("xml_path", new_path)
             
             # Update display
             display_path = new_path
@@ -404,18 +397,17 @@ class SettingsWindow(tk.Toplevel):
         """Trigger incremental library update."""
         from ui.reindex_window import ReindexWindow
         
-        # Get XML path
-        settings_file = DATA / "settings.json"
-        if not settings_file.exists():
+        # Get XML path. The exists() check is kept because a missing file and an
+        # existing file without an xml_path show *different* dialogs.
+        settings = SettingsStore(DATA / "settings.json")
+        if not settings.path.exists():
             messagebox.showerror(
                 "No XML Path",
                 "Please set your Rekordbox XML file path first."
             )
             return
-        
-        with open(settings_file, 'r') as f:
-            settings = json.load(f)
-            xml_path = settings.get("xml_path")
+
+        xml_path = settings.xml_path
         
         if not xml_path or not Path(xml_path).exists():
             messagebox.showerror(
@@ -443,18 +435,17 @@ class SettingsWindow(tk.Toplevel):
         if not result:
             return
         
-        # Get XML path
-        settings_file = DATA / "settings.json"
-        if not settings_file.exists():
+        # Get XML path. The exists() check is kept because a missing file and an
+        # existing file without an xml_path show *different* dialogs.
+        settings = SettingsStore(DATA / "settings.json")
+        if not settings.path.exists():
             messagebox.showerror(
                 "No XML Path",
                 "Please set your Rekordbox XML file path first."
             )
             return
-        
-        with open(settings_file, 'r') as f:
-            settings = json.load(f)
-            xml_path = settings.get("xml_path")
+
+        xml_path = settings.xml_path
         
         if not xml_path or not Path(xml_path).exists():
             messagebox.showerror(

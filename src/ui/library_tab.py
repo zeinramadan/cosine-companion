@@ -1,10 +1,8 @@
 """Library tab functionality for Cosine Companion UI."""
 
 from typing import TYPE_CHECKING
-import json
 import tkinter as tk
 from tkinter import ttk, messagebox
-import numpy as np
 
 if TYPE_CHECKING:
     from ui.app import App
@@ -63,7 +61,7 @@ class LibraryTabMixin:
         try:
             # Get all tracks from metadata
             self.library_tracks = []
-            for track_id, row in self.meta_ix.iterrows():
+            for track_id, row in self.library.meta_ix.iterrows():
                 self.library_tracks.append({
                     "track_id": track_id,
                     "artist": row.get("artist", ""),
@@ -184,7 +182,7 @@ class LibraryTabMixin:
                 if self.filtered_library_tracks[i]["track_id"] in deleted_track_ids:
                     deleted_above_count += 1
             
-            deleted_count = self.perform_track_deletion(selected_tracks)
+            deleted_count = self.library.delete_tracks(deleted_track_ids)
             
             if deleted_count > 0:
                 self.status.config(text=f"✅ Deleted {deleted_count} tracks from library")
@@ -210,64 +208,3 @@ class LibraryTabMixin:
             messagebox.showerror("Deletion Error", f"Failed to delete tracks: {str(e)}")
             self.status.config(text="❌ Error deleting tracks")
     
-    def perform_track_deletion(self: "App", tracks_to_delete):
-        """Actually delete tracks from all data files."""
-        from config import META_PQ, EMB_PQ, IDX_NPY, IDS_JSON
-        from core.index_builder import NumpyCosIndex
-        from core.deleted_tracks import add_deleted_tracks_with_metadata
-        
-        track_ids_to_delete = {track["track_id"] for track in tracks_to_delete}
-        deleted_count = 0
-        
-        # Record these tracks as deleted with their metadata so we can display them later
-        add_deleted_tracks_with_metadata(tracks_to_delete)
-        
-        # Update metadata
-        original_meta_count = len(self.meta_ix)
-        self.meta_ix = self.meta_ix[~self.meta_ix.index.isin(track_ids_to_delete)]
-        
-        # Update embeddings  
-        original_emb_count = len(self.emb_ix)
-        self.emb_ix = self.emb_ix[~self.emb_ix.index.isin(track_ids_to_delete)]
-        
-        # Update cosine index and vectors
-        # Rebuild the index without deleted tracks
-        remaining_track_ids = []
-        remaining_vectors = []
-        
-        for i, track_id in enumerate(self.ids):
-            if track_id not in track_ids_to_delete:
-                remaining_track_ids.append(track_id)
-                remaining_vectors.append(self.V[i])
-        
-        if remaining_vectors:
-            self.V = np.vstack(remaining_vectors)
-            self.ids = remaining_track_ids
-            
-            # Rebuild exact cosine index
-            self.idx = NumpyCosIndex(self.V.shape[1])
-            for tid, v in zip(self.ids, self.V):
-                self.idx.add(tid, v)
-        else:
-            # No tracks remaining
-            self.V = np.array([])
-            self.ids = []
-            self.idx = None
-        
-        # Save updated data
-        # Convert meta_ix back to regular DataFrame for saving
-        meta_df = self.meta_ix.reset_index()
-        meta_df.to_parquet(META_PQ, index=False)
-        
-        # Convert emb_ix back to regular DataFrame for saving  
-        emb_df = self.emb_ix.reset_index()
-        emb_df.to_parquet(EMB_PQ, index=False)
-        
-        # Save vectors and IDs
-        if len(self.V) > 0:
-            np.save(IDX_NPY, self.V)
-        with open(IDS_JSON, "w") as f:
-            json.dump(self.ids, f)
-        
-        deleted_count = original_meta_count - len(self.meta_ix)
-        return deleted_count

@@ -1,0 +1,200 @@
+#!/usr/bin/env python3
+"""IndexingService - the indexing pipeline with structured progress events.
+
+This is the ONE place in PR 2 where a mechanism changes, and the plan sanctions
+it explicitly. Progress used to be reported by replacing the process-global
+``sys.stdout`` with a queue writer from a worker thread
+(``ui/reindex_window.py:164-194`` and ``ui/onboarding.py:400-416``). It is now a
+structured callback.
+
+The constraint attached to that permission is that the UI must display the same
+information as before, so every one of the 37 print sites reachable during
+indexing - across ``processing/pipeline.py``, ``core/loader.py`` and
+``core/deleted_tracks.py`` - emits an event carrying the IDENTICAL string, in
+the same order. The CLI is untouched: with no callback those functions still
+print exactly as they did.
+
+Two behaviours are preserved rather than improved:
+
+* Cancellation raises ``KeyboardInterrupt`` - WHEN THE PIPELINE OBSERVES IT.
+  ``cancel_check`` is read in exactly one place, ``pipeline.py:182``, at the top
+  of each per-track loop iteration. If the flag is set while a checkpoint still
+  lies ahead, the pipeline raises there; ``KeyboardInterrupt`` derives from
+  ``BaseException``, so ``reindex_window``'s ``except Exception`` does not catch
+  it, the worker thread dies unhandled, no completion message is queued, and the
+  "Indexing cancelled by user" log line is not appended. The window still shows
+  the cancelled state because the Cancel button set the flag.
+
+  If the flag is first set AFTER the last checkpoint - during the final track's
+  embed, during the merge/persist phase, or at any point on a run that returns
+  ``up_to_date``/``no_embeddings`` without re-entering the loop - the pipeline
+  never sees it, completes normally and (on the ``indexed`` path) writes all
+  four data files. ``reindex_window`` then takes its ``if self.cancel_requested``
+  branch and DOES append "Indexing cancelled by user". This is a pre-existing
+  race, characterised rather than fixed; inventory defect #17 and Sec 2.13
+  "Two cancellation timings". Both timings are pinned by tests.
+* A cancelled run that the pipeline observes discards every embedding computed
+  so far (spec 3.2); one it does not observe keeps all of them.
+
+``ProgressEvent`` carries real ``current``/``total`` for the embedding phase -
+the pipeline always knew ``i/N`` and simply never reported it. Making the
+progress bar determinate with it is PR 3 work.
+
+This module must never depend on a UI toolkit; see
+tests/test_services_are_ui_free.py, which enforces that with an AST walk.
+
+It must also never pull Essentia in at import time. ``processing.pipeline`` is
+imported inside :meth:`IndexingService.run`, not at module scope, because
+``processing/__init__.py`` re-exports ``DiscogsEffnetEmbedder`` and that module
+does ``import essentia.standard``. A module-level import here would drag a
+483 MB TensorFlow dependency into every consumer of the service layer - even
+``services.settings_store``, a 72-line JSON reader - and would break both the
+CI job (which installs only numpy/pandas/pyarrow/pytest) and PR 3's web server.
+``tests/test_services_are_lightweight.py`` enforces that.
+"""
+
+from dataclasses import dataclass
+from typing import Callable, Optional
+
+# Mirrored from processing.pipeline so that importing this module stays free of
+# Essentia. They are asserted equal to the pipeline's own constants by
+# tests/services/test_indexing_service.py.
+STATUS_INDEXED = "indexed"
+STATUS_UP_TO_DATE = "up_to_date"
+STATUS_NO_EMBEDDINGS = "no_embeddings"
+
+
+@dataclass
+class ProgressEvent:
+    """One unit of indexing progress."""
+
+    phase: str
+    current: int
+    total: int
+    message: str
+
+
+@dataclass
+class IndexResult:
+    """Outcome of an indexing run.
+
+    ``status`` distinguishes the pipeline's three terminal outcomes:
+
+    * ``indexed`` - work was done. ``total_tracks_indexed`` and
+      ``new_tracks_added`` are meaningful.
+    * ``up_to_date`` - no new tracks were found. Nothing to do; a success.
+    * ``no_embeddings`` - ``new_tracks_found`` tracks were found and every one
+      of them failed to embed (missing file, unsupported codec). A FAILURE.
+
+    A run cancelled at a checkpoint raises ``KeyboardInterrupt`` and produces no
+    result at all. A cancellation the pipeline never observes returns one of the
+    three statuses above like any other run - see the module docstring.
+
+    ``status`` and ``failed`` ARE ADDITIVE. NOTHING CONSUMES THEM YET.
+    ------------------------------------------------------------------
+    Do not read this class as evidence that PR 2 changed a behaviour. It did
+    not, and the distinction below is not yet observable anywhere.
+
+    On ``main`` the two empty outcomes were indistinguishable: ``index_library``
+    returned a bare ``None`` from both, so a run in which new tracks existed and
+    *not one of them could be embedded* was reported to the user as a success.
+    That is a real defect, and it is **still present**, because every caller
+    discards the return value:
+
+    * ``ui/reindex_window.py:173`` - ``service.run(...)``, unassigned, then
+      unconditionally queues ``('complete', True)`` and
+      "\n✅ Indexing completed successfully!"
+    * ``ui/onboarding.py:389`` - the same
+    * ``cosine_companion.py:50`` - ``index_library(xml, ...)``, unassigned
+
+    So all three terminal outcomes still report success to the user, exactly as
+    on ``main``. What is new is only the *ability* to tell them apart, which
+    PR 3 needs in order to fix the defect deliberately, with the UI change that
+    a fix implies.
+
+    Two test files hold the two halves of this apart, and both must be updated
+    together when PR 3 does fix it:
+
+    * ``tests/services/test_indexing_service.py`` pins this NEW service-level
+      distinction.
+    * ``tests/test_ui_reports_success_for_every_terminal_outcome.py`` pins the
+      UNCHANGED observable behaviour - all three outcomes read as success in
+      both Tkinter windows - and statically asserts that no UI module can even
+      reach these fields.
+    """
+
+    status: str
+    total_tracks_indexed: int = 0
+    new_tracks_added: int = 0
+    new_tracks_found: int = 0
+
+    @property
+    def up_to_date(self) -> bool:
+        """True only for a genuinely up-to-date index, never for a failed run.
+
+        Additive: no current caller reads this. See the class docstring.
+        """
+        return self.status == STATUS_UP_TO_DATE
+
+    @property
+    def failed(self) -> bool:
+        """True when new tracks were found and none of them could be embedded.
+
+        Additive: no current caller reads this, so a "failed" run still reports
+        success in both Tkinter windows. See the class docstring.
+        """
+        return self.status == STATUS_NO_EMBEDDINGS
+
+
+ProgressCallback = Callable[[ProgressEvent], None]
+
+
+class IndexingService:
+    """Runs the indexing pipeline and reports progress as structured events."""
+
+    def __init__(self, settings):
+        """Bind to a SettingsStore, which holds the configured XML path."""
+        self.settings = settings
+
+    def run(
+        self,
+        xml_path: str,
+        force_full: bool = False,
+        progress: Optional[ProgressCallback] = None,
+        cancel=None,
+        sample_size: Optional[int] = None,
+    ) -> IndexResult:
+        """Index ``xml_path``, emitting a ProgressEvent for every pipeline message.
+
+        Raises ``KeyboardInterrupt`` when ``cancel`` is set AND the pipeline
+        reaches a per-track checkpoint afterwards - exactly as the pipeline
+        always has. A ``cancel`` first set after the last checkpoint is never
+        observed and the run completes normally; see the module docstring and
+        inventory defect #17.
+        """
+        # Imported here, not at module scope: processing/__init__.py re-exports
+        # DiscogsEffnetEmbedder, which does `import essentia.standard`. See the
+        # module docstring - a top-level import makes every service, including
+        # settings_store, require a 483 MB TensorFlow install.
+        from processing.pipeline import index_library
+
+        callback = None
+        if progress is not None:
+            def callback(phase, current, total, message):
+                progress(ProgressEvent(phase=phase, current=current,
+                                       total=total, message=message))
+
+        summary = index_library(
+            xml_path,
+            force_full=force_full,
+            sample_size=sample_size,
+            cancel_check=(cancel.is_set if cancel is not None else None),
+            progress=callback,
+        )
+
+        return IndexResult(
+            status=summary["status"],
+            total_tracks_indexed=summary.get("total_tracks_indexed", 0),
+            new_tracks_added=summary.get("new_tracks_added", 0),
+            new_tracks_found=summary.get("new_tracks_found", 0),
+        )

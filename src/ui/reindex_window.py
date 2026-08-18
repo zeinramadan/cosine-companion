@@ -17,7 +17,10 @@ class ReindexWindow(tk.Toplevel):
         self.indexing_complete = False
         self.parent_app = parent
         self.message_queue = queue.Queue()
-        self.cancel_requested = False  # Flag for cancellation
+        # A threading.Event rather than a bare flag, so it can be handed to
+        # IndexingService. cancel_requested stays a property over it, so every
+        # existing read and write keeps working unchanged.
+        self.cancel_event = threading.Event()
         
         title = "Full Re-index" if force_full else "Update Library"
         self.title(f"{title} - Cosine Companion")
@@ -48,6 +51,18 @@ class ReindexWindow(tk.Toplevel):
         
         # Start indexing immediately
         self.after(100, self.start_indexing)
+
+    @property
+    def cancel_requested(self) -> bool:
+        """True once the user has confirmed cancellation."""
+        return self.cancel_event.is_set()
+
+    @cancel_requested.setter
+    def cancel_requested(self, value: bool) -> None:
+        if value:
+            self.cancel_event.set()
+        else:
+            self.cancel_event.clear()
     
     def create_ui(self):
         """Create the UI."""
@@ -138,39 +153,28 @@ class ReindexWindow(tk.Toplevel):
     
     def run_indexing(self):
         """Run the indexing process (in background thread)."""
-        import sys
-        from processing.pipeline import index_library
-        
-        # Create a custom writer that sends to queue
-        class QueueWriter:
-            def __init__(self, message_queue):
-                self.queue = message_queue
-                self.buffer = ""
-            
-            def write(self, text):
-                self.buffer += text
-                # Send complete lines to queue
-                while '\n' in self.buffer:
-                    line, self.buffer = self.buffer.split('\n', 1)
-                    if line.strip():  # Only send non-empty lines
-                        self.queue.put(('log', line))
-            
-            def flush(self):
-                if self.buffer.strip():
-                    self.queue.put(('log', self.buffer))
-                    self.buffer = ""
-        
-        # Redirect stdout to queue
-        old_stdout = sys.stdout
-        sys.stdout = QueueWriter(self.message_queue)
-        
+        from config import DATA
+        from services import IndexingService, SettingsStore
+
+        def on_progress(event):
+            # One queued line per pipeline message, exactly as the stdout swap
+            # produced. Events never carry a blank message, so the queue
+            # writer's "only send non-empty lines" rule is preserved by
+            # construction.
+            self.message_queue.put(('log', event.message))
+
+        service = IndexingService(SettingsStore(DATA / "settings.json"))
+
         try:
-            # Run indexing with cancellation callback
-            index_library(
-                self.xml_path, 
-                force_full=self.force_full, 
-                sample_size=None,
-                cancel_check=lambda: self.cancel_requested
+            # Run indexing with structured progress instead of a process-global
+            # sys.stdout swap. KeyboardInterrupt from a cancelled run still
+            # propagates: it is a BaseException, so the except below does not
+            # catch it, and the thread dies unhandled exactly as before.
+            service.run(
+                self.xml_path,
+                force_full=self.force_full,
+                progress=on_progress,
+                cancel=self.cancel_event
             )
             
             if self.cancel_requested:
@@ -188,11 +192,7 @@ class ReindexWindow(tk.Toplevel):
                 self.message_queue.put(('log', f"\n❌ Error during indexing: {str(e)}"))
                 import traceback
                 self.message_queue.put(('log', traceback.format_exc()))
-        finally:
-            # Restore stdout
-            sys.stdout.flush()
-            sys.stdout = old_stdout
-    
+
     def check_indexing_status(self):
         """Check if indexing is complete and process queue messages."""
         # Process all pending messages from queue (non-blocking)

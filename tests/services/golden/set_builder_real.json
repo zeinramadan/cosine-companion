@@ -1,0 +1,159 @@
+{
+  "single_anchor_mid": {
+    "anchors": {
+      "3": "64638770"
+    },
+    "total": 6,
+    "tracks": [
+      {
+        "artist": "KaioBarssalos",
+        "display_name": "KaioBarssalos \u2013 Add This To Your Layer - layer",
+        "icon": "\ud83e\udd16",
+        "is_anchor": false,
+        "position": 1,
+        "score": 0.8996760845184326,
+        "title": "Add This To Your Layer - layer",
+        "track_id": "113924772"
+      },
+      {
+        "artist": "Fank",
+        "display_name": "Fank \u2013 Blacklace",
+        "icon": "\ud83e\udd16",
+        "is_anchor": false,
+        "position": 2,
+        "score": 0.9473482370376587,
+        "title": "Blacklace",
+        "track_id": "107818228"
+      },
+      {
+        "artist": "Boris S.",
+        "display_name": "Boris S. \u2013 Compression",
+        "icon": "\ud83d\udd12",
+        "is_anchor": true,
+        "position": 3,
+        "score": 1.0,
+        "title": "Compression",
+        "track_id": "64638770"
+      },
+      {
+        "artist": "Dj Dextro",
+        "display_name": "Dj Dextro \u2013 Mambo Jambo",
+        "icon": "\ud83e\udd16",
+        "is_anchor": false,
+        "position": 4,
+        "score": 0.8975266218185425,
+        "title": "Mambo Jambo",
+        "track_id": "133045083"
+      },
+      {
+        "artist": "Anne",
+        "display_name": "Anne \u2013 Rootstock",
+        "icon": "\ud83e\udd16",
+        "is_anchor": false,
+        "position": 5,
+        "score": 0.9352142810821533,
+        "title": "Rootstock",
+        "track_id": "91913437"
+      },
+      {
+        "artist": "InsideOut Traxx",
+        "display_name": "InsideOut Traxx \u2013 JSPRV35 - Boomerang (Flits & Isaiah Remix)",
+        "icon": "\ud83e\udd16",
+        "is_anchor": false,
+        "position": 6,
+        "score": 0.9536420702934265,
+        "title": "JSPRV35 - Boomerang (Flits & Isaiah Remix)",
+        "track_id": "16211246"
+      }
+    ]
+  },
+  "two_anchors": {
+    "anchors": {
+      "1": "64638770",
+      "5": "24614611"
+    },
+    "total": 8,
+    "tracks": [
+      {
+        "artist": "Boris S.",
+        "display_name": "Boris S. \u2013 Compression",
+        "icon": "\ud83d\udd12",
+        "is_anchor": true,
+        "position": 1,
+        "score": 1.0,
+        "title": "Compression",
+        "track_id": "64638770"
+      },
+      {
+        "artist": "Dj Dextro",
+        "display_name": "Dj Dextro \u2013 Mambo Jambo",
+        "icon": "\ud83e\udd16",
+        "is_anchor": false,
+        "position": 2,
+        "score": 0.9010222434997559,
+        "title": "Mambo Jambo",
+        "track_id": "133045083"
+      },
+      {
+        "artist": "Anne",
+        "display_name": "Anne \u2013 Rootstock",
+        "icon": "\ud83e\udd16",
+        "is_anchor": false,
+        "position": 3,
+        "score": 0.9248871564865113,
+        "title": "Rootstock",
+        "track_id": "91913437"
+      },
+      {
+        "artist": "InsideOut Traxx",
+        "display_name": "InsideOut Traxx \u2013 JSPRV35 - Boomerang (Flits & Isaiah Remix)",
+        "icon": "\ud83e\udd16",
+        "is_anchor": false,
+        "position": 4,
+        "score": 0.9421956539154054,
+        "title": "JSPRV35 - Boomerang (Flits & Isaiah Remix)",
+        "track_id": "16211246"
+      },
+      {
+        "artist": "Lars Huismann",
+        "display_name": "Lars Huismann \u2013 Superfunk 1",
+        "icon": "\ud83d\udd12",
+        "is_anchor": true,
+        "position": 5,
+        "score": 1.0,
+        "title": "Superfunk 1",
+        "track_id": "24614611"
+      },
+      {
+        "artist": "Alarico",
+        "display_name": "Alarico \u2013 Boya",
+        "icon": "\ud83e\udd16",
+        "is_anchor": false,
+        "position": 6,
+        "score": 0.9551820755004883,
+        "title": "Boya",
+        "track_id": "9881453"
+      },
+      {
+        "artist": "Ryan James Ford",
+        "display_name": "Ryan James Ford \u2013 Dimples",
+        "icon": "\ud83e\udd16",
+        "is_anchor": false,
+        "position": 7,
+        "score": 0.9371697306632996,
+        "title": "Dimples",
+        "track_id": "12216527"
+      },
+      {
+        "artist": "Fireground",
+        "display_name": "Fireground \u2013 Baia",
+        "icon": "\ud83e\udd16",
+        "is_anchor": false,
+        "position": 8,
+        "score": 0.9261661171913147,
+        "title": "Baia",
+        "track_id": "249356553"
+      }
+    ]
+  }
+}

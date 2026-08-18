@@ -6,7 +6,6 @@ from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
 import threading
 
-from recommendations.playlist_exporter import export_recommendations_as_playlists, export_single_playlist
 from ui.track_selector_dialog import TrackSelectorDialog
 
 if TYPE_CHECKING:
@@ -247,7 +246,7 @@ class PlaylistExportTabMixin:
     
     def open_track_selector(self: "App"):
         """Open dialog to select tracks."""
-        dialog = TrackSelectorDialog(self, self.meta_ix, self.export_selected_track_ids)
+        dialog = TrackSelectorDialog(self, self.library.meta_ix, self.export_selected_track_ids)
         self.wait_window(dialog)
         
         if dialog.result:
@@ -269,8 +268,8 @@ class PlaylistExportTabMixin:
         # Get track info and sort by artist/title
         tracks_info = []
         for track_id in self.export_selected_track_ids:
-            if track_id in self.meta_ix.index:
-                row = self.meta_ix.loc[track_id]
+            if track_id in self.library.meta_ix.index:
+                row = self.library.meta_ix.loc[track_id]
                 tracks_info.append({
                     'track_id': track_id,
                     'artist': row.get('artist', ''),
@@ -304,7 +303,11 @@ class PlaylistExportTabMixin:
         mode = self.export_selection_var.get()
         
         if mode == "all":
-            count = len(self.meta)
+            # len(meta), not track_count (which counts meta_ix). meta is the
+            # exact table get_export_track_ids reads its ids from, and deletion
+            # leaves it stale - so label and export agree, both showing the
+            # pre-deletion collection until restart. Inventory defect #14.
+            count = len(self.library.meta)
             self.export_selection_info.config(
                 text=f"✓ Will generate playlists for all {count} tracks in your collection",
                 fg="blue"
@@ -337,7 +340,7 @@ class PlaylistExportTabMixin:
         mode = self.export_selection_var.get()
         
         if mode == "all":
-            return list(self.meta['track_id'].values)
+            return list(self.library.meta['track_id'].values)
         elif mode == "manual":
             return list(self.export_selected_track_ids)
         
@@ -391,27 +394,27 @@ class PlaylistExportTabMixin:
         def export_worker():
             try:
                 if export_format == "separate":
-                    stats = export_recommendations_as_playlists(
+                    result = self.export_service.export_per_seed(
                         track_ids,
                         output_dir,
                         recommendations_per_track,
-                        self.meta_ix,
-                        self.emb_ix,
-                        self.idx,
-                        progress_callback=self.update_export_progress
+                        progress=self.update_export_progress
                     )
                 else:
-                    # Combined playlist
+                    # Combined playlist. No progress callback is passed, because
+                    # combined mode has never reported progress and the bar has
+                    # always sat at 0% for the whole run (inventory defect #11).
                     output_path = Path(output_dir) / "Cosine_Recommendations.m3u"
-                    stats = export_single_playlist(
+                    result = self.export_service.export_combined(
                         track_ids,
                         str(output_path),
-                        "Cosine Recommendations",
-                        self.meta_ix,
-                        self.emb_ix,
-                        self.idx,
                         recommendations_per_track
                     )
+
+                # The legacy per-mode dict shape: combined mode carries no
+                # playlists_created key, so export_complete still raises
+                # KeyError and shows no dialog (inventory defect #10).
+                stats = result.as_legacy_stats()
                 
                 # Update UI on main thread
                 self.after(0, lambda: self.export_complete(stats, output_dir))

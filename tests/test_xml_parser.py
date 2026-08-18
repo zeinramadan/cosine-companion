@@ -250,6 +250,29 @@ def test_anonymized_fixture_decoding_and_mixed_id_behavior(
     )
 
 
+def test_anonymized_fixture_routes_fallback_warning_to_progress(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    events = []
+
+    read_rekordbox_xml(
+        str(ANONYMIZED_XML_PATH),
+        progress=lambda phase, current, total, message: events.append(
+            (phase, current, total, message)
+        ),
+    )
+
+    assert events == [
+        (
+            "read_xml",
+            0,
+            0,
+            "1 track(s) had no Rekordbox TrackID; using file path as identity",
+        )
+    ]
+    assert capsys.readouterr().out == ""
+
+
 def test_anonymized_all_id_fixture_matches_frozen_legacy(
     tmp_path: Path,
 ) -> None:

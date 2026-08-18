@@ -373,36 +373,20 @@ You only need to do this once. After that, you can add new tracks incrementally.
     
     def run_indexing(self):
         """Run the indexing process (in background thread)."""
-        import sys
-        from io import StringIO
-        from processing.pipeline import index_library
-        
-        # Create a custom writer that sends to queue
-        class QueueWriter:
-            def __init__(self, message_queue):
-                self.queue = message_queue
-                self.buffer = ""
-            
-            def write(self, text):
-                self.buffer += text
-                # Send complete lines to queue
-                while '\n' in self.buffer:
-                    line, self.buffer = self.buffer.split('\n', 1)
-                    if line.strip():  # Only send non-empty lines
-                        self.queue.put(('log', line))
-            
-            def flush(self):
-                if self.buffer.strip():
-                    self.queue.put(('log', self.buffer))
-                    self.buffer = ""
-        
-        # Redirect stdout to queue
-        old_stdout = sys.stdout
-        sys.stdout = QueueWriter(self.message_queue)
-        
+        from config import DATA
+        from services import IndexingService, SettingsStore
+
+        def on_progress(event):
+            # One queued line per pipeline message, exactly as the stdout swap
+            # produced.
+            self.message_queue.put(('log', event.message))
+
+        service = IndexingService(SettingsStore(DATA / "settings.json"))
+
         try:
-            # Run indexing
-            index_library(self.xml_path, force_full=False, sample_size=None)
+            # Run indexing with structured progress instead of a process-global
+            # sys.stdout swap. Onboarding has never offered cancellation.
+            service.run(self.xml_path, force_full=False, progress=on_progress)
             self.message_queue.put(('complete', True))
             self.message_queue.put(('log', "\n✅ Indexing completed successfully!"))
         except Exception as e:
@@ -410,10 +394,6 @@ You only need to do this once. After that, you can add new tracks incrementally.
             self.message_queue.put(('log', f"\n❌ Error during indexing: {str(e)}"))
             import traceback
             self.message_queue.put(('log', traceback.format_exc()))
-        finally:
-            # Restore stdout
-            sys.stdout.flush()
-            sys.stdout = old_stdout
     
     def check_indexing_status(self):
         """Check if indexing is complete and process queue messages."""
@@ -598,16 +578,14 @@ You only need to do this once. After that, you can add new tracks incrementally.
     def save_settings(self):
         """Save user settings."""
         from config import DATA
-        settings_file = DATA / "settings.json"
-        
-        import json
-        settings = {
+        from services import SettingsStore
+
+        # replace(), not set(): onboarding has always written the whole document,
+        # discarding any other key that happened to be there.
+        SettingsStore(DATA / "settings.json").replace({
             "xml_path": self.xml_path,
             "first_run_complete": True
-        }
-        
-        with open(settings_file, 'w') as f:
-            json.dump(settings, f, indent=2)
+        })
     
     def quit_app(self):
         """Quit the application."""
@@ -619,21 +597,17 @@ You only need to do this once. After that, you can add new tracks incrementally.
 def needs_onboarding():
     """Check if the app needs to show onboarding."""
     from config import DATA, IDS_JSON, IDX_NPY, EMB_PQ
-    
+    from services import SettingsStore
+
     # If we have all the essential data files, skip onboarding
     # This handles cases where user already has indexed data
     essential_files = [META_PQ, IDS_JSON, IDX_NPY, EMB_PQ]
     if all(f.exists() for f in essential_files):
         # Data exists, skip onboarding
         return False
-    
-    # Check if settings indicate first run complete
-    settings_file = DATA / "settings.json"
-    if settings_file.exists():
-        import json
-        with open(settings_file, 'r') as f:
-            settings = json.load(f)
-            return not settings.get("first_run_complete", False)
-    
-    # No data and no settings = needs onboarding
-    return True
+
+    # Check if settings indicate first run complete. A missing settings file
+    # reads as an empty document, so no data and no settings still means
+    # onboarding is needed - exactly as before.
+    settings = SettingsStore(DATA / "settings.json")
+    return not settings.get("first_run_complete", False)

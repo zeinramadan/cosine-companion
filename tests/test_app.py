@@ -12,7 +12,12 @@ def test_load_app_data_shows_recovery_dialog_for_inconsistent_index(monkeypatch)
     def raise_inconsistent_data():
         raise ValueError("ids.json contains 2 track IDs but index.npy has 3 rows")
 
-    monkeypatch.setattr(app_module, "load_all", raise_inconsistent_data)
+    # The seam moved from core.loader.load_all to LibrarySession.load when the
+    # session took over the six loose attributes; the behaviour asserted below
+    # is unchanged.
+    monkeypatch.setattr(
+        app_module.LibrarySession, "load", staticmethod(raise_inconsistent_data)
+    )
     monkeypatch.setattr(app_module.messagebox, "showerror", showerror)
 
     with pytest.raises(SystemExit, match="1"):
