@@ -62,14 +62,33 @@ def read_rekordbox_xml(xml_path: str) -> pd.DataFrame:
     # replacing the valid TrackIDs for the rest of the library.
     missing_track_id = df["track_id"].isna() | (df["track_id"] == "")
     if missing_track_id.any():
+        fallback_count = int(missing_track_id.sum())
+        print(
+            f"{fallback_count} track(s) had no Rekordbox TrackID; "
+            "using file path as identity"
+        )
         df.loc[missing_track_id, "track_id"] = df.loc[missing_track_id, "path"]
 
+    # This guard also rejects duplicate TrackIDs that main tolerated; duplicate
+    # primary keys break set_index in loader.py. It runs before the pipeline's
+    # remove_simple_duplicates() call, so repeated imports of the same file with
+    # no TrackID fail here instead of being deduplicated later by path_local.
     duplicate_track_id = df["track_id"].duplicated(keep=False)
     if duplicate_track_id.any():
-        duplicates = df.loc[duplicate_track_id, "track_id"].unique().tolist()
+        duplicate_rows = df.loc[duplicate_track_id, ["track_id", "path"]]
+        duplicate_id_count = duplicate_rows["track_id"].nunique(dropna=False)
+        duplicate_id_label = "value" if duplicate_id_count == 1 else "values"
+        examples = "; ".join(
+            f"{track_id!r} -> {path!r}"
+            for track_id, path in duplicate_rows.head(5).itertuples(index=False)
+        )
         raise ValueError(
-            "Duplicate track_id values after applying per-row path fallbacks: "
-            f"{duplicates[:5]}"
+            f"Rekordbox XML {str(xml_path)!r} contains {len(duplicate_rows)} "
+            f"tracks across {duplicate_id_count} duplicated track_id "
+            f"{duplicate_id_label}. "
+            "Affected track_id -> path pairs (up to 5): "
+            f"{examples}. Ensure each retained track has a unique Rekordbox "
+            "TrackID or file Location before indexing."
         )
 
     return df
