@@ -41,7 +41,7 @@ def read_rekordbox_xml(xml_path: str) -> pd.DataFrame:
                 path_local = unquote(path_with_fragment)
 
         rows.append({
-            "track_id": t.get("TrackID") or t.get("TrackID", ""),
+            "track_id": t.get("TrackID") or "",
             "path": loc,
             "artist": t.get("Artist") or "",
             "title": t.get("Name") or "",
@@ -56,8 +56,20 @@ def read_rekordbox_xml(xml_path: str) -> pd.DataFrame:
     # Keep only rows with a resolved local path
     df = df[df["path_local"].astype(str).str.len() > 0].copy()
 
-    # Stable ID if XML TrackID missing
-    if "track_id" not in df or df["track_id"].isna().any() or (df["track_id"] == "").any():
-        df["track_id"] = df["path"]
+    # Fall back only for the individual tracks that have no Rekordbox TrackID.
+    # A path-derived ID is not stable if the file moves, and the row's identity
+    # will change if Rekordbox later assigns a real TrackID. This is preferable to
+    # replacing the valid TrackIDs for the rest of the library.
+    missing_track_id = df["track_id"].isna() | (df["track_id"] == "")
+    if missing_track_id.any():
+        df.loc[missing_track_id, "track_id"] = df.loc[missing_track_id, "path"]
+
+    duplicate_track_id = df["track_id"].duplicated(keep=False)
+    if duplicate_track_id.any():
+        duplicates = df.loc[duplicate_track_id, "track_id"].unique().tolist()
+        raise ValueError(
+            "Duplicate track_id values after applying per-row path fallbacks: "
+            f"{duplicates[:5]}"
+        )
 
     return df
