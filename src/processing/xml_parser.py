@@ -9,16 +9,24 @@ from lxml import etree
 from urllib.parse import urlparse, unquote
 
 
-def read_rekordbox_xml(xml_path: str) -> pd.DataFrame:
+def read_rekordbox_xml(xml_path: str, progress=None) -> pd.DataFrame:
     """
     Parse Rekordbox XML export and extract track metadata.
 
     Args:
         xml_path: Path to the Rekordbox XML export file
+        progress: Optional callable(phase, current, total, message). When given,
+            warnings are reported through it instead of being printed.
 
     Returns:
         DataFrame with columns: track_id, path, artist, title, album, bpm, key, path_local
     """
+    def report(phase, message, current=0, total=0):
+        if progress is None:
+            print(message)
+        else:
+            progress(phase, current, total, message)
+
     tree = etree.parse(xml_path)
     root = tree.getroot()
     rows = []
@@ -63,7 +71,8 @@ def read_rekordbox_xml(xml_path: str) -> pd.DataFrame:
     missing_track_id = df["track_id"].isna() | (df["track_id"] == "")
     if missing_track_id.any():
         fallback_count = int(missing_track_id.sum())
-        print(
+        report(
+            "read_xml",
             f"{fallback_count} track(s) had no Rekordbox TrackID; "
             "using file path as identity"
         )

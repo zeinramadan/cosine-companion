@@ -97,7 +97,7 @@ def index_library(rb_xml: str, force_full: bool = False, sample_size: int | None
     
     # Read current XML
     report("read_xml", "📖 Reading Rekordbox XML...")
-    current_meta = read_rekordbox_xml(rb_xml)
+    current_meta = read_rekordbox_xml(rb_xml, progress=progress)
     report("read_xml", f"   Found {len(current_meta)} tracks in XML")
     
     # Remove simple duplicates (fast file-based detection)
