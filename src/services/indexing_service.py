@@ -16,13 +16,25 @@ print exactly as they did.
 
 Two behaviours are preserved rather than improved:
 
-* Cancellation raises ``KeyboardInterrupt``. That derives from
+* Cancellation raises ``KeyboardInterrupt`` - WHEN THE PIPELINE OBSERVES IT.
+  ``cancel_check`` is read in exactly one place, ``pipeline.py:182``, at the top
+  of each per-track loop iteration. If the flag is set while a checkpoint still
+  lies ahead, the pipeline raises there; ``KeyboardInterrupt`` derives from
   ``BaseException``, so ``reindex_window``'s ``except Exception`` does not catch
-  it: the worker thread dies unhandled, no completion message is queued, and the
-  "Indexing cancelled by user" log line is never appended. The window still
-  shows the cancelled state because the Cancel button set the flag. Subtle, and
-  pinned by a test.
-* A cancelled run discards every embedding computed so far (spec 3.2).
+  it, the worker thread dies unhandled, no completion message is queued, and the
+  "Indexing cancelled by user" log line is not appended. The window still shows
+  the cancelled state because the Cancel button set the flag.
+
+  If the flag is first set AFTER the last checkpoint - during the final track's
+  embed, during the merge/persist phase, or at any point on a run that returns
+  ``up_to_date``/``no_embeddings`` without re-entering the loop - the pipeline
+  never sees it, completes normally and (on the ``indexed`` path) writes all
+  four data files. ``reindex_window`` then takes its ``if self.cancel_requested``
+  branch and DOES append "Indexing cancelled by user". This is a pre-existing
+  race, characterised rather than fixed; inventory defect #17 and Sec 2.13
+  "Two cancellation timings". Both timings are pinned by tests.
+* A cancelled run that the pipeline observes discards every embedding computed
+  so far (spec 3.2); one it does not observe keeps all of them.
 
 ``ProgressEvent`` carries real ``current``/``total`` for the embedding phase -
 the pipeline always knew ``i/N`` and simply never reported it. Making the
@@ -74,7 +86,9 @@ class IndexResult:
     * ``no_embeddings`` - ``new_tracks_found`` tracks were found and every one
       of them failed to embed (missing file, unsupported codec). A FAILURE.
 
-    A cancelled run raises ``KeyboardInterrupt`` and produces no result at all.
+    A run cancelled at a checkpoint raises ``KeyboardInterrupt`` and produces no
+    result at all. A cancellation the pipeline never observes returns one of the
+    three statuses above like any other run - see the module docstring.
 
     ``status`` and ``failed`` ARE ADDITIVE. NOTHING CONSUMES THEM YET.
     ------------------------------------------------------------------
@@ -152,8 +166,11 @@ class IndexingService:
     ) -> IndexResult:
         """Index ``xml_path``, emitting a ProgressEvent for every pipeline message.
 
-        Raises ``KeyboardInterrupt`` when ``cancel`` is set, exactly as the
-        pipeline always has.
+        Raises ``KeyboardInterrupt`` when ``cancel`` is set AND the pipeline
+        reaches a per-track checkpoint afterwards - exactly as the pipeline
+        always has. A ``cancel`` first set after the last checkpoint is never
+        observed and the run completes normally; see the module docstring and
+        inventory defect #17.
         """
         # Imported here, not at module scope: processing/__init__.py re-exports
         # DiscogsEffnetEmbedder, which does `import essentia.standard`. See the

@@ -142,6 +142,20 @@ print(f"--- log ({time.time()-t0:.1f}s) ---")
 print(log2.strip())
 print("--- end log ---")
 
+# SCOPE OF THIS HARNESS, stated so it is not mistaken for full coverage:
+#
+# * It exercises TIMING A only (inventory Sec 2.13). It cancels after track 2 of
+#   at least 6, which guarantees a later per-track checkpoint, so the pipeline
+#   always raises KeyboardInterrupt here. It cannot observe timing B - a cancel
+#   first set after the LAST checkpoint - which completes the run, writes the
+#   data files and DOES append "Indexing cancelled by user" (defect #17). That
+#   timing is pinned deterministically instead, in
+#   tests/services/test_indexing_service.py and
+#   tests/test_ui_reports_success_for_every_terminal_outcome.py.
+# * The two assertions below check PRESENCE, deliberately. The order of the two
+#   cancellation lines is a race (defect #18): cancel_indexing sets the Event
+#   before it queues its own line, so the worker can queue its line first. An
+#   ordering assertion here would pass almost always and fail in the field.
 expect(win2.cancel_requested, "cancel flag set")
 expect("⚠️ Cancellation requested..." in log2, "cancellation-requested line rendered")
 expect("⚠️ Cancellation detected, stopping..." in log2, "pipeline cancellation line rendered")

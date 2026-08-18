@@ -421,13 +421,18 @@ def test_cancel_stops_the_run(indexing):
 def test_cancel_raises_keyboardinterrupt_which_is_not_an_exception(indexing):
     """CURRENT BEHAVIOUR, NOT A BUG FIX, and subtle enough to pin.
 
-    KeyboardInterrupt derives from BaseException, so reindex_window's
-    `except Exception` does NOT catch it. The worker thread dies with an
-    unhandled exception, neither a 'cancelled' nor a 'complete' message is
-    queued, and the "⚠️ Indexing cancelled by user" log line is never appended.
-    The window still shows the cancelled state, because cancel_indexing() set
-    the flag that check_indexing_status reads. Changing this would alter what
-    the user sees. Spec 3.2 / inventory defect #4."""
+    TIMING A of inventory Sec 2.13: the flag is set while a per-track checkpoint
+    still lies ahead. KeyboardInterrupt derives from BaseException, so
+    reindex_window's `except Exception` does NOT catch it. The worker thread
+    dies with an unhandled exception, neither a 'cancelled' nor a 'complete'
+    message is queued, and the "⚠️ Indexing cancelled by user" log line is not
+    appended. The window still shows the cancelled state, because
+    cancel_indexing() set the flag that check_indexing_status reads. Changing
+    this would alter what the user sees. Spec 3.2 / inventory defect #4.
+
+    This is NOT universal. See
+    test_a_cancel_first_observed_after_the_last_checkpoint_does_not_stop_the_run
+    for timing B, where no KeyboardInterrupt is raised at all."""
     service, xml, _, _ = indexing
     cancel = threading.Event()
     cancel.set()
@@ -462,6 +467,103 @@ def test_an_unset_cancel_event_does_not_stop_anything(indexing):
 
     assert result.new_tracks_added == 5
     assert (data / "meta.parquet").exists()
+
+
+class LateCancel:
+    """A cancel token that reports False for the first ``n`` reads, True after.
+
+    ``IndexingService`` passes ``cancel.is_set`` to the pipeline, so this stands
+    in for a ``threading.Event`` whose flag is first set at a chosen point in the
+    checkpoint sequence. With ``n`` equal to the number of tracks, every one of
+    the loop's checkpoints reads False and the flag "becomes set" only after the
+    loop is over - which is exactly the interleaving a real user produces by
+    clicking Cancel during the last track's embed or during the merge/write.
+    """
+
+    def __init__(self, n):
+        self.n = n
+        self.reads = 0
+
+    def is_set(self):
+        self.reads += 1
+        return self.reads > self.n
+
+
+def test_a_cancel_first_observed_after_the_last_checkpoint_does_not_stop_the_run(indexing):
+    """TIMING B, inventory defect #17. CURRENT BEHAVIOUR, NOT A BUG FIX.
+
+    cancel_check is read in exactly one place - pipeline.py:182, at the top of
+    each per-track loop iteration. The fixture has 5 tracks, so there are exactly
+    5 checkpoints. A flag that only becomes set on the 6th read is never observed
+    by the pipeline: no KeyboardInterrupt, no "⚠️ Cancellation detected,
+    stopping..." line, and the run persists all four data files.
+
+    reindex_window then evaluates `if self.cancel_requested:` - True - and
+    appends "⚠️ Indexing cancelled by user". The UI half of that is pinned in
+    tests/test_ui_reports_success_for_every_terminal_outcome.py.
+    """
+    service, xml, data, _ = indexing
+    cancel = LateCancel(n=5)
+    events = []
+
+    result = service.run(str(xml), progress=events.append, cancel=cancel)
+
+    # The pipeline consulted the token once per track and then stopped asking.
+    assert cancel.reads == 5
+    assert cancel.is_set() is True, "the token is set by now; the pipeline just never re-reads it"
+
+    assert result.status == STATUS_INDEXED
+    assert result.new_tracks_added == 5
+    assert "⚠️ Cancellation detected, stopping..." not in [e.message for e in events]
+
+    # ... and the data WAS written, contradicting "a cancelled run leaves nothing".
+    for name in ("meta.parquet", "embeddings.parquet", "index.npy", "ids.json"):
+        assert (data / name).exists(), f"{name} missing; timing B must persist"
+
+
+def test_the_pipeline_reads_the_cancel_token_once_per_track_and_nowhere_else(indexing):
+    """The load-bearing fact behind defect #17, stated directly.
+
+    If a future edit adds a second cancel checkpoint - in the merge, in the
+    persist, anywhere - this read count changes and the timing-B analysis in
+    inventory Sec 2.13 stops being true. That is a behaviour change and it must
+    be deliberate, so it fails here first.
+    """
+    service, xml, _, _ = indexing
+    cancel = LateCancel(n=10 ** 6)  # never sets
+
+    service.run(str(xml), progress=lambda e: None, cancel=cancel)
+
+    assert cancel.reads == 5, (
+        "expected exactly one cancel_check per track (5 tracks, 5 reads); "
+        f"got {cancel.reads}. A checkpoint was added or removed"
+    )
+
+
+def test_a_cancel_during_an_up_to_date_run_is_never_observed(indexing):
+    """TIMING B via STATUS_UP_TO_DATE (inventory workflow 34f).
+
+    When there are no new tracks the pipeline returns at pipeline.py:169-170,
+    before the loop. There is no checkpoint at all, so a cancel set at ANY moment
+    of such a run - even before it starts - is ignored, and the run reports
+    up_to_date. No data files are written on this path.
+    """
+    service, xml, _, _ = indexing
+    first = service.run(str(xml), progress=lambda e: None)
+    assert first.status == STATUS_INDEXED
+
+    # Re-run against the same XML with an ALREADY-SET cancel event. There are no
+    # new tracks, so the loop never runs and the flag is never read.
+    already_set = threading.Event()
+    already_set.set()
+    events = []
+    result = service.run(str(xml), progress=events.append, cancel=already_set)
+
+    assert result.status == STATUS_UP_TO_DATE
+    assert "⚠️ Cancellation detected, stopping..." not in [e.message for e in events]
+    assert "✅ No new tracks to process! Your index is up to date." in [
+        e.message for e in events
+    ]
 
 
 # --------------------------------------------------------------------------

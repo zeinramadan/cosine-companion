@@ -138,9 +138,17 @@ def test_service_and_direct_call_produce_identical_combined_files(fixture_librar
 def _spy_on_both_loops(monkeypatch):
     """Replace BOTH exporter loops with recorders. Returns the call log.
 
-    Each records under its own name, so a service method that called the wrong
-    loop - or both, or its own inlined copy - is visible in the log rather than
-    silently passing.
+    Each records under its own name, so a service method that called the WRONG
+    loop, or BOTH loops, or neither, is visible in the log rather than silently
+    passing.
+
+    What the call log alone canNOT show is a service that calls the right loop
+    AND ALSO does inlined work of its own - the log would still read
+    ``["per_seed"]``. That gap is covered separately, by
+    test_neither_export_mode_writes_anything_itself (no bytes reach disk when
+    the loops are stubbed out) and
+    test_neither_export_mode_ranks_or_writes_playlists_itself (the service never
+    calls the ranking policy or the M3U writer directly).
     """
     import services.export_service as module
 
@@ -162,12 +170,14 @@ def _spy_on_both_loops(monkeypatch):
     return calls
 
 
-def test_export_per_seed_does_not_reimplement_the_per_seed_loop(
+def test_export_per_seed_calls_the_per_seed_loop_exactly_once_and_not_the_other(
     service, fixture_library, tmp_path, monkeypatch
 ):
     """The loops live in recommendations.playlist_exporter; export_per_seed
     calls the per-seed one exactly once and never touches the combined one.
-    Pinned so a future edit cannot quietly inline either."""
+
+    Named for what it proves. It does NOT prove the absence of extra inlined
+    work in the service - the two tests at the end of this section do that."""
     calls = _spy_on_both_loops(monkeypatch)
 
     result = service.export_per_seed(["f01"], str(tmp_path / "o"), 3)
@@ -176,7 +186,7 @@ def test_export_per_seed_does_not_reimplement_the_per_seed_loop(
     assert result.playlists_created == 1
 
 
-def test_export_combined_does_not_reimplement_the_combined_loop(
+def test_export_combined_calls_the_combined_loop_exactly_once_and_not_the_other(
     service, fixture_library, tmp_path, monkeypatch
 ):
     """The other half of the pair above, which used to go uncovered: the test
@@ -201,6 +211,70 @@ def test_neither_export_mode_calls_the_other_loop(service, tmp_path, monkeypatch
     service.export_combined(["f01"], str(tmp_path / "o.m3u"), 3)
 
     assert [c[0] for c in calls] == ["per_seed", "combined"]
+
+
+def test_neither_export_mode_writes_anything_itself(service, tmp_path, monkeypatch):
+    """The anti-inlining check the call-log spies cannot make.
+
+    With both loops stubbed out to write nothing, an ExportService that only
+    orchestrates leaves the filesystem untouched. A service that had grown its
+    own inlined copy of the loop - ranking, filename sanitisation and the M3U
+    write - would put bytes on disk here even though the call log still read
+    ["per_seed"] or ["combined"].
+    """
+    _spy_on_both_loops(monkeypatch)
+    out_dir = tmp_path / "per_seed_out"
+    out_dir.mkdir()
+    combined = tmp_path / "combined_out.m3u"
+
+    service.export_per_seed(["f01", "f02"], str(out_dir), 3)
+    service.export_combined(["f01", "f02"], str(combined), 3)
+
+    assert list(out_dir.iterdir()) == [], "export_per_seed wrote files of its own"
+    assert not combined.exists(), "export_combined wrote a file of its own"
+
+
+def test_export_service_imports_only_the_two_loops_from_the_export_layer():
+    """The static half of the anti-inlining check, and the sound one.
+
+    An inlined loop has to get its pieces from somewhere. The only sources are
+    ``recommendations.ranking`` (the single ranking policy, defect #12) and
+    ``recommendations.playlist_exporter`` (the loops and the M3U writer). So
+    pin the whole import surface: services/export_service.py may import EXACTLY
+    the two loop functions from ``recommendations.*``, and nothing else - not
+    ``ranked_recommendations``, not ``create_m3u_playlist``, not
+    ``sanitise_filename_part``, not ``NumpyCosIndex``.
+
+    A monkeypatch cannot do this job: the service would use a ``from X import
+    y`` binding in its own namespace, which patching X does not intercept. The
+    import surface can only be checked statically.
+    """
+    import ast
+    from pathlib import Path
+
+    import services.export_service as module
+
+    tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+    imported = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith(
+            ("recommendations", "core", "processing")
+        ):
+            imported.setdefault(node.module, set()).update(a.name for a in node.names)
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.startswith(("recommendations", "core", "processing")):
+                    imported.setdefault(alias.name, set()).add("<module>")
+
+    assert imported == {
+        "recommendations.playlist_exporter": {
+            "export_recommendations_as_playlists",
+            "export_single_playlist",
+        }
+    }, (
+        "ExportService's import surface changed. Anything beyond the two loops "
+        f"is the raw material for an inlined copy: {imported}"
+    )
 
 
 def test_real_library_export_matches_a_direct_call(real_library, real_service, tmp_path):

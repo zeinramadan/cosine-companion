@@ -64,7 +64,14 @@ class SettingsStore:
 
     @property
     def xml_path(self) -> Any:
-        """The configured Rekordbox XML path, or ``None``. The only key in use."""
+        """The configured Rekordbox XML path, or ``None``.
+
+        Not the only key in the document: ``onboarding.save_settings`` writes
+        ``first_run_complete`` alongside it (``ui/onboarding.py:587``) and
+        ``needs_onboarding`` reads it back (``ui/onboarding.py:613``). It is the
+        only key with a named accessor, which is why the rest go through
+        ``get``/``set``.
+        """
         return self.get(XML_PATH_KEY)
 
     def _write(self, settings: Dict[str, Any]) -> None:

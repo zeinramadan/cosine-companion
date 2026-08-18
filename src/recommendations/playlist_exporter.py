@@ -25,8 +25,15 @@ from recommendations.ranking import (
     ranked_recommendations,
 )
 
-# filename[:200] + ".m3u" yields 204 characters and can leave a doubled
-# extension. Current behaviour, characterised rather than fixed.
+# filename[:200] + ".m3u" yields a 204-CHARACTER name, cut mid-title, which two
+# different long seeds can collide on silently. Current behaviour, characterised
+# rather than fixed (tests/services/test_export_service.py).
+#
+# A DOUBLED ".m3u" is impossible, contrary to what this comment used to claim:
+# sanitise_filename_part keeps only alphanumerics, space, hyphen and underscore,
+# so the sole "." in the name is the extension itself - and it can only survive
+# the [:200] slice if the name was already <= 200 characters, in which case the
+# truncation branch never runs.
 MAX_FILENAME_LENGTH = 200
 
 
