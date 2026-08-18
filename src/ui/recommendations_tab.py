@@ -165,7 +165,7 @@ class RecommendationsTabMixin:
         
         # Get the track ID from the selected recommendation
         selected_track = self.current_recommendations[selected_index]
-        track_id = selected_track['track_id']
+        track_id = selected_track.track_id
         
         # Save current state to history before changing
         self.save_current_state_to_history()
@@ -174,7 +174,7 @@ class RecommendationsTabMixin:
         self.set_current(track_id, add_to_history=False)  # Don't add to history since we just saved it
         
         # Update status to show the change
-        self.status.config(text=f"✅ Set '{selected_track['artist']} – {selected_track['title']}' as current track", fg="green")
+        self.status.config(text=f"✅ Set '{selected_track.artist} – {selected_track.title}' as current track", fg="green")
         self.after(3000, lambda: self.status.config(text="💡 Tip: Double-click any suggestion to set it as current track", fg="gray"))
 
     def pick_current(self: "App"):
@@ -225,28 +225,21 @@ class RecommendationsTabMixin:
 
     def refresh_suggestions(self: "App"):
         """Refresh recommendations for the current track."""
-        from recommendations.engine import recommend_for
-        
         if not self.current_id:
             self.current_recommendations = []
             self.update_listbox()
             return
-        
-        # Always compute more recommendations than we might display
-        # This ensures consistency - top 10 stays the same when showing top 20, etc.
-        self.current_recommendations = recommend_for(
+
+        # Always compute more recommendations than we might display.
+        # This ensures consistency - top 10 stays the same when showing top 20.
+        # ExploreSession applies the cosine ordering that used to be a separate
+        # sort here and in two places in playlist_exporter.py.
+        self.current_recommendations = self.explore.recommend(
             self.current_id,
-            self.library.meta_ix,
-            self.library.emb_ix,
-            self.library.index,
             topk=500,  # Get more cosine-similarity candidates for better results
             final_top=200  # Compute up to 200 final recommendations
         )
-        
-        # Sort by cosine similarity by default (pure audio similarity)
-        # Users can still re-sort using the sort buttons if they want
-        self.current_recommendations.sort(key=lambda x: x['cosine'], reverse=True)
-        
+
         self.update_listbox()
 
     def sort_suggestions(self: "App", sort_by: str):
@@ -256,19 +249,19 @@ class RecommendationsTabMixin:
         
         # Define sort keys and reverse flags
         if sort_by == "score":
-            key_func = lambda x: float(x.get('score', 0))
+            key_func = lambda x: float(x.score)
             reverse = True
         elif sort_by == "cosine":
-            key_func = lambda x: float(x.get('cosine', 0))
+            key_func = lambda x: float(x.cosine)
             reverse = True
         elif sort_by == "key":
-            key_func = lambda x: str(x.get('key', ''))
+            key_func = lambda x: str(x.key)
             reverse = False
         elif sort_by == "bpm":
-            key_func = lambda x: float(x.get('bpm', 0) or 0)
+            key_func = lambda x: float(x.bpm or 0)
             reverse = True
         elif sort_by == "artist":
-            key_func = lambda x: str(x.get('artist', '')).lower()
+            key_func = lambda x: str(x.artist).lower()
             reverse = False
         else:
             return
@@ -291,11 +284,11 @@ class RecommendationsTabMixin:
         recommendations_to_show = self.current_recommendations[:topn]
         
         for r in recommendations_to_show:
-            cosine = float(r.get('cosine', 0))
-            score = float(r.get('score', 0))
+            cosine = float(r.cosine)
+            score = float(r.score)
             cos_pct = cosine * 100.0
             score_pct = max(0.0, min(1.0, score)) * 100.0
-            line = f"{r['artist']} – {r['title']}   [Key {r['key'] or '?'}  BPM {r['bpm'] or '?'}  Cos {cos_pct:.1f}%  Score {score_pct:.1f}%]"
+            line = f"{r.artist} – {r.title}   [Key {r.key or '?'}  BPM {r.bpm or '?'}  Cos {cos_pct:.1f}%  Score {score_pct:.1f}%]"
             self.listbox.insert(tk.END, line)
         
         displayed_count = self.listbox.size()

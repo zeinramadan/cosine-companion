@@ -8,10 +8,13 @@ Services *orchestrate*. The pure layers - ``src/core/``, ``src/processing/`` and
 ``src/recommendations/`` - are called, never reimplemented.
 """
 
+from services.explore_session import ExploreSession, Recommendation
 from services.library_session import LibrarySession
 from services.settings_store import SettingsStore
 
 __all__ = [
+    'ExploreSession',
     'LibrarySession',
+    'Recommendation',
     'SettingsStore',
 ]

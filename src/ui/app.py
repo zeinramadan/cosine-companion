@@ -5,7 +5,7 @@ from typing import Optional, List, Dict, Any
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from services import LibrarySession
+from services import ExploreSession, LibrarySession, Recommendation
 from ui.recommendations_tab import RecommendationsTabMixin
 from ui.set_creator_tab import SetCreatorTabMixin
 from ui.library_tab import LibraryTabMixin
@@ -46,8 +46,9 @@ class App(RecommendationsTabMixin, SetCreatorTabMixin, LibraryTabMixin, Playlist
         # Single source of truth for meta / embeddings / index / ids. The tabs
         # read through this session instead of mutating App attributes.
         self.library: LibrarySession = _load_app_data(self)
+        self.explore: ExploreSession = ExploreSession(self.library)
         self.current_id: Optional[str] = None
-        self.current_recommendations: List[Dict[str, Any]] = []
+        self.current_recommendations: List[Recommendation] = []
         
         # History tracking for back functionality
         self.history: List[Dict[str, Any]] = []  # List of {track_id, recommendations, sort_state}
