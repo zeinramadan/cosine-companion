@@ -41,7 +41,7 @@ def read_rekordbox_xml(xml_path: str) -> pd.DataFrame:
                 path_local = unquote(path_with_fragment)
 
         rows.append({
-            "track_id": t.get("TrackID") or t.get("TrackID", ""),
+            "track_id": t.get("TrackID") or "",
             "path": loc,
             "artist": t.get("Artist") or "",
             "title": t.get("Name") or "",
@@ -56,8 +56,39 @@ def read_rekordbox_xml(xml_path: str) -> pd.DataFrame:
     # Keep only rows with a resolved local path
     df = df[df["path_local"].astype(str).str.len() > 0].copy()
 
-    # Stable ID if XML TrackID missing
-    if "track_id" not in df or df["track_id"].isna().any() or (df["track_id"] == "").any():
-        df["track_id"] = df["path"]
+    # Fall back only for the individual tracks that have no Rekordbox TrackID.
+    # A path-derived ID is not stable if the file moves, and the row's identity
+    # will change if Rekordbox later assigns a real TrackID. This is preferable to
+    # replacing the valid TrackIDs for the rest of the library.
+    missing_track_id = df["track_id"].isna() | (df["track_id"] == "")
+    if missing_track_id.any():
+        fallback_count = int(missing_track_id.sum())
+        print(
+            f"{fallback_count} track(s) had no Rekordbox TrackID; "
+            "using file path as identity"
+        )
+        df.loc[missing_track_id, "track_id"] = df.loc[missing_track_id, "path"]
+
+    # This guard also rejects duplicate TrackIDs that main tolerated; duplicate
+    # primary keys break set_index in loader.py. It runs before the pipeline's
+    # remove_simple_duplicates() call, so repeated imports of the same file with
+    # no TrackID fail here instead of being deduplicated later by path_local.
+    duplicate_track_id = df["track_id"].duplicated(keep=False)
+    if duplicate_track_id.any():
+        duplicate_rows = df.loc[duplicate_track_id, ["track_id", "path"]]
+        duplicate_id_count = duplicate_rows["track_id"].nunique(dropna=False)
+        duplicate_id_label = "value" if duplicate_id_count == 1 else "values"
+        examples = "; ".join(
+            f"{track_id!r} -> {path!r}"
+            for track_id, path in duplicate_rows.head(5).itertuples(index=False)
+        )
+        raise ValueError(
+            f"Rekordbox XML {str(xml_path)!r} contains {len(duplicate_rows)} "
+            f"tracks across {duplicate_id_count} duplicated track_id "
+            f"{duplicate_id_label}. "
+            "Affected track_id -> path pairs (up to 5): "
+            f"{examples}. Ensure each retained track has a unique Rekordbox "
+            "TrackID or file Location before indexing."
+        )
 
     return df
