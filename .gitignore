@@ -104,3 +104,6 @@ build/
 
 # Claude
 .claude
+
+# Superpowers brainstorm scratch
+.superpowers/
