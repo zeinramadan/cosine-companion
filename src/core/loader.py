@@ -34,10 +34,22 @@ def index_file_paths(data_dir: Optional[Path] = None) -> Tuple[Path, Path, Path,
     )
 
 
-def load_existing_data() -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
+def _report(progress, phase, message):
+    """Print, or hand the same string to a structured progress callback."""
+    if progress is None:
+        print(message)
+    else:
+        progress(phase, 0, 0, message)
+
+
+def load_existing_data(progress=None) -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
     """
     Load existing metadata and embeddings if they exist.
-    
+
+    Args:
+        progress: Optional callable(phase, current, total, message). When given,
+            messages are reported through it instead of being printed.
+
     Returns:
         Tuple of (existing_meta_df, existing_embeddings_df) or (None, None) if no data exists
     """
@@ -47,10 +59,10 @@ def load_existing_data() -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]
     try:
         existing_meta = pd.read_parquet(META_PQ)
         existing_emb = pd.read_parquet(EMB_PQ)
-        print(f"Found existing data: {len(existing_meta)} tracks already indexed")
+        _report(progress, "start", f"Found existing data: {len(existing_meta)} tracks already indexed")
         return existing_meta, existing_emb
     except Exception as e:
-        print(f"Warning: Could not load existing data ({e}), starting fresh")
+        _report(progress, "start", f"Warning: Could not load existing data ({e}), starting fresh")
         return None, None
 
 
@@ -138,14 +150,16 @@ def load_all(data_dir: Optional[Path] = None) -> Tuple[pd.DataFrame, pd.DataFram
     return meta, meta_ix, emb_ix, idx, V, ids
 
 
-def find_new_tracks(current_meta: pd.DataFrame, existing_meta: Optional[pd.DataFrame]) -> pd.DataFrame:
+def find_new_tracks(current_meta: pd.DataFrame, existing_meta: Optional[pd.DataFrame],
+                    progress=None) -> pd.DataFrame:
     """
     Find tracks that need to be processed (new or changed).
     
     Args:
         current_meta: Current metadata from XML
         existing_meta: Previously processed metadata
-        
+        progress: Optional callable(phase, current, total, message)
+
     Returns:
         DataFrame of tracks that need processing
     """
@@ -155,6 +169,6 @@ def find_new_tracks(current_meta: pd.DataFrame, existing_meta: Optional[pd.DataF
     # Find tracks not in existing data
     existing_ids = set(existing_meta['track_id'].values)
     new_tracks = current_meta[~current_meta['track_id'].isin(existing_ids)]
-    
-    print(f"Found {len(new_tracks)} new tracks to process")
+
+    _report(progress, "plan", f"Found {len(new_tracks)} new tracks to process")
     return new_tracks

@@ -1,0 +1,425 @@
+"""Characterisation tests for IndexingService.
+
+This is the one place in PR 2 where a MECHANISM changes. Progress used to be
+reported by replacing the process-global sys.stdout with a queue writer from a
+worker thread (reindex_window.py:164-194, onboarding.py:400-416). It is now a
+structured callback. The plan sanctions exactly this change, and the constraint
+is that the UI must display the same information as before - so every one of the
+37 print sites reachable during indexing (processing/pipeline.py, core/loader.py,
+core/deleted_tracks.py) emits an event carrying the IDENTICAL string.
+
+Essentia is never loaded here: the embedder is mocked. A real indexing pass over
+real audio is a separate manual check, recorded in the PR description.
+"""
+
+import os
+import sys
+import threading
+from urllib.parse import quote
+
+import numpy as np
+import pandas as pd
+import pytest
+
+import core.deleted_tracks as deleted_tracks_module
+import core.loader as loader_module
+import core.persistence as persistence_module
+import processing.pipeline as pipeline_module
+from services.indexing_service import IndexingService, IndexResult, ProgressEvent
+from services.settings_store import SettingsStore
+
+DIM = 8
+
+
+class FakeEmbedder:
+    """Stands in for DiscogsEffnetEmbedder. Never touches Essentia."""
+
+    instances = 0
+
+    def __init__(self, *args, **kwargs):
+        FakeEmbedder.instances += 1
+        self.embedded = []
+
+    def embed_file(self, path_local):
+        self.embedded.append(path_local)
+        # Match the FILE NAME, not the path: pytest's tmp directory for
+        # test_missing_and_broken_files_are_reported is itself called
+        # "test_missing_and_broken_files_0".
+        if os.path.basename(path_local).startswith("broken"):
+            return None  # the decode-failure path
+        vector = np.zeros(DIM, dtype="float32")
+        vector[len(self.embedded) % DIM] = 1.0
+        return vector
+
+
+def _write_xml(path, tracks):
+    entries = "".join(
+        f'<TRACK TrackID="{tid}" Name="{name}" Artist="{artist}" '
+        f'AverageBpm="128.00" Tonality="8A" Album="" '
+        f'Location="file://localhost{quote(str(loc))}"/>'
+        for tid, name, artist, loc in tracks
+    )
+    path.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<DJ_PLAYLISTS Version="1.0.0"><COLLECTION Entries="{len(tracks)}">'
+        f"{entries}</COLLECTION></DJ_PLAYLISTS>",
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.fixture
+def indexing(tmp_path, monkeypatch):
+    """An isolated data directory, a fixture XML and a mocked embedder."""
+    data = tmp_path / "data"
+    data.mkdir()
+    audio = tmp_path / "audio"
+    audio.mkdir()
+
+    monkeypatch.setattr(loader_module, "META_PQ", data / "meta.parquet")
+    monkeypatch.setattr(loader_module, "EMB_PQ", data / "embeddings.parquet")
+    monkeypatch.setattr(persistence_module, "META_PQ", data / "meta.parquet")
+    monkeypatch.setattr(persistence_module, "EMB_PQ", data / "embeddings.parquet")
+    monkeypatch.setattr(persistence_module, "IDX_NPY", data / "index.npy")
+    monkeypatch.setattr(persistence_module, "IDS_JSON", data / "ids.json")
+    monkeypatch.setattr(deleted_tracks_module, "DELETED_TRACKS_JSON", data / "deleted.json")
+    monkeypatch.setattr(pipeline_module, "DiscogsEffnetEmbedder", FakeEmbedder)
+    monkeypatch.setattr(pipeline_module, "time", type("T", (), {"sleep": staticmethod(lambda s: None)}))
+
+    tracks = []
+    for i in range(1, 6):
+        f = audio / f"track{i}.mp3"
+        f.write_bytes(b"\x00")
+        tracks.append((str(1000 + i), f"Title {i}", f"Artist {i}", f))
+    xml = _write_xml(tmp_path / "library.xml", tracks)
+
+    service = IndexingService(SettingsStore(data / "settings.json"))
+    return service, xml, data, audio
+
+
+def collect(service, xml, **kw):
+    events = []
+    result = service.run(str(xml), progress=events.append, **kw)
+    return result, events
+
+
+# --------------------------------------------------------------------------
+# Structured progress replaces the stdout swap
+# --------------------------------------------------------------------------
+
+
+def test_run_never_writes_to_stdout(indexing, capsys):
+    """The whole point of the mechanism change. reindex_window used to swap
+    sys.stdout process-wide from a worker thread to capture these lines."""
+    service, xml, _, _ = indexing
+
+    service.run(str(xml), progress=lambda e: None)
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+
+
+def test_run_does_not_replace_sys_stdout(indexing):
+    service, xml, _, _ = indexing
+    before = sys.stdout
+
+    service.run(str(xml), progress=lambda e: None)
+
+    assert sys.stdout is before
+
+
+def test_emits_progress_events(indexing):
+    service, xml, _, _ = indexing
+
+    _, events = collect(service, xml)
+
+    assert events
+    assert all(isinstance(e, ProgressEvent) for e in events)
+    assert all(isinstance(e.phase, str) and isinstance(e.message, str) for e in events)
+
+
+def test_embed_events_carry_real_current_and_total(indexing):
+    """The pipeline has always known i/N; it just never reported it, which is
+    why the progress bar is indeterminate (spec 3.2). The service now supplies
+    it; making the bar determinate is PR 3 work."""
+    service, xml, _, _ = indexing
+
+    _, events = collect(service, xml)
+
+    per_track = [e for e in events if e.phase == "embed" and e.message.startswith("   [")]
+    assert [e.current for e in per_track] == [1, 2, 3, 4, 5]
+    assert all(e.total == 5 for e in per_track)
+    # The closing summary is also an embed-phase event, at current == total.
+    summary = [e for e in events if e.message.startswith("✨")]
+    assert (summary[0].phase, summary[0].current, summary[0].total) == ("embed", 5, 5)
+
+
+def test_non_embed_events_report_zero_progress(indexing):
+    service, xml, _, _ = indexing
+
+    _, events = collect(service, xml)
+
+    for e in events:
+        if e.phase != "embed":
+            assert (e.current, e.total) == (0, 0), e
+
+
+def test_phases_appear_in_pipeline_order(indexing):
+    service, xml, _, _ = indexing
+
+    _, events = collect(service, xml)
+
+    order = []
+    for e in events:
+        if not order or order[-1] != e.phase:
+            order.append(e.phase)
+    assert order == ["start", "read_xml", "duplicates", "deleted", "plan",
+                     "embed", "merge", "complete"], order
+
+
+# --------------------------------------------------------------------------
+# The UI must display the same information as before
+# --------------------------------------------------------------------------
+
+
+def test_event_messages_are_the_exact_lines_the_log_pane_used_to_show(indexing):
+    service, xml, data, _ = indexing
+
+    _, events = collect(service, xml)
+    messages = [e.message for e in events]
+
+    assert messages[0] == "🎵 Cosine Companion - Incremental Indexing"
+    assert messages[1] == "=" * 50
+    assert "📖 Reading Rekordbox XML..." in messages
+    assert "   Found 5 tracks in XML" in messages
+    assert "🔍 Checking for duplicate tracks..." in messages
+    assert "   No duplicates found" in messages
+    assert "🔍 Checking for previously deleted tracks..." in messages
+    # "Found N new tracks to process" comes from core.loader.find_new_tracks,
+    # which returns early WITHOUT reporting when there is no existing data - so
+    # it is absent on a first run. Asserted for a second run below.
+    assert "Found 5 new tracks to process" not in messages
+    assert "🎯 Processing 5 new tracks..." in messages
+    assert "✨ Generated 5 new embeddings" in messages
+    assert "✅ Indexing complete!" in messages
+    assert "   • Total tracks indexed: 5" in messages
+    assert "   • New tracks added: 5" in messages
+    assert "🚀 Ready to use! Run 'python cosine_companion.py ui' to start the application." in messages
+
+
+def test_per_track_message_keeps_its_exact_padding_and_hyphen(indexing):
+    service, xml, _, _ = indexing
+
+    _, events = collect(service, xml)
+
+    embed = [e for e in events if e.phase == "embed" and e.message.startswith("   [")]
+    assert embed[0].message == "   [  1/5] Artist 1 - Title 1"
+    assert embed[4].message == "   [  5/5] Artist 5 - Title 5"
+
+
+def test_no_blank_messages_are_emitted(indexing):
+    """The QueueWriter dropped blank lines, so the pipeline's bare print() never
+    reached the log pane. Preserved."""
+    service, xml, _, _ = indexing
+
+    _, events = collect(service, xml)
+
+    assert all(e.message.strip() for e in events)
+
+
+def test_full_reindex_announces_itself(indexing):
+    service, xml, _, _ = indexing
+
+    _, events = collect(service, xml, force_full=True)
+    messages = [e.message for e in events]
+
+    assert messages[0] == "🎵 Cosine Companion - Full Reindex"
+    assert "🔄 Force full reindex requested - ignoring existing data" in messages
+
+
+def test_messages_from_core_modules_are_forwarded_too(indexing):
+    """load_existing_data, find_new_tracks and filter_deleted_tracks all print,
+    and all of it used to reach the log pane through the stdout swap."""
+    service, xml, data, _ = indexing
+    service.run(str(xml), progress=lambda e: None)  # first pass creates data
+
+    _, events = collect(service, xml)
+    messages = [e.message for e in events]
+
+    assert "Found existing data: 5 tracks already indexed" in messages  # core.loader
+    assert "Found 0 new tracks to process" in messages                  # core.loader
+    assert "✅ No new tracks to process! Your index is up to date." in messages
+
+
+def test_deleted_track_filtering_is_reported(indexing):
+    service, xml, data, _ = indexing
+    from core.deleted_tracks import add_deleted_tracks_with_metadata
+
+    add_deleted_tracks_with_metadata([{"track_id": "1001", "artist": "A", "title": "T"}])
+
+    _, events = collect(service, xml)
+
+    assert "   Filtered out 1 previously deleted tracks" in [e.message for e in events]
+
+
+def test_missing_and_broken_files_are_reported(indexing, tmp_path):
+    service, _, _, audio = indexing
+    good = audio / "track1.mp3"
+    broken = audio / "broken.mp3"
+    broken.write_bytes(b"\x00")
+    missing = audio / "gone.mp3"  # never created
+    xml = _write_xml(tmp_path / "mixed.xml", [
+        ("2001", "Good", "A", good),
+        ("2002", "Broken", "B", broken),
+        ("2003", "Gone", "C", missing),
+    ])
+
+    _, events = collect(service, xml)
+    messages = [e.message for e in events]
+
+    assert f"      ⚠️  File not found: {missing}" in messages
+    assert (f"      ⚠️  Failed to process audio file "
+            f"(unsupported codec or decode error): {broken}") in messages
+    assert "✨ Generated 1 new embeddings" in messages
+
+
+# --------------------------------------------------------------------------
+# Cancellation
+# --------------------------------------------------------------------------
+
+
+def test_cancel_stops_the_run(indexing):
+    service, xml, _, _ = indexing
+    cancel = threading.Event()
+    events = []
+
+    def progress(event):
+        events.append(event)
+        if event.phase == "embed" and event.current == 2:
+            cancel.set()
+
+    with pytest.raises(KeyboardInterrupt, match="User cancelled indexing"):
+        service.run(str(xml), progress=progress, cancel=cancel)
+
+    assert "⚠️ Cancellation detected, stopping..." in [e.message for e in events]
+    assert max(e.current for e in events if e.phase == "embed") < 5
+
+
+def test_cancel_raises_keyboardinterrupt_which_is_not_an_exception(indexing):
+    """CURRENT BEHAVIOUR, NOT A BUG FIX, and subtle enough to pin.
+
+    KeyboardInterrupt derives from BaseException, so reindex_window's
+    `except Exception` does NOT catch it. The worker thread dies with an
+    unhandled exception, neither a 'cancelled' nor a 'complete' message is
+    queued, and the "⚠️ Indexing cancelled by user" log line is never appended.
+    The window still shows the cancelled state, because cancel_indexing() set
+    the flag that check_indexing_status reads. Changing this would alter what
+    the user sees. Spec 3.2 / inventory defect #4."""
+    service, xml, _, _ = indexing
+    cancel = threading.Event()
+    cancel.set()
+
+    assert not issubclass(KeyboardInterrupt, Exception)
+    with pytest.raises(KeyboardInterrupt):
+        service.run(str(xml), progress=lambda e: None, cancel=cancel)
+
+
+def test_cancel_discards_every_embedding_computed_so_far(indexing):
+    """CURRENT BEHAVIOUR, NOT A BUG FIX. A cancelled run keeps nothing; the
+    6.8-minute full run loses everything. Keeping partial work is PR 3 work
+    (spec 5.4)."""
+    service, xml, data, _ = indexing
+    cancel = threading.Event()
+
+    def progress(event):
+        if event.phase == "embed" and event.current == 3:
+            cancel.set()
+
+    with pytest.raises(KeyboardInterrupt):
+        service.run(str(xml), progress=progress, cancel=cancel)
+
+    assert not (data / "meta.parquet").exists()
+    assert not (data / "index.npy").exists()
+
+
+def test_an_unset_cancel_event_does_not_stop_anything(indexing):
+    service, xml, data, _ = indexing
+
+    result = service.run(str(xml), progress=lambda e: None, cancel=threading.Event())
+
+    assert result.new_tracks_added == 5
+    assert (data / "meta.parquet").exists()
+
+
+# --------------------------------------------------------------------------
+# Result and persistence
+# --------------------------------------------------------------------------
+
+
+def test_returns_an_index_result(indexing):
+    service, xml, _, _ = indexing
+
+    result = service.run(str(xml), progress=lambda e: None)
+
+    assert isinstance(result, IndexResult)
+    assert result.total_tracks_indexed == 5
+    assert result.new_tracks_added == 5
+
+
+def test_second_run_finds_nothing_new(indexing):
+    service, xml, _, _ = indexing
+    service.run(str(xml), progress=lambda e: None)
+
+    result = service.run(str(xml), progress=lambda e: None)
+
+    assert result.new_tracks_added == 0
+
+
+def test_writes_the_four_data_files(indexing):
+    service, xml, data, _ = indexing
+
+    service.run(str(xml), progress=lambda e: None)
+
+    for name in ("meta.parquet", "embeddings.parquet", "index.npy", "ids.json"):
+        assert (data / name).exists(), name
+    assert len(pd.read_parquet(data / "meta.parquet")) == 5
+    assert np.load(data / "index.npy").shape == (5, DIM)
+
+
+def test_the_embedder_is_only_constructed_when_there_is_work(indexing):
+    service, xml, _, _ = indexing
+    service.run(str(xml), progress=lambda e: None)
+    before = FakeEmbedder.instances
+
+    service.run(str(xml), progress=lambda e: None)
+
+    assert FakeEmbedder.instances == before
+
+
+# --------------------------------------------------------------------------
+# The CLI keeps printing
+# --------------------------------------------------------------------------
+
+
+def test_pipeline_still_prints_when_no_callback_is_given(indexing, capsys):
+    """python cosine_companion.py index <xml> must be unchanged."""
+    from processing.pipeline import index_library
+
+    _, xml, _, _ = indexing
+    index_library(str(xml))
+
+    out = capsys.readouterr().out
+    assert "🎵 Cosine Companion - Incremental Indexing" in out
+    assert "   [  1/5] Artist 1 - Title 1" in out
+    assert "✅ Indexing complete!" in out
+    assert out.endswith(
+        "🚀 Ready to use! Run 'python cosine_companion.py ui' to start the application.\n"
+    )
+
+
+def test_settings_store_is_available_to_the_service(indexing):
+    service, _, data, _ = indexing
+
+    service.settings.set("xml_path", "/tmp/library.xml")
+
+    assert service.settings.xml_path == "/tmp/library.xml"

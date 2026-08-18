@@ -10,6 +10,7 @@ Services *orchestrate*. The pure layers - ``src/core/``, ``src/processing/`` and
 
 from services.explore_session import ExploreSession, Recommendation
 from services.export_service import ExportResult, ExportService
+from services.indexing_service import IndexingService, IndexResult, ProgressEvent
 from services.library_session import LibrarySession
 from services.set_builder import SetBuilder
 from services.settings_store import SettingsStore
@@ -18,7 +19,10 @@ __all__ = [
     'ExploreSession',
     'ExportResult',
     'ExportService',
+    'IndexResult',
+    'IndexingService',
     'LibrarySession',
+    'ProgressEvent',
     'Recommendation',
     'SetBuilder',
     'SettingsStore',

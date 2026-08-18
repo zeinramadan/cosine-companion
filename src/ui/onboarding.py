@@ -373,36 +373,20 @@ You only need to do this once. After that, you can add new tracks incrementally.
     
     def run_indexing(self):
         """Run the indexing process (in background thread)."""
-        import sys
-        from io import StringIO
-        from processing.pipeline import index_library
-        
-        # Create a custom writer that sends to queue
-        class QueueWriter:
-            def __init__(self, message_queue):
-                self.queue = message_queue
-                self.buffer = ""
-            
-            def write(self, text):
-                self.buffer += text
-                # Send complete lines to queue
-                while '\n' in self.buffer:
-                    line, self.buffer = self.buffer.split('\n', 1)
-                    if line.strip():  # Only send non-empty lines
-                        self.queue.put(('log', line))
-            
-            def flush(self):
-                if self.buffer.strip():
-                    self.queue.put(('log', self.buffer))
-                    self.buffer = ""
-        
-        # Redirect stdout to queue
-        old_stdout = sys.stdout
-        sys.stdout = QueueWriter(self.message_queue)
-        
+        from config import DATA
+        from services import IndexingService, SettingsStore
+
+        def on_progress(event):
+            # One queued line per pipeline message, exactly as the stdout swap
+            # produced.
+            self.message_queue.put(('log', event.message))
+
+        service = IndexingService(SettingsStore(DATA / "settings.json"))
+
         try:
-            # Run indexing
-            index_library(self.xml_path, force_full=False, sample_size=None)
+            # Run indexing with structured progress instead of a process-global
+            # sys.stdout swap. Onboarding has never offered cancellation.
+            service.run(self.xml_path, force_full=False, progress=on_progress)
             self.message_queue.put(('complete', True))
             self.message_queue.put(('log', "\n✅ Indexing completed successfully!"))
         except Exception as e:
@@ -410,10 +394,6 @@ You only need to do this once. After that, you can add new tracks incrementally.
             self.message_queue.put(('log', f"\n❌ Error during indexing: {str(e)}"))
             import traceback
             self.message_queue.put(('log', traceback.format_exc()))
-        finally:
-            # Restore stdout
-            sys.stdout.flush()
-            sys.stdout = old_stdout
     
     def check_indexing_status(self):
         """Check if indexing is complete and process queue messages."""
