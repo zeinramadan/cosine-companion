@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<DJ_PLAYLISTS Version="1.0.0">
+  <PRODUCT Name="Rekordbox" Version="7.0.0" Company="Alpha Audio Labs"/>
+  <COLLECTION Entries="17">
+    <TRACK TrackID="310001" Name="Neon Harbor" Artist="Aster Vale" Album="Night Geometry" AverageBpm="122.50" Tonality="8A" Location="file:///Users/example/Music/Aster%20Vale/Neon%20Harbor.mp3"/>
+    <TRACK TrackID="310002" Name="Satellite Bloom" Artist="Lumen Field" Album="Soft Machines" AverageBpm="124.00" Tonality="9A" Location="file://localhost/Users/example/Music/Lumen%20Field/Satellite%20Bloom.aiff"/>
+    <TRACK TrackID="310003" Name="Break Point" Artist="Signal Garden" Album="Voltage Studies" AverageBpm="126.25" Tonality="10A" Location="file:///Users/example/Music/SignalGarden/Break#Point.wav"/>
+    <TRACK TrackID="310004" Name="Glass Transit" Artist="Metric Coast" Album="Blue Terminal" AverageBpm="120.00" Tonality="7A" Location="file:///Users/example/Music/MetricCoast/Glass%20Transit.flac"/>
+    <TRACK TrackID="310005" Name="Amber Circuit" Artist="North Relay" Album="Static Weather" AverageBpm="128.00" Tonality="11A" Location="file:///Users/example/Music/NorthRelay/Amber_Circuit.mp3"/>
+    <TRACK TrackID="310006" Name="Quiet Vector" Artist="Paper Current" Album="Parallel Lines" AverageBpm="118.75" Tonality="6A" Location="file:///Users/example/Music/PaperCurrent/Quiet_Vector.m4a"/>
+    <TRACK TrackID="310007" Name="Polar Arcade" Artist="Echo Meridian" Album="Cold Light" AverageBpm="125.00" Tonality="12A" Location="file:///Users/example/Music/EchoMeridian/Polar_Arcade.wav"/>
+    <TRACK TrackID="310008" Name="Cinder Map" Artist="Velvet Index" Album="Cartography" AverageBpm="121.00" Tonality="5A" Location="file:///Users/example/Music/VelvetIndex/Cinder_Map.aiff"/>
+    <TRACK TrackID="310009" Name="Silver Hours" Artist="June Static" Album="Clockwork Air" AverageBpm="123.50" Tonality="4A" Location="file:///Users/example/Music/JuneStatic/Silver_Hours.mp3"/>
+    <TRACK Name="Unknown Signal" Artist="Open Channel" Album="Uncatalogued" AverageBpm="119.00" Tonality="3A" Location="file:///Users/example/Music/OpenChannel/Unknown%20Signal.wav"/>
+    <TRACK TrackID="310011" Name="Tidal Memory" Artist="Low Atlas" Album="Drift Logic" AverageBpm="127.00" Tonality="2A" Location="file:///Users/example/Music/LowAtlas/Tidal_Memory.flac"/>
+    <TRACK TrackID="310012" Name="Chrome Meadow" Artist="Mosaic North" Album="Synthetic Fields" AverageBpm="124.50" Tonality="1A" Location="file:///Users/example/Music/MosaicNorth/Chrome_Meadow.mp3"/>
+    <TRACK TrackID="310013" Name="Distant Frame" Artist="Soft Quarry" Album="Edges" Tempo="116.00" Tonality="8B" Location="file:///Users/example/Music/SoftQuarry/Distant_Frame.aiff"/>
+    <TRACK TrackID="310014" Name="Night Ferry" Artist="Copper Lake" Album="Crossings" AverageBpm="120.50" Tonality="9B" Location="file:///Users/example/Music/CopperLake/Night_Ferry.m4a"/>
+    <TRACK TrackID="310015" Name="Prism Avenue" Artist="Mono District" Album="Refractions" AverageBpm="126.00" Tonality="10B" Location="file:///Users/example/Music/MonoDistrict/Prism_Avenue.wav"/>
+    <TRACK TrackID="310016" Name="Last Receiver" Artist="Static Orchard" Album="Long Range" AverageBpm="122.00" Tonality="11B" Location="file:///Users/example/Music/StaticOrchard/Last_Receiver.mp3"/>
+    <TRACK TrackID="310017" Name="Offline Entry" Artist="Absent Path" Album="Nowhere" AverageBpm="100.00" Tonality="12B"/>
+  </COLLECTION>
+</DJ_PLAYLISTS>
