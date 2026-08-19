@@ -91,6 +91,12 @@ async function request(path, params = {}, options = {}) {
 export const api = {
   health: () => request('/api/health'),
   library: () => request('/api/library'),
+  libraryTracks: () => request('/api/library/tracks'),
+  deleteLibraryTracks: (trackIds) =>
+    request('/api/library/tracks/delete', {}, {
+      method: 'POST',
+      body: { track_ids: trackIds.join('\n') },
+    }),
   settings: () => request('/api/settings'),
   updateSettings: (xmlPath) =>
     request('/api/settings', {}, { method: 'POST', body: { xml_path: xmlPath } }),

@@ -16,11 +16,13 @@ docs/UI_FEATURE_INVENTORY.md section 4 and spec 3.2.
 """
 
 import json
+import threading
 
 import numpy as np
 import pandas as pd
 import pytest
 
+from core.loader import index_file_paths
 from services.library_session import LibrarySession, LibrarySnapshot
 
 
@@ -170,6 +172,49 @@ def test_snapshot_keeps_the_pre_delete_view(tmp_library):
     assert session.index.ids == ["t1", "t3", "t4"]
 
 
+def test_snapshot_cannot_land_inside_the_delete_publication(
+    tmp_library, monkeypatch
+):
+    session = LibrarySession.load(tmp_library)
+    delete_reached_persist = threading.Event()
+    release_delete = threading.Event()
+    snapshot_attempted = threading.Event()
+    snapshot_finished = threading.Event()
+    captured = []
+    real_persist = session._persist
+
+    def pausing_persist(*args):
+        real_persist(*args)
+        delete_reached_persist.set()
+        assert release_delete.wait(timeout=5), "the delete was never released"
+
+    monkeypatch.setattr(session, "_persist", pausing_persist)
+
+    delete_thread = threading.Thread(target=session.delete_tracks, args=(["t2"],))
+
+    def capture():
+        snapshot_attempted.set()
+        captured.append(session.snapshot())
+        snapshot_finished.set()
+
+    snapshot_thread = threading.Thread(target=capture)
+    delete_thread.start()
+    assert delete_reached_persist.wait(timeout=5), "delete never reached persistence"
+    snapshot_thread.start()
+    assert snapshot_attempted.wait(timeout=5), "snapshot thread never started"
+    try:
+        assert not snapshot_finished.wait(timeout=0.05)
+    finally:
+        release_delete.set()
+        delete_thread.join(timeout=5)
+        snapshot_thread.join(timeout=5)
+
+    assert not delete_thread.is_alive()
+    assert not snapshot_thread.is_alive()
+    assert captured[0].ids == ["t1", "t3", "t4"]
+    assert "t2" not in captured[0].meta_ix.index
+
+
 # --------------------------------------------------------------------------
 # delete_tracks
 # --------------------------------------------------------------------------
@@ -209,8 +254,12 @@ def test_delete_tracks_persists_to_all_four_files(tmp_library):
     reloaded = LibrarySession.load(tmp_library)
     assert reloaded.track_count == 3
     assert reloaded.ids == ["t1", "t3", "t4"]
+    _meta, _emb, index_path, ids_path = index_file_paths(tmp_library)
+    assert json.loads(ids_path.read_text()) == ["t1", "t3", "t4"]
+    assert np.load(index_path).shape == (3, 4)
     assert json.loads((tmp_library / "ids.json").read_text()) == ["t1", "t3", "t4"]
     assert np.load(tmp_library / "index.npy").shape == (3, 4)
+    assert len(pd.read_parquet(tmp_library / "meta.parquet")) == 3
 
 
 def test_delete_tracks_records_artist_and_title_in_deleted_tracks_json(
@@ -250,29 +299,23 @@ def test_delete_tracks_with_an_empty_selection_changes_nothing(tmp_library):
 
 
 # --------------------------------------------------------------------------
-# Deletion leaves `meta` STALE. Inventory defect #14.
-#
-# perform_track_deletion never rebuilt App.meta, so every consumer that reads
-# `meta` rather than `meta_ix` kept showing deleted tracks until the app was
-# restarted. Rebuilding it in the service would silently repair that, and a
-# baseline that quietly improves behaviour proves nothing about the next PR.
+# Deletion publishes `meta` with the rest of the new generation. Inventory
+# defect #14 is fixed by the Library destination PR.
 # --------------------------------------------------------------------------
 
 
-def test_deletion_leaves_meta_stale(tmp_library):
+def test_deletion_rebuilds_meta(tmp_library):
     session = LibrarySession.load(tmp_library)
     before = session.meta
 
     session.delete_tracks(["t2"])
 
-    assert session.meta is before, "meta was rebuilt; it must not be"
-    assert "t2" in list(session.meta["track_id"].values)
-    assert len(session.meta) == 4
+    assert session.meta is not before
+    assert "t2" not in list(session.meta["track_id"].values)
+    assert len(session.meta) == 3
 
 
-def test_deletion_updates_meta_ix_ids_and_index_while_meta_lags(tmp_library):
-    """The exact split: the Library tab (meta_ix) refreshes, the Explore picker
-    and the all-tracks export (meta) do not."""
+def test_deletion_publishes_every_in_memory_view_together(tmp_library):
     session = LibrarySession.load(tmp_library)
 
     session.delete_tracks(["t2"])
@@ -282,14 +325,11 @@ def test_deletion_updates_meta_ix_ids_and_index_while_meta_lags(tmp_library):
     assert "t2" not in session.ids                # index: updated
     assert session.index.ids == ["t1", "t3", "t4"]
     assert session.track_count == 3
-    assert "t2" in list(session.meta["track_id"].values)  # meta: STALE
-    assert len(session.meta) == 4
+    assert "t2" not in list(session.meta["track_id"].values)
+    assert len(session.meta) == 3
 
 
-def test_the_explore_picker_still_finds_a_deleted_track(tmp_library):
-    """recommendations_tab.pick_current filters `library.meta`, so the deleted
-    track is still offered - and choosing it then raises a KeyError from
-    meta_ix.loc. Current behaviour; PR 3 backlog."""
+def test_the_explore_picker_no_longer_finds_a_deleted_track(tmp_library):
     session = LibrarySession.load(tmp_library)
 
     session.delete_tracks(["t2"])
@@ -300,35 +340,26 @@ def test_the_explore_picker_still_finds_a_deleted_track(tmp_library):
         (meta["artist"].str.lower().str.contains(q, na=False))
         | (meta["title"].str.lower().str.contains(q, na=False))
     ].head(50)
-    assert list(m["track_id"].values) == ["t2"]
-
-    with pytest.raises(KeyError):
-        session.meta_ix.loc["t2"]
+    assert list(m["track_id"].values) == []
+    assert "t2" not in session.meta_ix.index
 
 
-def test_the_all_tracks_export_list_still_includes_a_deleted_track(tmp_library):
-    """playlist_export_tab.get_export_track_ids reads
-    list(meta['track_id'].values), so 'All tracks in collection' still exports
-    the deleted one - it is skipped later, when create_m3u_playlist cannot find
-    it in meta_ix."""
+def test_the_all_tracks_export_list_drops_a_deleted_track(tmp_library):
     session = LibrarySession.load(tmp_library)
 
     session.delete_tracks(["t2"])
 
-    assert list(session.meta["track_id"].values) == ["t1", "t2", "t3", "t4"]
+    assert list(session.meta["track_id"].values) == ["t1", "t3", "t4"]
 
 
-def test_the_all_tracks_count_label_reads_the_stale_table(tmp_library):
-    """update_export_selection_info must use len(meta), NOT track_count, so the
-    label and the export it describes agree. Using track_count made the label
-    drop to 3 while the export still sent 4 ids."""
+def test_the_all_tracks_count_and_export_list_agree_after_delete(tmp_library):
     session = LibrarySession.load(tmp_library)
 
     session.delete_tracks(["t2"])
 
-    assert len(session.meta) == 4                       # what the label shows
-    assert len(list(session.meta["track_id"].values)) == 4  # what it exports
-    assert session.track_count == 3                     # the tempting wrong one
+    assert len(session.meta) == 3
+    assert len(list(session.meta["track_id"].values)) == 3
+    assert session.track_count == 3
 
 
 def test_the_export_tab_label_source_reads_len_meta():
@@ -341,12 +372,10 @@ def test_the_export_tab_label_source_reads_len_meta():
     assert "self.library.track_count" not in source
 
 
-def test_reload_is_what_finally_refreshes_meta(tmp_library):
-    """Restarting the app (or reload()) is the only thing that catches meta up -
-    which is exactly why the user must restart to stop seeing deleted tracks."""
+def test_reload_preserves_the_already_refreshed_meta(tmp_library):
     session = LibrarySession.load(tmp_library)
     session.delete_tracks(["t2"])
-    assert len(session.meta) == 4
+    assert len(session.meta) == 3
 
     session.reload()
 
@@ -374,27 +403,20 @@ def test_deleting_every_track_leaves_the_index_none_and_empty_arrays(tmp_library
     assert session.track_count == 0
 
 
-def test_deleting_every_track_leaves_a_stale_index_npy(tmp_library):
-    """CURRENT BEHAVIOUR, NOT A BUG FIX. index.npy is only rewritten when
-    len(V) > 0, so wiping the library leaves the OLD vectors on disk beside an
-    empty ids.json. The next launch fails load_all validation and shows the
-    'Inconsistent Index Data' dialog. Inventory defect #3, backlog
-    backlog-n3-ids-lag-race."""
+def test_deleting_every_track_writes_a_reloadable_empty_index(tmp_library):
     LibrarySession.load(tmp_library).delete_tracks(["t1", "t2", "t3", "t4"])
 
-    assert json.loads((tmp_library / "ids.json").read_text()) == []
-    assert np.load(tmp_library / "index.npy").shape == (4, 4)  # stale, not rewritten
+    _meta, _emb, index_path, ids_path = index_file_paths(tmp_library)
+    assert json.loads(ids_path.read_text()) == []
+    assert np.load(index_path).shape == (0, 4)
+    reloaded = LibrarySession.load(tmp_library)
+    assert reloaded.is_empty is True
+    assert reloaded.track_count == 0
 
-    with pytest.raises(ValueError, match="0 track IDs but index.npy has 4"):
-        LibrarySession.load(tmp_library)
 
-
-def test_the_four_file_rewrite_is_not_atomic(tmp_library, monkeypatch):
-    """CURRENT BEHAVIOUR, NOT A BUG FIX. library_tab.py:257-270 writes
-    meta.parquet, embeddings.parquet, index.npy and ids.json in sequence with no
-    temp-file-and-rename and no rollback. A failure partway through leaves the
-    four mutually inconsistent, and the next launch cannot load them. Inventory
-    defect #2, spec 3.2."""
+def test_a_failure_before_the_manifest_commit_preserves_the_old_generation(
+    tmp_library, monkeypatch
+):
     session = LibrarySession.load(tmp_library)
 
     def boom(*args, **kwargs):
@@ -405,14 +427,92 @@ def test_the_four_file_rewrite_is_not_atomic(tmp_library, monkeypatch):
     with pytest.raises(OSError, match="disk full"):
         session.delete_tracks(["t2"])
 
-    # meta and embeddings were already rewritten; index.npy and ids.json were not.
-    assert len(pd.read_parquet(tmp_library / "meta.parquet")) == 3
-    assert len(pd.read_parquet(tmp_library / "embeddings.parquet")) == 3
+    # The legacy flat generation is still the committed generation. Partial
+    # immutable files were never named by a manifest and are cleaned up.
+    assert len(pd.read_parquet(tmp_library / "meta.parquet")) == 4
+    assert len(pd.read_parquet(tmp_library / "embeddings.parquet")) == 4
     assert np.load(tmp_library / "index.npy").shape == (4, 4)
     assert json.loads((tmp_library / "ids.json").read_text()) == ["t1", "t2", "t3", "t4"]
+    assert LibrarySession.load(tmp_library).track_count == 4
+    assert not (tmp_library / "library_index.json").exists()
 
-    with pytest.raises(ValueError, match="do not match"):
+
+def test_a_failed_manifest_replace_preserves_the_previous_generation(
+    tmp_library, monkeypatch
+):
+    import core.index_store as index_store
+
+    session = LibrarySession.load(tmp_library)
+    session.delete_tracks(["t2"])
+    committed_paths = index_file_paths(tmp_library)
+    committed_bytes = tuple(path.read_bytes() for path in committed_paths)
+    real_replace = index_store.os.replace
+
+    def fail_manifest_replace(source, destination):
+        if destination == tmp_library / "library_index.json":
+            raise OSError("replace refused")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(index_store.os, "replace", fail_manifest_replace)
+
+    with pytest.raises(OSError, match="replace refused"):
+        session.delete_tracks(["t3"])
+
+    assert index_file_paths(tmp_library) == committed_paths
+    assert tuple(path.read_bytes() for path in committed_paths) == committed_bytes
+    assert session.ids == ["t1", "t3", "t4"]
+    assert LibrarySession.load(tmp_library).ids == ["t1", "t3", "t4"]
+
+
+def test_a_committed_generation_edited_in_place_is_rejected(tmp_library):
+    LibrarySession.load(tmp_library).delete_tracks(["t2"])
+    _meta, _emb, _index, ids_path = index_file_paths(tmp_library)
+    ids_path.write_text('["different"]', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="ids file failed its SHA-256 check"):
         LibrarySession.load(tmp_library)
+
+
+def test_a_malformed_manifest_never_falls_back_to_stale_flat_files(tmp_library):
+    (tmp_library / "library_index.json").write_text("[]", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="document is not an object"):
+        LibrarySession.load(tmp_library)
+
+
+def test_a_completed_indexing_write_retires_the_deletion_pointer(
+    tmp_library, monkeypatch
+):
+    import core.loader as loader
+    import core.persistence as persistence
+
+    LibrarySession.load(tmp_library).delete_tracks(["t2"])
+    assert (tmp_library / "library_index.json").is_file()
+
+    monkeypatch.setattr(loader, "META_PQ", tmp_library / "meta.parquet")
+    existing_meta, existing_embeddings = loader.load_existing_data()
+    assert len(existing_meta) == len(existing_embeddings) == 3
+
+    monkeypatch.setattr(persistence, "META_PQ", tmp_library / "meta.parquet")
+    monkeypatch.setattr(persistence, "EMB_PQ", tmp_library / "embeddings.parquet")
+    monkeypatch.setattr(persistence, "IDX_NPY", tmp_library / "index.npy")
+    monkeypatch.setattr(persistence, "IDS_JSON", tmp_library / "ids.json")
+    replacement = LibrarySession.load(tmp_library).snapshot()
+    persistence.save_index_data(
+        replacement.meta,
+        replacement.emb_ix.reset_index(),
+        replacement.vectors,
+        replacement.ids,
+    )
+
+    assert not (tmp_library / "library_index.json").exists()
+    assert index_file_paths(tmp_library) == (
+        tmp_library / "meta.parquet",
+        tmp_library / "embeddings.parquet",
+        tmp_library / "index.npy",
+        tmp_library / "ids.json",
+    )
+    assert LibrarySession.load(tmp_library).ids == ["t1", "t3", "t4"]
 
 
 def test_delete_tracks_rebinds_rather_than_mutating(tmp_library):

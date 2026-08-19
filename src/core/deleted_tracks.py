@@ -16,29 +16,30 @@ def _report(progress, phase, message):
         progress(phase, 0, 0, message)
 
 
-def load_deleted_tracks(progress=None) -> Set[str]:
+def load_deleted_tracks(progress=None, path=None) -> Set[str]:
     """
     Load the set of track IDs that have been manually deleted.
     
     Returns:
         Set of deleted track IDs
     """
-    data = load_deleted_tracks_with_info(progress=progress)
+    data = load_deleted_tracks_with_info(progress=progress, path=path)
     return set(data.keys())
 
 
-def load_deleted_tracks_with_info(progress=None) -> Dict[str, Dict[str, str]]:
+def load_deleted_tracks_with_info(progress=None, path=None) -> Dict[str, Dict[str, str]]:
     """
     Load deleted tracks with their metadata.
     
     Returns:
         Dict mapping track_id to {artist, title}
     """
-    if not DELETED_TRACKS_JSON.exists():
+    target = Path(path) if path is not None else DELETED_TRACKS_JSON
+    if not target.exists():
         return {}
     
     try:
-        with open(DELETED_TRACKS_JSON, 'r') as f:
+        with open(target, 'r') as f:
             data = json.load(f)
             
             # Handle old format (list of track IDs)
@@ -53,7 +54,9 @@ def load_deleted_tracks_with_info(progress=None) -> Dict[str, Dict[str, str]]:
         return {}
 
 
-def save_deleted_tracks_with_info(deleted_tracks: Dict[str, Dict[str, str]]) -> None:
+def save_deleted_tracks_with_info(
+    deleted_tracks: Dict[str, Dict[str, str]], path=None
+) -> None:
     """
     Save deleted tracks with their metadata to disk.
     
@@ -61,13 +64,14 @@ def save_deleted_tracks_with_info(deleted_tracks: Dict[str, Dict[str, str]]) -> 
         deleted_tracks: Dict mapping track_id to {artist, title}
     """
     try:
-        with open(DELETED_TRACKS_JSON, 'w') as f:
+        target = Path(path) if path is not None else DELETED_TRACKS_JSON
+        with open(target, 'w') as f:
             json.dump(deleted_tracks, f, indent=2)
     except Exception as e:
         print(f"Warning: Could not save deleted tracks list ({e})")
 
 
-def save_deleted_tracks(deleted_ids: Set[str]) -> None:
+def save_deleted_tracks(deleted_ids: Set[str], path=None) -> None:
     """
     Save the set of deleted track IDs to disk (without metadata).
     Used when clearing tracks.
@@ -77,17 +81,19 @@ def save_deleted_tracks(deleted_ids: Set[str]) -> None:
     """
     # Convert to dict format
     deleted_tracks = {track_id: {"artist": "Unknown", "title": track_id} for track_id in deleted_ids}
-    save_deleted_tracks_with_info(deleted_tracks)
+    save_deleted_tracks_with_info(deleted_tracks, path=path)
 
 
-def add_deleted_tracks_with_metadata(tracks_info: List[Dict[str, str]]) -> None:
+def add_deleted_tracks_with_metadata(
+    tracks_info: List[Dict[str, str]], path=None
+) -> None:
     """
     Add tracks to the deleted list with their metadata.
     
     Args:
         tracks_info: List of dicts with keys: track_id, artist, title
     """
-    existing_deleted = load_deleted_tracks_with_info()
+    existing_deleted = load_deleted_tracks_with_info(path=path)
     
     for track in tracks_info:
         track_id = track["track_id"]
@@ -96,7 +102,7 @@ def add_deleted_tracks_with_metadata(tracks_info: List[Dict[str, str]]) -> None:
             "title": track.get("title", "Unknown")
         }
     
-    save_deleted_tracks_with_info(existing_deleted)
+    save_deleted_tracks_with_info(existing_deleted, path=path)
 
 
 def add_deleted_tracks(track_ids: Set[str]) -> None:
@@ -155,4 +161,3 @@ def filter_deleted_tracks(df, track_id_column: str = 'track_id', progress=None):
         _report(progress, "deleted", f"   Filtered out {filtered_count} previously deleted tracks")
     
     return filtered_df
-
