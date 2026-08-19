@@ -18,7 +18,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "services"))
 
-from playlist_fixtures import write_fixture_xml  # noqa: E402
+from playlist_fixtures import (  # noqa: E402
+    write_fixture_xml,
+    write_schema_2_layout,
+)
 
 from services.playlist_import import import_playlists  # noqa: E402
 from services.playlist_service import IMPORT_COMMAND, PlaylistService  # noqa: E402
@@ -107,6 +110,43 @@ def test_an_imported_track_gets_its_playlists(api_with_playlists):
             "folder_path": ["Mischief", "Collections/Hauls"],
             "entries": 2,
         },
+    ]
+
+
+def test_a_schema_2_install_shows_the_import_call_to_action_not_an_error(
+    web_library, settings, web_data_dir, export
+):
+    """MIGRATION, as the user experiences it on the first run after upgrading.
+
+    An install from before the generation-scoped layout has two flat tables and
+    a manifest that does not name them, which this build reads as "nothing
+    imported" - it cannot check bytes against a record that never said which
+    bytes it meant. The question that matters is what that looks like in the
+    drawer, and the answer has to be the import call-to-action rather than an
+    error: ``playlists: null`` is the field ``renderPlaylists`` branches on to
+    show "No Rekordbox playlists have been imported yet" and the command block.
+
+    So: a 200, with the same two nulls the never-imported state produces. One
+    re-import - the command that screen is already showing - restores them.
+    """
+    write_schema_2_layout(web_data_dir, export)
+    api = CocoApi(web_library, settings, playlists=PlaylistService(web_data_dir))
+
+    status, body = call(api, f"/api/tracks/{MEMBER_ONE}")
+
+    assert status == 200
+    assert body["track"]["playlists"] is None
+    assert body["track"]["playlist_source"] is None
+
+    import_playlists(export, data_dir=web_data_dir, now=FIXED_CLOCK)
+
+    _, repaired = call(
+        CocoApi(web_library, settings, playlists=PlaylistService(web_data_dir)),
+        f"/api/tracks/{MEMBER_ONE}",
+    )
+    assert [entry["name"] for entry in repaired["track"]["playlists"]] == [
+        "top level",
+        "hard 1hr",
     ]
 
 

@@ -12,6 +12,7 @@ standalone lxml script. Nothing calls ``import_playlists`` to decide what
 
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -30,12 +31,13 @@ from playlist_fixtures import (
 )
 
 from core.playlist_store import (
-    MEMBERSHIP_FILENAME,
+    MEMBERSHIP_STEM,
     PLAYLIST_COLUMNS,
-    PLAYLISTS_FILENAME,
+    PLAYLISTS_STEM,
     PROVENANCE_FILENAME,
     PROVENANCE_SCHEMA,
-    playlist_file_paths,
+    committed_table_paths,
+    playlist_manifest_path,
     read_playlist_tables,
     read_provenance,
 )
@@ -47,6 +49,47 @@ from services.playlist_service import PlaylistService
 INDEX_FILES = ("meta.parquet", "embeddings.parquet", "index.npy", "ids.json")
 
 FIXED_CLOCK = datetime(2026, 8, 19, 14, 30, 0, tzinfo=timezone.utc)
+
+
+def playlists_pq(data_dir):
+    """The committed playlist table, found the only supported way.
+
+    A table's filename carries the generation that wrote it, so nothing outside
+    the store can construct one - which is the point: the manifest is the
+    pointer, and a test that guessed a filename would be checking a file no
+    reader would ever open.
+    """
+    paths = committed_table_paths(data_dir)
+    assert paths is not None, "no committed generation in this data directory"
+    return paths[0]
+
+
+def membership_pq(data_dir):
+    paths = committed_table_paths(data_dir)
+    assert paths is not None, "no committed generation in this data directory"
+    return paths[1]
+
+
+def reseal(data_dir):
+    """Rewrite the manifest's digests to match whatever its tables hold now.
+
+    Needed by every test that DAMAGES a table on purpose. The manifest records
+    the digest of the bytes it was committed for, so an edited table is refused
+    by that guard alone - which would leave the guard the test is actually
+    about (the column check, the parse) never running, and the test passing for
+    the wrong reason. Resealing puts the edited table inside a generation that
+    is consistent with its own manifest, which is the only way to reach the
+    deeper guards.
+    """
+    manifest = playlist_manifest_path(data_dir)
+    raw = json.loads(manifest.read_text(encoding="utf-8"))
+    raw["playlists_sha256"] = hashlib.sha256(
+        playlists_pq(data_dir).read_bytes()
+    ).hexdigest()
+    raw["membership_sha256"] = hashlib.sha256(
+        membership_pq(data_dir).read_bytes()
+    ).hexdigest()
+    manifest.write_text(json.dumps(raw), encoding="utf-8")
 
 
 @pytest.fixture
@@ -75,16 +118,29 @@ def summary(xml, data_dir):
 # ---------------------------------------------------------------------------
 
 
-def test_the_three_files_are_written_where_they_are_expected(summary, data_dir):
-    assert (data_dir / PLAYLISTS_FILENAME).is_file()
-    assert (data_dir / MEMBERSHIP_FILENAME).is_file()
-    assert (data_dir / PROVENANCE_FILENAME).is_file()
+def test_the_manifest_names_two_tables_that_are_on_disk_beside_it(summary, data_dir):
+    """The manifest is the fixed name; the tables are whatever it says."""
+    assert playlist_manifest_path(data_dir).is_file()
+    assert playlists_pq(data_dir).is_file()
+    assert membership_pq(data_dir).is_file()
     assert playlist_tables_exist(data_dir)
+
+
+def test_the_table_names_carry_a_generation_nobody_else_will_choose(summary, data_dir):
+    """``playlists.<32 hex>.parquet``. The generation is what makes a committed
+    table immutable in practice: a second import mints a different one, so it
+    can never write over a table a reader in another process is holding."""
+    playlists, membership = committed_table_paths(data_dir)
+
+    assert re.fullmatch(rf"{PLAYLISTS_STEM}\.[0-9a-f]{{32}}\.parquet", playlists.name)
+    assert re.fullmatch(rf"{MEMBERSHIP_STEM}\.[0-9a-f]{{32}}\.parquet", membership.name)
+    # One generation per import, shared by both of its tables.
+    assert playlists.name.split(".")[1] == membership.name.split(".")[1]
 
 
 def test_the_playlist_table_has_exactly_the_five_specified_columns(summary, data_dir):
     """Spec §6.2 names five. A sixth would be a schema change nobody agreed to."""
-    playlists = pd.read_parquet(data_dir / PLAYLISTS_FILENAME)
+    playlists = pd.read_parquet(playlists_pq(data_dir))
 
     assert list(playlists.columns) == PLAYLIST_COLUMNS
     assert PLAYLIST_COLUMNS == [
@@ -97,7 +153,7 @@ def test_the_playlist_table_has_exactly_the_five_specified_columns(summary, data
 
 
 def test_the_membership_table_has_exactly_the_two_specified_columns(summary, data_dir):
-    membership = pd.read_parquet(data_dir / MEMBERSHIP_FILENAME)
+    membership = pd.read_parquet(membership_pq(data_dir))
 
     assert list(membership.columns) == ["track_id", "playlist_id"]
 
@@ -105,7 +161,7 @@ def test_the_membership_table_has_exactly_the_two_specified_columns(summary, dat
 def test_the_rows_are_the_fixtures_seven_playlists_in_document_order(
     summary, data_dir
 ):
-    playlists = pd.read_parquet(data_dir / PLAYLISTS_FILENAME)
+    playlists = pd.read_parquet(playlists_pq(data_dir))
 
     found = [
         (tuple(row.folder_path), row.name, int(row.entries))
@@ -120,7 +176,7 @@ def test_the_rows_are_the_fixtures_seven_playlists_in_document_order(
 def test_folder_path_round_trips_as_a_list_of_segments(summary, data_dir):
     """Written as LIST<STRING>, read back as segments. A pre-joined string is
     unrecoverable: ``Collections/Hauls`` is one folder whose name has a slash."""
-    playlists = pd.read_parquet(data_dir / PLAYLISTS_FILENAME)
+    playlists = pd.read_parquet(playlists_pq(data_dir))
     deep = playlists[playlists["name"] == "five deep"].iloc[0]
 
     assert list(deep["folder_path"]) == [
@@ -136,7 +192,7 @@ def test_every_membership_pair_is_persisted_including_the_unresolvable_one(
 ):
     """Filtering at import time would mean a later reindex could never pick the
     missing entries up without somebody remembering to re-import."""
-    membership = pd.read_parquet(data_dir / MEMBERSHIP_FILENAME)
+    membership = pd.read_parquet(membership_pq(data_dir))
 
     assert len(membership) == FIXTURE_MEMBERSHIP_COUNT == 7
     assert "t999" in set(membership["track_id"])
@@ -152,7 +208,7 @@ def test_membership_track_id_is_the_same_dtype_as_meta_parquets(summary, data_di
     like integers - ``192072736`` - so any inference step would happily make
     one column int64 and the other object, and the join would match nothing
     while raising nothing."""
-    membership = pd.read_parquet(data_dir / MEMBERSHIP_FILENAME)
+    membership = pd.read_parquet(membership_pq(data_dir))
     meta = pd.read_parquet(data_dir / "meta.parquet")
 
     assert membership["track_id"].dtype == meta["track_id"].dtype == object
@@ -174,15 +230,15 @@ def test_numeric_looking_track_ids_survive_as_strings(tmp_path):
 
     import_playlists(xml, data_dir=data_dir, now=FIXED_CLOCK)
 
-    membership = pd.read_parquet(data_dir / MEMBERSHIP_FILENAME)
+    membership = pd.read_parquet(membership_pq(data_dir))
     assert membership["track_id"].dtype == object
     assert "192072736" in set(membership["track_id"])
     assert 192072736 not in set(membership["track_id"])
 
 
 def test_playlist_ids_join_the_two_tables(summary, data_dir):
-    playlists = pd.read_parquet(data_dir / PLAYLISTS_FILENAME)
-    membership = pd.read_parquet(data_dir / MEMBERSHIP_FILENAME)
+    playlists = pd.read_parquet(playlists_pq(data_dir))
+    membership = pd.read_parquet(membership_pq(data_dir))
 
     assert set(membership["playlist_id"]) <= set(playlists["playlist_id"])
     assert membership["playlist_id"].dtype == playlists["playlist_id"].dtype == object
@@ -222,9 +278,9 @@ def test_the_recorded_size_and_mtime_are_the_files_own(summary, xml, data_dir):
 
 def test_the_provenance_json_is_readable_by_a_human(summary, data_dir):
     """It is the one file in this feature somebody may have to read by hand."""
-    raw = json.loads((data_dir / PROVENANCE_FILENAME).read_text(encoding="utf-8"))
+    raw = json.loads(playlist_manifest_path(data_dir).read_text(encoding="utf-8"))
 
-    assert raw["schema_version"] == 2
+    assert raw["schema_version"] == 3
     assert set(raw) == {
         "source_xml",
         "source_sha256",
@@ -233,27 +289,34 @@ def test_the_provenance_json_is_readable_by_a_human(summary, data_dir):
         "imported_at",
         "playlist_count",
         "membership_count",
+        "playlists_file",
+        "membership_file",
         "playlists_sha256",
         "membership_sha256",
         "schema_version",
     }
 
 
-def test_the_manifest_records_the_digests_of_the_tables_beside_it(summary, data_dir):
-    """The commit record names its own two tables.
+def test_the_manifest_names_its_two_tables_and_records_their_digests(summary, data_dir):
+    """The commit record IS the pointer: two basenames and two digests.
 
     Recomputed here with hashlib against the files on disk, not read back out
-    of the writer. This pair is what makes a mixed generation - one table from
-    an interrupted import beside another from the one before it - detectable
-    rather than merely unlikely.
+    of the writer. The pair is what lets a reader check the bytes it has just
+    read against the generation it decided to read, with no second look at a
+    path something else may have changed in between.
     """
-    raw = json.loads((data_dir / PROVENANCE_FILENAME).read_text(encoding="utf-8"))
+    raw = json.loads(playlist_manifest_path(data_dir).read_text(encoding="utf-8"))
 
+    assert raw["playlists_file"] == playlists_pq(data_dir).name
+    assert raw["membership_file"] == membership_pq(data_dir).name
+    # Basenames, never paths: a data directory has to survive being moved, and
+    # a manifest must not be able to point outside the directory it is in.
+    assert "/" not in raw["playlists_file"] and "/" not in raw["membership_file"]
     assert raw["playlists_sha256"] == hashlib.sha256(
-        (data_dir / PLAYLISTS_FILENAME).read_bytes()
+        playlists_pq(data_dir).read_bytes()
     ).hexdigest()
     assert raw["membership_sha256"] == hashlib.sha256(
-        (data_dir / MEMBERSHIP_FILENAME).read_bytes()
+        membership_pq(data_dir).read_bytes()
     ).hexdigest()
 
 
@@ -266,9 +329,21 @@ def test_a_manifest_without_the_table_digests_reads_as_absent(summary, data_dir)
     against a real digest, fail, and be reported as a mixed generation. Absent
     is the honest answer, and it is the same one the drawer already renders.
     """
-    path = data_dir / PROVENANCE_FILENAME
+    path = playlist_manifest_path(data_dir)
     raw = json.loads(path.read_text(encoding="utf-8"))
     del raw["membership_sha256"]
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    assert read_provenance(data_dir) is None
+
+
+def test_a_manifest_that_does_not_name_its_tables_reads_as_absent(summary, data_dir):
+    """The same rule applied to the two keys schema 3 adds: a record that does
+    not say which files it committed cannot be checked against anything, and an
+    uncheckable record is not usable."""
+    path = playlist_manifest_path(data_dir)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    del raw["playlists_file"]
     path.write_text(json.dumps(raw), encoding="utf-8")
 
     assert read_provenance(data_dir) is None
@@ -284,23 +359,25 @@ def test_read_playlist_tables_refuses_a_table_missing_a_column_it_reads(
     the handler would simply catch the AttributeError instead. Testing the
     guard where it is means both layers have to stay.
     """
-    frame = pd.read_parquet(data_dir / PLAYLISTS_FILENAME).rename(
+    frame = pd.read_parquet(playlists_pq(data_dir)).rename(
         columns={"playlist_id": "id"}
     )
-    frame.to_parquet(data_dir / PLAYLISTS_FILENAME, index=False)
+    frame.to_parquet(playlists_pq(data_dir), index=False)
+    reseal(data_dir)
 
-    assert read_playlist_tables(data_dir) is None
+    assert read_playlist_tables(data_dir, read_provenance(data_dir)) is None
 
 
 def test_read_playlist_tables_accepts_a_table_that_has_gained_a_column(
     summary, data_dir
 ):
     """Subset, not equality: an added column is not a reason to refuse."""
-    frame = pd.read_parquet(data_dir / MEMBERSHIP_FILENAME)
+    frame = pd.read_parquet(membership_pq(data_dir))
     frame["added_later"] = 1
-    frame.to_parquet(data_dir / MEMBERSHIP_FILENAME, index=False)
+    frame.to_parquet(membership_pq(data_dir), index=False)
+    reseal(data_dir)
 
-    tables = read_playlist_tables(data_dir)
+    tables = read_playlist_tables(data_dir, read_provenance(data_dir))
 
     assert tables is not None
     assert len(tables[1]) == FIXTURE_MEMBERSHIP_COUNT
@@ -344,7 +421,7 @@ def test_the_recorded_digest_describes_the_bytes_THAT_WERE_PARSED(tmp_path, monk
     summary = import_playlists(xml, data_dir=data_dir, now=FIXED_CLOCK)
 
     # The tables hold the version that was parsed...
-    names = set(pd.read_parquet(data_dir / PLAYLISTS_FILENAME)["name"])
+    names = set(pd.read_parquet(playlists_pq(data_dir))["name"])
     assert "top level" in names
     assert "renamed top" not in names
 
@@ -392,7 +469,7 @@ def test_the_recorded_size_is_the_length_of_the_buffer_that_was_parsed(
 def test_a_provenance_record_from_a_future_schema_reads_as_absent(summary, data_dir):
     """Misreading a record written by a newer version is worse than not
     reading it: the drawer's "nothing imported" state is at least true."""
-    path = data_dir / PROVENANCE_FILENAME
+    path = playlist_manifest_path(data_dir)
     raw = json.loads(path.read_text(encoding="utf-8"))
     raw["schema_version"] = PROVENANCE_SCHEMA + 1
     path.write_text(json.dumps(raw), encoding="utf-8")
@@ -401,7 +478,7 @@ def test_a_provenance_record_from_a_future_schema_reads_as_absent(summary, data_
 
 
 def test_a_corrupt_provenance_record_reads_as_absent(summary, data_dir):
-    (data_dir / PROVENANCE_FILENAME).write_text("{not json", encoding="utf-8")
+    (playlist_manifest_path(data_dir)).write_text("{not json", encoding="utf-8")
 
     assert read_provenance(data_dir) is None
 
@@ -411,15 +488,20 @@ def test_a_corrupt_provenance_record_reads_as_absent(summary, data_dir):
 # ---------------------------------------------------------------------------
 
 
-def test_re_importing_an_unchanged_file_rewrites_identical_tables(xml, data_dir):
+def test_re_importing_an_unchanged_file_writes_identical_tables(xml, data_dir):
+    """Same bytes, new names. The CONTENT is deterministic - which is what
+    "stable for the same XML" means - while the names cannot repeat, because no
+    import ever writes a name another import chose."""
     first = import_playlists(xml, data_dir=data_dir, now=FIXED_CLOCK)
-    playlists_bytes = (data_dir / PLAYLISTS_FILENAME).read_bytes()
-    membership_bytes = (data_dir / MEMBERSHIP_FILENAME).read_bytes()
+    first_playlists = playlists_pq(data_dir)
+    playlists_bytes = first_playlists.read_bytes()
+    membership_bytes = membership_pq(data_dir).read_bytes()
 
     second = import_playlists(xml, data_dir=data_dir, now=FIXED_CLOCK)
 
-    assert (data_dir / PLAYLISTS_FILENAME).read_bytes() == playlists_bytes
-    assert (data_dir / MEMBERSHIP_FILENAME).read_bytes() == membership_bytes
+    assert playlists_pq(data_dir).read_bytes() == playlists_bytes
+    assert membership_pq(data_dir).read_bytes() == membership_bytes
+    assert playlists_pq(data_dir) != first_playlists
     assert first.provenance.source_sha256 == second.provenance.source_sha256
 
 
@@ -427,10 +509,10 @@ def test_the_ids_do_not_move_when_the_file_is_re_imported(xml, data_dir):
     """Re-import must be a no-op, which is what "stable and deterministic for
     the same XML" buys. A positional id would renumber every row."""
     import_playlists(xml, data_dir=data_dir, now=FIXED_CLOCK)
-    before = pd.read_parquet(data_dir / PLAYLISTS_FILENAME)["playlist_id"].tolist()
+    before = pd.read_parquet(playlists_pq(data_dir))["playlist_id"].tolist()
 
     import_playlists(xml, data_dir=data_dir, now=FIXED_CLOCK)
-    after = pd.read_parquet(data_dir / PLAYLISTS_FILENAME)["playlist_id"].tolist()
+    after = pd.read_parquet(playlists_pq(data_dir))["playlist_id"].tolist()
 
     assert before == after
     assert len(set(before)) == 7
@@ -510,8 +592,8 @@ def test_an_export_with_no_playlists_element_imports_to_nothing(tmp_path):
 
     assert summary.playlists == 0
     assert summary.entries_total == 0
-    assert pd.read_parquet(data_dir / PLAYLISTS_FILENAME).empty
-    assert list(pd.read_parquet(data_dir / MEMBERSHIP_FILENAME).columns) == [
+    assert pd.read_parquet(playlists_pq(data_dir)).empty
+    assert list(pd.read_parquet(membership_pq(data_dir)).columns) == [
         "track_id",
         "playlist_id",
     ]
@@ -538,14 +620,19 @@ def test_the_import_never_writes_any_of_the_four_index_files(xml, tmp_path):
     assert all(value == b"sentinel" for value in after.values())
 
 
-def test_the_import_creates_only_the_three_playlist_files(xml, tmp_path):
+def test_the_import_creates_only_the_manifest_and_its_own_two_tables(xml, tmp_path):
+    """One import, three files, and no staging debris left beside them."""
     data_dir = tmp_path / "data"
     data_dir.mkdir()
 
     import_playlists(xml, data_dir=data_dir, now=FIXED_CLOCK)
 
     assert sorted(path.name for path in data_dir.iterdir()) == sorted(
-        [PLAYLISTS_FILENAME, MEMBERSHIP_FILENAME, PROVENANCE_FILENAME]
+        [
+            PROVENANCE_FILENAME,
+            playlists_pq(data_dir).name,
+            membership_pq(data_dir).name,
+        ]
     )
 
 
@@ -557,9 +644,12 @@ def test_the_import_creates_the_data_directory_if_it_is_absent(xml, tmp_path):
     assert playlist_tables_exist(data_dir)
 
 
-def test_playlist_file_paths_are_beside_the_index_files(tmp_path):
-    playlists, membership, provenance = playlist_file_paths(tmp_path)
+def test_the_manifest_is_beside_the_index_files(tmp_path):
+    assert playlist_manifest_path(tmp_path) == tmp_path / "playlist_import.json"
 
-    assert playlists == tmp_path / "playlists.parquet"
-    assert membership == tmp_path / "playlist_membership.parquet"
-    assert provenance == tmp_path / "playlist_import.json"
+
+def test_there_are_no_table_paths_before_anything_is_committed(tmp_path):
+    """The tables have no fixed names, so "where are they" is a question only
+    the manifest can answer - and before an import there is no answer."""
+    assert committed_table_paths(tmp_path) is None
+    assert not playlist_tables_exist(tmp_path)

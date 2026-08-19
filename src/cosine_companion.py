@@ -82,7 +82,8 @@ def ui_web(
 
 @cli.command("import-playlists")
 def import_playlists_command(
-    xml: str = typer.Argument(None, help="Path to Rekordbox XML export (default: the configured one)")
+    xml: str = typer.Argument(None, help="Path to Rekordbox XML export (default: the configured one)"),
+    data_dir: str = typer.Option(None, "--data-dir", help="Index directory to write to (default: the configured one)")
 ):
     """Import Rekordbox playlists WITHOUT re-running the embedding pipeline.
 
@@ -94,6 +95,12 @@ def import_playlists_command(
     With no argument it reads ``xml_path`` out of the same ``settings.json``
     the Tkinter app and the web UI use (``ui/app.py:185``), so the three agree
     about which export is current.
+
+    ``--data-dir`` names the index directory to write into, matching
+    ``ui-web --data-dir`` - including where ``settings.json`` is looked up, so
+    "import into that directory" means the same thing to both commands. It is
+    also what lets the concurrency tests run the real command against a
+    scratch directory instead of the developer's library.
     """
     # Lazy imports throughout, matching the other subcommands: `ui` must keep
     # launching on a machine where these are not needed.
@@ -103,8 +110,10 @@ def import_playlists_command(
     from services.playlist_import import import_playlists
     from services.settings_store import SettingsStore
 
+    target = Path(data_dir) if data_dir else DATA
+
     if xml is None:
-        xml = SettingsStore(DATA / "settings.json").xml_path
+        xml = SettingsStore(target / "settings.json").xml_path
         if not xml:
             typer.echo(
                 "No Rekordbox XML is configured. Pass one:\n"
@@ -122,12 +131,12 @@ def import_playlists_command(
     print("=" * 50)
     print(f"📖 Reading {source.name}...")
 
-    summary = import_playlists(source, data_dir=DATA)
+    summary = import_playlists(source, data_dir=target)
 
     for line in summary.lines():
         print(line)
     print("=" * 50)
-    print(f"✅ Playlists imported to: {DATA}/")
+    print(f"✅ Playlists imported to: {target}/")
 
 
 @cli.command()

@@ -29,10 +29,10 @@ than an error:
   1,307-track library and is now false;
 * the recorded ``source_xml`` is gone from disk -> ``source_missing``, with the
   provenance still shown;
-* the tables are corrupt, half-written, a MIXED GENERATION from an import that
-  was interrupted between two of its three writes, or written to a schema this
-  build does not read -> all of them read as "nothing imported". Not one of
-  them raises; ``reload`` is a funnel of guards and every one of them returns.
+* the tables are corrupt, truncated, no longer the bytes the manifest names,
+  or written to a schema this build does not read -> all of them read as
+  "nothing imported". Not one of them raises; ``reload`` is a funnel of guards
+  and every one of them returns.
 
 NO MODULE-LEVEL HEAVY IMPORTS
 -----------------------------
@@ -55,7 +55,6 @@ from core.playlist_store import (
     digest_file,
     read_playlist_tables,
     read_provenance,
-    tables_match,
 )
 
 #: What the drawer tells the user to run when nothing has been imported, and
@@ -157,11 +156,15 @@ class PlaylistService:
         1. **no usable manifest** - absent, malformed, or a schema this build
            does not know. Nothing is read from the tables at all; there is
            nothing to say about bytes whose provenance cannot be read.
-        2. **the tables are not the ones the manifest was committed for** - a
-           mixed generation from an interrupted import. See ``tables_match``.
-        3. **the tables cannot be read, or have not got the columns this build
-           reads** - see ``read_playlist_tables``.
-        4. **the rows will not build an index** - a column of the right name
+        2. **the files the manifest names cannot be read, do not hash to the
+           digests it recorded, or have not got the columns this build reads**
+           - see ``read_playlist_tables``, which reads each file's bytes ONCE
+           and checks them against the manifest it was handed. The manifest is
+           read here and passed down rather than looked up again: a reader that
+           consults the pointer twice can be told two different things by a
+           writer running in another process, which is the whole failure this
+           layout removes.
+        3. **the rows will not build an index** - a column of the right name
            holding something unusable.
         """
         self._loaded = True
@@ -172,11 +175,8 @@ class PlaylistService:
         if provenance is None:
             return
 
-        if not tables_match(self.data_dir, provenance):
-            return
-
         try:
-            tables = read_playlist_tables(self.data_dir)
+            tables = read_playlist_tables(self.data_dir, provenance)
         except Exception:  # noqa: BLE001 - a corrupt table is "nothing imported"
             return
         if tables is None:

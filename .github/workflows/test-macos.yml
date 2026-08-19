@@ -32,8 +32,14 @@ jobs:
       # src/web/host.py imports it, and only tests/web/test_host_importable.py
       # needs it installed; the API tests deliberately run without any GUI
       # toolkit loaded - see tests/web/test_no_heavy_imports.py.
+      # typer is what src/cosine_companion.py is built on, and it is here so
+      # tests/services/test_playlist_concurrency.py can run the SHIPPED
+      # import-playlists command in a real subprocess while a PlaylistService
+      # reads the same directory. Reader and writer are different processes by
+      # design, so that is the case worth checking on CI rather than only on a
+      # developer's machine; without typer those three tests skip themselves.
       - name: Install test dependencies
-        run: python -m pip install numpy pandas pyarrow lxml "pytest>=7.0" pywebview
+        run: python -m pip install numpy pandas pyarrow lxml "pytest>=7.0" pywebview typer
 
       - name: Run tests
         run: python -m pytest -q

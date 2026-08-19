@@ -16,11 +16,23 @@ which is the whole difference.
 
 ONE TEST PER CALL SITE, AND EACH ONE ISOLATES ITS OWN
 -----------------------------------------------------
-Each test deletes the three playlist files immediately before the run it is
-about, so only that run can put them back. Removing any single call turns
-exactly one test red rather than all three - which is what makes this a test of
-the integration rather than of the importer, and what stops a partial deletion
-hiding behind the other two.
+Each test deletes the playlist files immediately before the run it is about, so
+only that run can put them back. Removing a single call turns only the tests
+that drive THAT outcome red, never all of them - which is what makes this a
+test of the integration rather than of the importer, and what stops a partial
+deletion hiding behind the other two.
+
+Measured, one call site removed at a time:
+
+* the up-to-date call site (``pipeline.py:228``) - 1 test red;
+* the no-embeddings call site (``pipeline.py:279``) - 1 test red;
+* the indexed call site (``pipeline.py:342``) - **2** tests red, because
+  ``test_a_playlist_import_failure_never_fails_the_run`` drives the indexed
+  outcome too and asserts the import was attempted there.
+
+An earlier version of this note said "exactly one test" for all three. That was
+right for two of them and wrong for the third; the coverage was always genuine,
+the count was not.
 
 Essentia is never loaded: the embedder is mocked, exactly as in
 ``test_indexing_service.py``.
@@ -41,9 +53,8 @@ import core.loader as loader_module  # noqa: E402
 import core.persistence as persistence_module  # noqa: E402
 import processing.pipeline as pipeline_module  # noqa: E402
 from core.playlist_store import (  # noqa: E402
-    MEMBERSHIP_FILENAME,
-    PLAYLISTS_FILENAME,
-    PROVENANCE_FILENAME,
+    committed_table_paths,
+    playlist_manifest_path,
 )
 from services.indexing_service import (  # noqa: E402
     STATUS_INDEXED,
@@ -151,21 +162,31 @@ def indexing(tmp_path, monkeypatch):
 
 
 def clear_playlist_files(data):
-    """Remove the three files, so only the NEXT run can put them back."""
-    for name in (PLAYLISTS_FILENAME, MEMBERSHIP_FILENAME, PROVENANCE_FILENAME):
-        path = data / name
+    """Remove the manifest and the tables it names, so only the NEXT run can
+    put them back.
+
+    The manifest goes last: while it is there it is what names the tables, and
+    a directory with a manifest pointing at files that have been deleted is a
+    state this helper should not leave behind even for an instant.
+    """
+    tables = committed_table_paths(data) or ()
+    manifest = playlist_manifest_path(data)
+    for path in (*tables, manifest):
         if path.exists():
             path.unlink()
-    assert not any(
-        (data / name).exists()
-        for name in (PLAYLISTS_FILENAME, MEMBERSHIP_FILENAME, PROVENANCE_FILENAME)
-    )
+    assert committed_table_paths(data) is None
+    assert not manifest.exists()
 
 
 def assert_playlists_were_imported(data, xml):
-    """All three files present, holding the playlists written by hand above."""
-    for name in (PLAYLISTS_FILENAME, MEMBERSHIP_FILENAME, PROVENANCE_FILENAME):
-        assert (data / name).is_file(), f"{name} was not written beside meta.parquet"
+    """A committed generation, holding the playlists written by hand above."""
+    assert playlist_manifest_path(data).is_file(), (
+        "no playlist manifest was written beside meta.parquet"
+    )
+    tables = committed_table_paths(data)
+    assert tables is not None, "the manifest does not name a usable pair of tables"
+    for path in tables:
+        assert path.is_file(), f"{path.name} was named by the manifest but is absent"
 
     service = PlaylistService(data)
     assert service.imported is True

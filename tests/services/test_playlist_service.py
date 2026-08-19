@@ -28,9 +28,10 @@ from playlist_fixtures import (
 )
 
 from core.playlist_store import (
-    MEMBERSHIP_FILENAME,
-    PLAYLISTS_FILENAME,
     PROVENANCE_FILENAME,
+    STAGING_SUFFIX,
+    committed_table_paths,
+    playlist_manifest_path,
     read_provenance,
 )
 from services.playlist_import import import_playlists
@@ -75,6 +76,20 @@ def xml_bytes(imported):
 
 def full_paths(refs):
     return tuple(ref.full_path for ref in refs)
+
+
+def playlists_pq(data_dir):
+    """The committed playlist table, found the only supported way: through the
+    manifest, which is the sole thing that knows what the tables are called."""
+    paths = committed_table_paths(data_dir)
+    assert paths is not None, "no committed generation in this data directory"
+    return paths[0]
+
+
+def membership_pq(data_dir):
+    paths = committed_table_paths(data_dir)
+    assert paths is not None, "no committed generation in this data directory"
+    return paths[1]
 
 
 @pytest.mark.parametrize("track_id", sorted(FIXTURE_REVERSE_INDEX))
@@ -140,7 +155,7 @@ def test_an_unresolvable_entry_is_still_in_the_index(service):
 
 def test_the_path_keyed_playlist_contributes_no_membership(service):
     """It is catalogued in the table, but nothing can be a member of it."""
-    playlists = pd.read_parquet(Path(service.data_dir) / PLAYLISTS_FILENAME)
+    playlists = pd.read_parquet(playlists_pq(service.data_dir))
     assert "by path" in set(playlists["name"])
 
     every_ref = {
@@ -197,14 +212,14 @@ def test_construction_reads_nothing(tmp_path):
 
 def test_a_membership_table_with_no_playlist_table_reads_as_not_imported(imported):
     data_dir, _ = imported
-    (data_dir / PLAYLISTS_FILENAME).unlink()
+    playlists_pq(data_dir).unlink()
 
     assert PlaylistService(data_dir).playlists_for("t1") is None
 
 
 def test_a_corrupt_playlist_table_reads_as_not_imported(imported):
     data_dir, _ = imported
-    (data_dir / PLAYLISTS_FILENAME).write_bytes(b"not a parquet file")
+    playlists_pq(data_dir).write_bytes(b"not a parquet file")
 
     service = PlaylistService(data_dir)
     assert service.imported is False
@@ -215,7 +230,7 @@ def test_a_missing_provenance_record_reads_as_not_imported(imported):
     """Both tables present with no record of where they came from is a state
     the writer cannot produce, and one whose provenance line would be a lie."""
     data_dir, _ = imported
-    (data_dir / PROVENANCE_FILENAME).unlink()
+    playlist_manifest_path(data_dir).unlink()
 
     assert PlaylistService(data_dir).playlists_for("t1") is None
 
@@ -269,34 +284,34 @@ def reseal(data_dir):
     do. It is exactly the state a future schema change - or PR 3b - produces:
     files that were committed together and that this build cannot read.
     """
-    path = data_dir / PROVENANCE_FILENAME
+    path = playlist_manifest_path(data_dir)
     raw = json.loads(path.read_text(encoding="utf-8"))
     raw["playlists_sha256"] = hashlib.sha256(
-        (data_dir / PLAYLISTS_FILENAME).read_bytes()
+        playlists_pq(data_dir).read_bytes()
     ).hexdigest()
     raw["membership_sha256"] = hashlib.sha256(
-        (data_dir / MEMBERSHIP_FILENAME).read_bytes()
+        membership_pq(data_dir).read_bytes()
     ).hexdigest()
     path.write_text(json.dumps(raw), encoding="utf-8")
 
 
 def _no_manifest(data_dir):
-    (data_dir / PROVENANCE_FILENAME).unlink()
+    playlist_manifest_path(data_dir).unlink()
 
 
 def _corrupt_manifest(data_dir):
-    (data_dir / PROVENANCE_FILENAME).write_text("{not json", encoding="utf-8")
+    playlist_manifest_path(data_dir).write_text("{not json", encoding="utf-8")
 
 
 def _unknown_schema(data_dir):
-    path = data_dir / PROVENANCE_FILENAME
+    path = playlist_manifest_path(data_dir)
     raw = json.loads(path.read_text(encoding="utf-8"))
     raw["schema_version"] = 99
     path.write_text(json.dumps(raw), encoding="utf-8")
 
 
 def _truncated_table(data_dir):
-    path = data_dir / PLAYLISTS_FILENAME
+    path = playlists_pq(data_dir)
     path.write_bytes(path.read_bytes()[:120])
     reseal(data_dir)
 
@@ -309,26 +324,26 @@ def _renamed_playlist_columns(data_dir):
     the request the drawer makes for everything, so a schema change did not
     merely lose playlists, it broke track detail outright.
     """
-    frame = pd.read_parquet(data_dir / PLAYLISTS_FILENAME).rename(
+    frame = pd.read_parquet(playlists_pq(data_dir)).rename(
         columns={"playlist_id": "id", "entries": "entry_count"}
     )
-    frame.to_parquet(data_dir / PLAYLISTS_FILENAME, index=False)
+    frame.to_parquet(playlists_pq(data_dir), index=False)
     reseal(data_dir)
 
 
 def _renamed_membership_columns(data_dir):
-    frame = pd.read_parquet(data_dir / MEMBERSHIP_FILENAME).rename(
+    frame = pd.read_parquet(membership_pq(data_dir)).rename(
         columns={"track_id": "track", "playlist_id": "playlist"}
     )
-    frame.to_parquet(data_dir / MEMBERSHIP_FILENAME, index=False)
+    frame.to_parquet(membership_pq(data_dir), index=False)
     reseal(data_dir)
 
 
 def _unusable_values_in_the_right_columns(data_dir):
     """The columns are all present and hold something no reader can use."""
-    frame = pd.read_parquet(data_dir / PLAYLISTS_FILENAME)
+    frame = pd.read_parquet(playlists_pq(data_dir))
     frame["entries"] = "not a number"
-    frame.to_parquet(data_dir / PLAYLISTS_FILENAME, index=False)
+    frame.to_parquet(playlists_pq(data_dir), index=False)
     reseal(data_dir)
 
 
@@ -375,9 +390,9 @@ def test_a_schema_that_merely_ADDS_a_column_is_still_read(imported):
     column should not cost this build the playlists it can still understand.
     """
     data_dir, _ = imported
-    frame = pd.read_parquet(data_dir / PLAYLISTS_FILENAME)
+    frame = pd.read_parquet(playlists_pq(data_dir))
     frame["colour"] = "chartreuse"
-    frame.to_parquet(data_dir / PLAYLISTS_FILENAME, index=False)
+    frame.to_parquet(playlists_pq(data_dir), index=False)
     reseal(data_dir)
 
     assert full_paths(PlaylistService(data_dir).playlists_for("t1")) == (
@@ -387,28 +402,30 @@ def test_a_schema_that_merely_ADDS_a_column_is_still_read(imported):
 
 
 # ---------------------------------------------------------------------------
-# An interrupted import is never reported as imported
+# An interrupted import cannot be reported as imported - and no longer costs
+# the user the import that was already there
 # ---------------------------------------------------------------------------
 
 
-class _DyingOs:
-    """The real ``os``, except that ``replace`` stops working after N calls.
+class _RecordingOs:
+    """The real ``os``, except that ``replace`` is counted and can be refused.
 
-    Stands in for a process that dies partway through the commit. Everything
-    else is forwarded, so the code under test is otherwise untouched.
+    ``allow=0`` stands in for a process that died before its commit; the
+    recorded destinations are how a test says WHICH files a commit replaces,
+    which is the property the whole layout rests on.
     """
 
     def __init__(self, allow):
         self._allow = allow
-        self.calls = 0
+        self.replaced = []
 
     def __getattr__(self, name):
         return getattr(os, name)
 
     def replace(self, src, dst):
-        if self.calls >= self._allow:
-            raise _Interrupted(f"killed before os.replace #{self.calls + 1}")
-        self.calls += 1
+        if len(self.replaced) >= self._allow:
+            raise _Interrupted(f"killed before os.replace #{len(self.replaced) + 1}")
+        self.replaced.append(Path(dst))
         return os.replace(src, dst)
 
 
@@ -417,12 +434,14 @@ class _Interrupted(RuntimeError):
 
 
 def _import_generation_b(data_dir, xml, monkeypatch, allow):
-    """Rename one playlist, re-import, and die after ``allow`` commits.
+    """Rename one playlist and re-import, allowing ``allow`` commit steps.
 
     Renaming mints a NEW playlist_id, so a table from B beside a table from A
-    leaves dangling membership rows and silently drops that playlist from every
-    track that was in it - which is what makes a mixed generation visible at
-    all rather than merely theoretical.
+    would leave dangling membership rows and silently drop that playlist from
+    every track that was in it - which is what would make a blended generation
+    visible at all rather than merely theoretical.
+
+    Returns the ``_RecordingOs``, so a caller can ask what was replaced.
     """
     import core.playlist_store as store
 
@@ -430,85 +449,112 @@ def _import_generation_b(data_dir, xml, monkeypatch, allow):
         FIXTURE_XML.replace('Name="top level"', 'Name="renamed top"'),
         encoding="utf-8",
     )
-    monkeypatch.setattr(store, "os", _DyingOs(allow))
-    with pytest.raises(_Interrupted):
+    recorder = _RecordingOs(allow)
+    monkeypatch.setattr(store, "os", recorder)
+    if allow:
         import_playlists(xml, data_dir=data_dir, now=FIXED_CLOCK)
+    else:
+        with pytest.raises(_Interrupted):
+            import_playlists(xml, data_dir=data_dir, now=FIXED_CLOCK)
     monkeypatch.undo()
+    return recorder
 
 
-@pytest.mark.parametrize("allow", [1, 2])
-def test_an_import_killed_partway_through_its_commit_reads_as_not_imported(
-    imported, monkeypatch, allow
-):
-    """THE BLOCKER. One table from the new generation, one from the old.
+def test_the_commit_replaces_the_manifest_AND_NOTHING_ELSE(imported, monkeypatch):
+    """The property the whole layout rests on, asserted as one number.
 
-    ``allow=1`` leaves the new playlist table beside the old membership table;
-    ``allow=2`` leaves both new tables beside the old manifest. Both used to be
-    served as a normal import, with two dangling membership rows and one
-    playlist silently missing from the track that was in it - and the staleness
-    flag told the user the wrong story, that the XML had moved on rather than
-    that their two tables disagreed with each other.
+    An import writes its two tables under names it claimed for itself, so they
+    are invisible until something points at them; the only file it replaces is
+    the manifest, and ``os.replace`` is atomic per file on one filesystem. One
+    replace means the commit is one step, and a step cannot be half done.
 
-    Both are now nothing-imported, which is the state whose screen tells the
-    user to run the import command - the thing that actually repairs it.
+    The previous design replaced three files in a fixed order and could only
+    promise that a reader would DETECT the states in between. There are now no
+    states in between.
     """
     data_dir, xml = imported
-    _import_generation_b(data_dir, xml, monkeypatch, allow=allow)
 
-    service = PlaylistService(data_dir)
-    assert service.imported is False
-    assert service.lookup("t1").playlists is None
+    recorder = _import_generation_b(data_dir, xml, monkeypatch, allow=3)
 
-
-def test_the_manifest_is_committed_LAST(imported, monkeypatch):
-    """Two tables committed, manifest not - so the manifest can never outrun
-    the tables it names. Read off the files rather than off the service."""
-    data_dir, xml = imported
-    _import_generation_b(data_dir, xml, monkeypatch, allow=2)
-
-    names = set(pd.read_parquet(data_dir / PLAYLISTS_FILENAME)["name"])
-    manifest = json.loads(
-        (data_dir / PROVENANCE_FILENAME).read_text(encoding="utf-8")
-    )
-
-    assert "renamed top" in names  # the tables moved on...
-    assert manifest["playlists_sha256"] != hashlib.sha256(
-        (data_dir / PLAYLISTS_FILENAME).read_bytes()
-    ).hexdigest()  # ...and the manifest is still the previous generation's
+    assert [path.name for path in recorder.replaced] == [PROVENANCE_FILENAME]
 
 
-def test_an_import_killed_before_it_commits_anything_leaves_the_previous_one(
+def test_an_import_killed_before_it_commits_leaves_THE_PREVIOUS_ONE_INTACT(
     imported, monkeypatch
 ):
-    """The other half of the guarantee: refusing a mixed generation must not
-    mean losing an import that was never touched."""
+    """And this is what the single replace buys the user.
+
+    The previous design's honest cost was that an interrupted import lost the
+    import before it too: it had already overwritten one of the two tables, and
+    nothing could tell which half of the pair was old. Here it never touched
+    them, so the answer is not "nothing imported" - it is the generation that
+    was already there, whole, still readable, still with its own provenance.
+    """
     data_dir, xml = imported
+    before = playlists_pq(data_dir).read_bytes()
+
     _import_generation_b(data_dir, xml, monkeypatch, allow=0)
 
-    assert full_paths(PlaylistService(data_dir).playlists_for("t1")) == (
+    service = PlaylistService(data_dir)
+    assert service.imported is True
+    assert full_paths(service.playlists_for("t1")) == (
         ("top level",),
         ("Alpha", "shared name"),
     )
+    assert service.provenance.source_name == "export.xml"
+    assert playlists_pq(data_dir).read_bytes() == before
 
 
-@pytest.mark.parametrize("allow", [0, 1, 2])
-def test_a_killed_import_leaves_no_staging_files_behind(
-    imported, monkeypatch, allow
-):
-    """Scratch files are the writer's business, not the data directory's."""
-    from core.playlist_store import STAGING_SUFFIX
+def test_a_killed_import_leaves_no_files_of_its_own_behind(imported, monkeypatch):
+    """Scratch files are the writer's business, not the data directory's.
 
+    Covers both halves of the cleanup: the staged manifest, and the two table
+    files the import claimed before it wrote a byte to either. A generation
+    that never committed leaves the directory exactly as it found it.
+    """
     data_dir, xml = imported
-    _import_generation_b(data_dir, xml, monkeypatch, allow=allow)
+    before = sorted(path.name for path in data_dir.iterdir())
 
+    _import_generation_b(data_dir, xml, monkeypatch, allow=0)
+
+    assert sorted(path.name for path in data_dir.iterdir()) == before
     assert sorted(p.name for p in data_dir.glob("*" + STAGING_SUFFIX)) == []
 
 
-def test_re_running_the_import_repairs_a_mixed_generation(imported, monkeypatch):
-    """What the "nothing imported" screen tells the user to do has to work."""
+def test_a_write_that_fails_partway_still_cleans_up_after_itself(
+    imported, monkeypatch
+):
+    """The debris case the previous design missed.
+
+    It appended each staged path to its cleanup list AFTER the write returned,
+    so a write that created a partial file and then raised left that file
+    behind - the ``finally`` had never heard of it. Every path is now
+    registered before anything is written to it, so the cleanup covers a write
+    that dies in the middle as well as one that never started.
+    """
+    import core.playlist_store as store
+
     data_dir, xml = imported
-    _import_generation_b(data_dir, xml, monkeypatch, allow=1)
-    assert PlaylistService(data_dir).imported is False
+    before = sorted(path.name for path in data_dir.iterdir())
+    real_to_parquet = pd.DataFrame.to_parquet
+
+    def dies_partway(frame, path, *args, **kwargs):
+        Path(path).write_bytes(b"PAR1 half a file and then")
+        raise _Interrupted("the disk filled up mid-write")
+
+    monkeypatch.setattr(pd.DataFrame, "to_parquet", dies_partway)
+    with pytest.raises(_Interrupted):
+        import_playlists(xml, data_dir=data_dir, now=FIXED_CLOCK)
+    monkeypatch.undo()
+    assert real_to_parquet is pd.DataFrame.to_parquet
+
+    assert sorted(path.name for path in data_dir.iterdir()) == before
+
+
+def test_re_running_the_import_commits_the_new_generation(imported, monkeypatch):
+    """What the drawer tells the user to run has to work after a failed one."""
+    data_dir, xml = imported
+    _import_generation_b(data_dir, xml, monkeypatch, allow=0)
 
     import_playlists(xml, data_dir=data_dir, now=FIXED_CLOCK)
 
@@ -605,13 +651,13 @@ def test_the_service_never_imports_on_its_own(imported):
         xml.read_text(encoding="utf-8").replace("top level", "renamed"),
         encoding="utf-8",
     )
-    before = (data_dir / PLAYLISTS_FILENAME).read_bytes()
+    before = playlists_pq(data_dir).read_bytes()
 
     service = PlaylistService(data_dir)
     assert service.staleness().stale is True
     service.lookup("t1")
 
-    assert (data_dir / PLAYLISTS_FILENAME).read_bytes() == before
+    assert playlists_pq(data_dir).read_bytes() == before
     assert full_paths(service.playlists_for("t1"))[0] == ("top level",)
 
 

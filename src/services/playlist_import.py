@@ -29,8 +29,8 @@ in your library - reindex to include them"* - and not an error. Dropping them
 silently would make playlist counts quietly wrong.
 
 NOTHING HERE WRITES ``meta.parquet``, ``embeddings.parquet``, ``index.npy`` OR
-``ids.json``. It reads ``meta.parquet`` to count, and writes only the three
-playlist files.
+``ids.json``. It reads ``meta.parquet`` to count, and writes only the playlist
+manifest and the two table files of its own generation.
 
 This module must never depend on a UI toolkit; see
 tests/test_services_are_ui_free.py, which enforces that with an AST walk.
@@ -43,7 +43,7 @@ from typing import List, Optional, Tuple
 
 from core.playlist_store import (
     PlaylistProvenance,
-    playlist_file_paths,
+    committed_table_paths,
     read_source,
     resolve_membership,
     write_playlist_tables,
@@ -142,7 +142,7 @@ def _indexed_track_ids(data_dir) -> Tuple[set, int]:
 def import_playlists(
     xml_path, data_dir=None, now=None
 ) -> PlaylistImportSummary:
-    """Parse ``xml_path``'s playlists and write the three files under ``data_dir``.
+    """Parse ``xml_path``'s playlists and commit a generation under ``data_dir``.
 
     Args:
         xml_path: the Rekordbox XML export to read.
@@ -153,7 +153,8 @@ def import_playlists(
     Deterministic for an unchanged file apart from ``imported_at``: the ids are
     minted from the playlist paths (see
     ``processing.playlist_parser.mint_playlist_id``), so re-importing the same
-    export rewrites byte-identical tables.
+    export writes byte-identical tables - under a new generation's names, since
+    a committed table file is never written twice.
     """
     # Imported here, not at module scope. The parser lives under
     # ``processing``, whose package __init__ pulls in the indexing pipeline;
@@ -190,8 +191,9 @@ def import_playlists(
         membership_count=len(membership),
     )
 
-    # The record that comes back is the one on disk: it carries the digests of
-    # the two tables just committed, which are only knowable after the write.
+    # The record that comes back is the one on disk: it carries the names and
+    # digests of the two tables just committed, which are only knowable after
+    # the write.
     provenance = write_playlist_tables(
         data_dir, parsed.playlists, membership, provenance
     )
@@ -218,6 +220,11 @@ def import_playlists(
 
 
 def playlist_tables_exist(data_dir=None) -> bool:
-    """Whether both tables are on disk. Used by the CLI to word its output."""
-    playlists_pq, membership_pq, _ = playlist_file_paths(data_dir)
-    return playlists_pq.is_file() and membership_pq.is_file()
+    """Whether a committed generation is on disk. The CLI words its output by it.
+
+    Asks the manifest rather than probing for filenames: the tables are named
+    by the manifest and nothing else knows what they are called, so "are the
+    files there" and "is there an import" are the same question asked one way.
+    """
+    paths = committed_table_paths(data_dir)
+    return paths is not None and all(path.is_file() for path in paths)

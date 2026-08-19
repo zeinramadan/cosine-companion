@@ -21,6 +21,7 @@ the plan names:
 * a ``<TRACK Key>`` naming an id that is not in the collection.
 """
 
+from pathlib import Path
 from textwrap import dedent
 
 #: The four collection tracks. ``t999`` is deliberately NOT among them.
@@ -171,3 +172,66 @@ NO_PLAYLISTS_XML = dedent(
     </DJ_PLAYLISTS>
     """
 )
+
+
+def write_schema_2_layout(data_dir, xml, imported_at="2026-08-19T14:30:00+00:00"):
+    """The exact on-disk shape an install from before schema 3 has.
+
+    Two FLAT table files - ``playlists.parquet``, ``playlist_membership.parquet``
+    - and a manifest that records their digests but does not name them, because
+    under schema 2 their names were fixed and the reader built them itself.
+    That is the layout the generation-scoped one replaces, and this is how the
+    migration tests get a directory in it without checking a binary fixture in.
+
+    pandas and the parser are imported inside the function so that merely
+    importing this module stays free of both, exactly as it was before.
+    """
+    import hashlib
+    import json
+
+    import pandas as pd
+
+    from processing.playlist_parser import parse_playlists_bytes
+
+    data_dir = Path(data_dir)
+    xml = Path(xml)
+    parsed = parse_playlists_bytes(xml.read_bytes())
+    playlists = data_dir / "playlists.parquet"
+    membership = data_dir / "playlist_membership.parquet"
+
+    pd.DataFrame(
+        [
+            {
+                "playlist_id": playlist.playlist_id,
+                "name": playlist.name,
+                "folder_path": list(playlist.folder_path),
+                "parent_id": playlist.parent_id,
+                "entries": playlist.entries,
+            }
+            for playlist in parsed.playlists
+        ],
+        columns=["playlist_id", "name", "folder_path", "parent_id", "entries"],
+    ).to_parquet(playlists, index=False)
+    pd.DataFrame(
+        parsed.membership, columns=["track_id", "playlist_id"]
+    ).to_parquet(membership, index=False)
+
+    (data_dir / "playlist_import.json").write_text(
+        json.dumps(
+            {
+                "source_xml": str(xml),
+                "source_sha256": hashlib.sha256(xml.read_bytes()).hexdigest(),
+                "source_bytes": xml.stat().st_size,
+                "source_mtime": xml.stat().st_mtime,
+                "imported_at": imported_at,
+                "playlist_count": len(parsed.playlists),
+                "membership_count": len(parsed.membership),
+                "playlists_sha256": hashlib.sha256(playlists.read_bytes()).hexdigest(),
+                "membership_sha256": hashlib.sha256(membership.read_bytes()).hexdigest(),
+                "schema_version": 2,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return data_dir
