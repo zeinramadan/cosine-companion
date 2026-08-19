@@ -159,7 +159,22 @@ export class Node {
   scrollIntoView() {
     this.scrolledIntoView += 1;
   }
+  /** Whether this node or any ancestor carries `inert`. */
+  get inert() {
+    for (let node = this; node; node = node.parentNode) {
+      if (node.attributes && node.attributes.has('inert')) return true;
+    }
+    return false;
+  }
   focus() {
+    // `inert` is honoured here, and it is the one place in this shim where
+    // ignoring an attribute would cost a real assertion. A browser drops
+    // focus() into an inert subtree on the floor; that is the entire mechanism
+    // by which "restore focus, then clear inert" loses the caret. A shim that
+    // focuses anyway makes the broken order and the correct one produce
+    // identical results, which is what let the ordering test in
+    // palette_modality.test.mjs pass against a mutant of the code it pins.
+    if (this.inert) return;
     this.focused += 1;
     document.activeElement = this;
   }

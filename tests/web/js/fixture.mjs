@@ -25,11 +25,18 @@ export function buildPaletteDom() {
   panel.append(input, list);
   root.append(panel);
 
-  const trigger = withId(new Node('button'), 'search-trigger');
-
+  // INSIDE the shell, because that is where it is: index.html:51 puts
+  // #search-trigger in the header of #app (index.html:12), and the palette is
+  // a SIBLING of #app (index.html:99). Getting this wrong is not cosmetic - a
+  // trigger parked outside the shell is never inert, so `close()` restoring
+  // focus to it succeeds whether or not `inert` was cleared first, and the
+  // ordering test below it silently stops testing anything. It did: the
+  // production ordering was mutated and all four cases still passed.
   const app = withId(new Node('div'), 'app');
+  const trigger = withId(new Node('button'), 'search-trigger');
+  app.append(trigger);
 
-  document.body.append(app, root, trigger);
+  document.body.append(app, root);
   return { root, panel, input, list, trigger, app };
 }
 

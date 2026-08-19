@@ -352,6 +352,12 @@ EVERY_METHOD = [
 #: asserted for it. Every other verb is asserted on its body as well.
 BODYLESS = {"HEAD"}
 
+#: The methods this server actually answers. HEAD is here because it is
+#: *implemented* - routed as the GET it stands in for (server.py SAFE_ALIASES)
+#: - and not because it is tolerated; the HEAD/GET parity tests below are what
+#: hold that. Everything outside this set is a 405 naming these two in Allow.
+SUPPORTED_METHODS = ("GET", "HEAD")
+
 
 def test_no_verb_gets_its_own_handler_method():
     """The architectural pin, not a behavioural one.
@@ -381,18 +387,26 @@ def test_no_method_whatsoever_reaches_the_api_without_a_token(client, stub_api, 
         assert response.error_code == "unauthorized"
 
 
-@pytest.mark.parametrize("method", [m for m in EVERY_METHOD if m != "GET"])
+@pytest.mark.parametrize(
+    "method", [m for m in EVERY_METHOD if m not in SUPPORTED_METHODS]
+)
 def test_an_authenticated_unsupported_method_is_a_json_405(
     client, server, stub_api, method
 ):
     """Past the token, an unsupported verb is a 405 with the API's error shape -
-    never the stdlib's HTML 501 page."""
+    never the stdlib's HTML 501 page.
+
+    ``Allow`` has to name every method that *is* supported, so it is asserted
+    here rather than left to drift: adding HEAD to the routing without adding
+    it to ``Allow`` would be a 405 that lies about the alternative.
+    """
     response = client.request(
         method, "/api/library", headers={"X-Coco-Token": server.token}
     )
 
     assert response.status == 405
     assert response.content_type == "application/json; charset=utf-8"
+    assert response.headers["Allow"] == "GET, HEAD"
     assert stub_api.calls == [], "an unsupported method must not reach the API"
     if method not in BODYLESS:
         assert response.error_code == "method_not_allowed"
@@ -410,21 +424,198 @@ def test_no_method_whatsoever_is_answered_with_html(client, server, method):
     assert response.content_type == "application/json; charset=utf-8"
 
 
-def test_a_head_response_carries_no_body(client, server):
-    """RFC 9110 §9.3.2. With HTTP/1.1 keep-alive a body after a HEAD response
-    desynchronises the connection: the next response starts mid-stream."""
-    response = client.request("HEAD", "/api/library")
+# -- HEAD -------------------------------------------------------------------
+#
+# HEAD is answered by running the GET and dropping the content, which is what
+# RFC 9110 §9.3.2 and §8.6 require: the same status, the same headers, and a
+# Content-Length that still describes the content that was removed.
+#
+# Before this round the code did only the second half. `_send` elided the body
+# correctly, but routing sent HEAD down the unsupported-method branch, so
+# measured against a running server:
+#
+#   HEAD /api/health -> 405, Content-Length 78   GET -> 200, Content-Length 12
+#   HEAD /           -> 405, Content-Length 78   GET -> 200, Content-Length 4907
+#
+# A HEAD whose status and length disagree with its GET is the one thing HEAD is
+# for - asking about a resource without fetching it - so the parity below is
+# the assertion, not the absence of a body.
 
-    assert response.status == 401
-    assert response.body == b""
-    assert response.headers["Content-Length"] != "0", (
-        "the Content-Length must still describe the body a GET would return"
+#: An API path and a static path, each in a success and a failure state. The
+#: failure states matter as much: a 401 or a 404 is still a response a HEAD
+#: must be able to describe.
+HEAD_PARITY_CASES = [
+    ("/api/health", True),
+    ("/api/health", False),
+    ("/", False),
+    ("/no-such-asset.css", False),
+]
+
+
+@pytest.mark.parametrize(
+    "path,with_token",
+    HEAD_PARITY_CASES,
+    ids=lambda value: value if isinstance(value, str) else f"token={value}",
+)
+def test_head_returns_what_get_returns_minus_the_content(
+    client, server, path, with_token
+):
+    """Status and Content-Length identical to the GET; body empty."""
+    headers = {"X-Coco-Token": server.token} if with_token else {}
+
+    fetched = client.request("GET", path, headers=dict(headers))
+    described = client.request("HEAD", path, headers=dict(headers))
+
+    assert described.status == fetched.status
+    assert described.content_type == fetched.content_type
+    assert described.headers["Content-Length"] == fetched.headers["Content-Length"]
+    assert described.body == b""
+    # Without this the parity above would also hold for two empty responses.
+    assert int(fetched.headers["Content-Length"]) == len(fetched.body) > 0
+
+
+def test_a_head_response_leaves_the_connection_synchronised(server):
+    """The load-bearing form of "a HEAD response carries no body".
+
+    Asserting ``response.body == b""`` on a fresh connection CANNOT FAIL, and
+    the earlier version of this test did exactly that. ``http.client`` decides
+    there is no body from the METHOD (``HTTPResponse.begin`` sets
+    ``self.length = 0`` when ``_method == "HEAD"``), never from the socket, so
+    it reports ``b""`` whether or not the server wrote one - and a one-shot
+    client then closes the connection and throws the stray bytes away. Making
+    ``_send`` write the payload for HEAD too was applied to ``server.py`` and
+    the old assertion stayed green.
+
+    What a stray body actually does is desynchronise the connection: the
+    leftover bytes are read as the start of the NEXT response. So this pipelines
+    HEAD and GET down ONE socket and asserts on the bytes between them.
+
+    Raw socket rather than ``http.client``, and not only for the usual reason.
+    ``http.client`` builds a fresh ``BufferedReader`` per response, so whether
+    it notices stray bytes depends on whether they had already been read into
+    the previous reader's 8 KB buffer - which depends on TCP segmentation. A
+    test that catches the mutation only when the segments land a certain way is
+    a flaky test, not a load-bearing one. Reading the socket directly makes the
+    assertion deterministic: whatever follows the HEAD headers must be the next
+    status line.
+
+    ``/`` is the HEAD target on purpose - index.html is several KB, so under
+    the mutation the desynchronisation is unmissable rather than marginal.
+    """
+    authority = f"127.0.0.1:{server.port}".encode()
+    exchange = raw_exchange(
+        server.port,
+        b"HEAD / HTTP/1.1\r\nHost: " + authority + b"\r\n\r\n"
+        b"GET /api/health HTTP/1.1\r\nHost: " + authority + b"\r\n"
+        b"Connection: close\r\n\r\n",
+    )
+
+    described, separator, following = exchange.partition(b"\r\n\r\n")
+
+    assert separator, f"the HEAD response has no header block: {exchange[:120]!r}"
+    assert described.startswith(b"HTTP/1.1 200 "), described[:120]
+    assert b"Content-Length: 0\r\n" not in described, (
+        "the Content-Length must describe the content a GET would have sent"
+    )
+    assert following.startswith(b"HTTP/1.1 401 "), (
+        "the HEAD response left content on the connection, so the next response "
+        f"starts mid-stream: {following[:80]!r}"
+    )
+    assert json.loads(following.partition(b"\r\n\r\n")[2])["error"]["code"] == (
+        "unauthorized"
     )
 
 
-def test_a_malformed_request_line_is_still_answered_in_json(server):
-    """The last place the stdlib answers on its own: parse_request rejects an
-    over-long request URI before any routing happens."""
+# -- request lines the stdlib rejects before any code of ours runs ----------
+#
+# Over RAW SOCKETS, and that is the point. ``http.client`` will not emit a
+# malformed request line in the first place, and it is forgiving enough to hand
+# back a body that never had a status line in front of it.
+#
+# What these pin is that a response IS one. ``BaseHTTPRequestHandler``
+# suppresses the status line, every header AND the blank line ending them while
+# ``request_version`` holds the ``HTTP/0.9`` sentinel, and ``parse_request``
+# installs that sentinel before it reads anything - so every request line it
+# rejects was answered with a naked body. Measured on this branch before the
+# fix, and on main@c5bf32e which has no ``send_error`` override at all:
+#
+#   request line       main@c5bf32e            this branch, pre-fix
+#   HELLO              unframed HTML page      unframed JSON body
+#   GET / HTTP/9.9     unframed HTML page      unframed JSON body
+#   GET / HTTP/2.0     unframed HTML page      unframed JSON body
+#
+# So the defect is inherited stdlib behaviour rather than something the
+# override introduced; what the override added was a claim that it was fixed.
+# ``_ensure_framable`` is what makes the claim true.
+#
+# Note what is NOT asserted: a token. These failures happen before a single
+# header has been parsed, so there is no API request here to protect - only a
+# request line the server could not read, which it must be able to say so
+# about. Answering them without a token is correct.
+
+#: label -> (bytes on the wire, the status that must come back)
+MALFORMED_REQUEST_LINES = {
+    "one_word": (b"HELLO\r\n\r\n", 400),
+    "invalid_version": (b"GET / HTTP/9.9\r\nHost: 127.0.0.1\r\n\r\n", 505),
+    "http_2": (b"GET / HTTP/2.0\r\nHost: 127.0.0.1\r\n\r\n", 505),
+}
+
+
+def raw_exchange(port, request_bytes, limit=1 << 20):
+    """Send bytes and read the reply to EOF, using nothing but a socket."""
+    connection = socket.create_connection(("127.0.0.1", port), timeout=10)
+    try:
+        connection.sendall(request_bytes)
+        connection.shutdown(socket.SHUT_WR)
+        received = b""
+        while len(received) < limit:
+            chunk = connection.recv(65536)
+            if not chunk:
+                break
+            received += chunk
+        return received
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize("case", sorted(MALFORMED_REQUEST_LINES))
+def test_a_rejected_request_line_still_gets_a_framed_json_response(server, case):
+    """A JSON body is not a response until something frames it.
+
+    Without the status line a real client never sees the status or the body:
+    ``http.client`` raises ``BadStatusLine`` on the first line it reads.
+    """
+    request_bytes, expected_status = MALFORMED_REQUEST_LINES[case]
+
+    received = raw_exchange(server.port, request_bytes)
+
+    assert received.startswith(b"HTTP/1.1 "), (
+        "no status line, so a client reads this as BadStatusLine rather than as "
+        f"our {expected_status}: {received[:160]!r}"
+    )
+    head, separator, body = received.partition(b"\r\n\r\n")
+    assert separator, f"no blank line ending the headers: {received[:160]!r}"
+    assert head.split(b"\r\n")[0] == (
+        f"HTTP/1.1 {expected_status} ".encode()
+        + http.client.responses[expected_status].encode()
+    )
+    assert b"Content-Type: application/json; charset=utf-8\r\n" in head, head
+    assert json.loads(body)["error"]["code"], body
+
+
+def test_an_over_long_request_line_is_answered_in_json(server):
+    """The one stdlib transport error that was already framed, kept separate
+    because the reason it was framed is a one-line accident.
+
+    ``handle_one_request`` blanks ``request_version`` before answering 414,
+    rather than leaving the ``HTTP/0.9`` sentinel that ``parse_request`` leaves,
+    so the base class did not suppress this one. That is the whole difference
+    between this case and the three above, and it is not a difference to build
+    on - which is why ``_ensure_framable`` sits on the shared path.
+
+    ``http.client`` is enough here precisely because the framing works:
+    ``getresponse()`` would raise ``BadStatusLine`` if it did not.
+    """
     connection = http.client.HTTPConnection("127.0.0.1", server.port, timeout=10)
     try:
         connection.putrequest("GET", "/" + "a" * 70000, skip_host=True, skip_accept_encoding=True)
