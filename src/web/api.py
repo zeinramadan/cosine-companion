@@ -33,6 +33,7 @@ import numpy as np
 import pandas as pd
 
 from services.explore_session import ExploreSession
+from services.playlist_service import IMPORT_COMMAND, PlaylistService
 
 API_VERSION = 1
 APP_NAME = "cosine-companion"
@@ -233,7 +234,7 @@ def _int_param(
 class CocoApi:
     """Routes JSON requests onto the services layer."""
 
-    def __init__(self, library, settings, explore=None):
+    def __init__(self, library, settings, explore=None, playlists=None):
         """Bind to a library and a settings store.
 
         Args:
@@ -242,10 +243,24 @@ class CocoApi:
             explore: an ``ExploreSession``; built from ``library`` when absent,
                 which is all the default construction ever is. Injectable so a
                 test can watch the arguments it is called with.
+            playlists: a ``PlaylistService``. Built over the library's own data
+                directory when absent, so the playlist tables are looked for
+                beside the index they describe rather than in the configured
+                directory - a library opened with ``--data-dir`` must not read
+                another directory's playlists. Constructing one touches no
+                disk; a library object with no ``data_dir`` (the in-memory
+                doubles two tests use for the browse and search caps) falls
+                back to the configured directory, which is where a real
+                deployment's is anyway.
         """
         self.library = library
         self.settings = settings
         self.explore = explore if explore is not None else ExploreSession(library)
+        self.playlists = (
+            playlists
+            if playlists is not None
+            else PlaylistService(getattr(library, "data_dir", None))
+        )
 
     # -- routing -----------------------------------------------------------
     #
@@ -399,14 +414,72 @@ class CocoApi:
         }
 
     def _detail(self, track_id: str) -> Dict[str, Any]:
-        """One track's metadata, sanitised, with the PR 4 field reserved."""
+        """One track's metadata, sanitised, with its playlist membership.
+
+        Filling the field the drawer already fetches, rather than adding a
+        ``GET /api/tracks/{id}/playlists`` route. The drawer opens with exactly
+        one request today and a second one would buy nothing: the lookup is a
+        dict hit against a reverse index built once at first use, so it costs
+        less than the round trip would. It also keeps ``ROUTES`` untouched,
+        which matters while ``feat/web-write-surface`` is editing that list.
+        """
         track = self.library.get_track(track_id)
         if track is None:
             raise unknown_track(track_id)
 
         detail = _jsonable(track)
-        # Explicitly null rather than absent, so the drawer can distinguish
-        # "not implemented yet" from "this track is in no playlists". PR 4
-        # fills it in from the Rekordbox XML; nothing here invents it.
-        detail["playlists"] = None
+        # Still explicitly null when nothing has been imported - the drawer
+        # tells "no playlist data" from "this track is in no playlists", and
+        # the two are different screens. An empty LIST is the second one.
+        detail["playlists"] = self._playlists(track_id)
+        detail["playlist_source"] = self._playlist_source()
         return detail
+
+    def _playlists(self, track_id: str) -> Optional[List[Dict[str, Any]]]:
+        """This track's playlists, or ``None`` when none have been imported.
+
+        ``folder_path`` goes over the wire as a LIST OF SEGMENTS and is joined
+        by the drawer. Two folder names in the real export contain a forward
+        slash, so joining here would hand the UI a string it cannot take apart.
+        """
+        found = self.playlists.playlists_for(track_id)
+        if found is None:
+            return None
+        return [
+            {
+                "playlist_id": playlist.playlist_id,
+                "name": playlist.name,
+                "folder_path": list(playlist.folder_path),
+                "entries": playlist.entries,
+            }
+            for playlist in found
+        ]
+
+    def _playlist_source(self) -> Optional[Dict[str, Any]]:
+        """Provenance and the staleness verdict, or ``None`` before any import.
+
+        The absolute ``source_xml`` is deliberately NOT sent. Spec §6.4's own
+        example is "from ``242.xml``, imported 12 Aug", which the basename and
+        the timestamp answer completely; the full path would put a home
+        directory into every screenshot of the drawer and buys the UI nothing.
+        ``import_command`` travels with it so the call to action names the same
+        command the service does, rather than the frontend keeping its own copy
+        of a string that can drift.
+        """
+        provenance = self.playlists.provenance
+        if provenance is None:
+            return None
+
+        verdict = self.playlists.staleness()
+        return _jsonable(
+            {
+                "source_name": provenance.source_name,
+                "imported_at": provenance.imported_at,
+                "playlist_count": provenance.playlist_count,
+                "entry_count": provenance.membership_count,
+                "stale": verdict.stale,
+                "source_missing": verdict.source_missing,
+                "reason": verdict.reason,
+                "import_command": IMPORT_COMMAND,
+            }
+        )

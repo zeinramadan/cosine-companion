@@ -435,13 +435,85 @@ def test_the_unimplemented_destinations_say_so():
     assert body.count("Coming in the next PR") == 3
 
 
-def test_the_drawer_does_not_invent_playlist_data():
-    """There is no playlist endpoint yet and track.playlists comes back null.
-    The drawer says so and renders nothing else."""
+def test_the_drawer_renders_playlists_from_the_field_it_is_given():
+    """REPLACES test_the_drawer_does_not_invent_playlist_data (PR 3a).
+
+    That test pinned the placeholder - "Playlist membership arrives in the next
+    update." - which was the honest thing to assert while `track.playlists`
+    came back null and there was nothing to render. This PR is the next update:
+    the field is populated, so the placeholder is gone and a test asserting its
+    presence would be asserting that the feature was not built. It is the ONLY
+    pre-existing test this PR changes.
+
+    What replaces it keeps the two properties the original was protecting -
+    the drawer invents nothing, and it does not reach for an endpoint that does
+    not exist - and adds the ones that matter now.
+    """
     body = read(JS / "components" / "drawer.js")
 
-    assert "Playlist membership arrives in the next update." in body
+    # Still no endpoint: the field rides on the track detail the drawer already
+    # fetches, so no route was added and none is called.
     assert "/api/playlists" not in body
+    assert "Playlist membership arrives in the next update." not in body
+
+    # The three-way contract. `null` is not `[]`.
+    assert "track.playlists" in body
+    assert "Array.isArray(playlists)" in body
+
+    # The full path, not the leaf name: 36 leaf names are duplicated.
+    assert "folder_path" in body
+
+    # Nothing is invented client-side: the only strings the drawer supplies are
+    # its own copy and the command to run.
+    assert "import-playlists" in body
+
+
+#: `/* ... */` and `// ...`, so a rule about what the CODE does is not tripped
+#: by a comment saying the code does not do it - which is exactly what
+#: drawer.js's header says about innerHTML.
+JS_COMMENT = re.compile(r"/\*.*?\*/|(?<![:\w])//[^\n]*", re.S)
+
+HTML_SINK = re.compile(r"\b(innerHTML|outerHTML|insertAdjacentHTML|document\.write)\b")
+
+
+def without_js_comments(text):
+    return JS_COMMENT.sub("", text)
+
+
+def test_the_comment_stripper_still_strips_something():
+    """Guard the guard: a stripper that removed everything, or nothing, would
+    make the check below vacuous in one direction or noisy in the other."""
+    stripped = without_js_comments(read(JS / "components" / "drawer.js"))
+
+    assert "innerHTML" not in stripped, "the drawer's own header is not being stripped"
+    assert "export function mountDrawer" in stripped, "the stripper ate the code"
+    assert "playlist__segment" in stripped, "the stripper ate the code"
+
+
+def test_no_component_ever_writes_html_as_a_string():
+    """Playlist names are user data from an external file, and they are exactly
+    the strings that would carry an injection. Every component builds nodes and
+    sets textContent; one innerHTML anywhere defeats that for all of them.
+
+    Checked across every script rather than only the drawer, because the
+    property is "this frontend does not do that", not "this file does not".
+    Comments are stripped first, so the drawer is allowed to SAY it does not
+    write innerHTML in the same file that must not write it.
+    """
+    offenders = {}
+    for script in scripts():
+        found = HTML_SINK.findall(without_js_comments(read(script)))
+        if found:
+            offenders[str(script.relative_to(JS))] = sorted(set(found))
+
+    assert offenders == {}, f"HTML written as a string: {offenders}"
+
+
+def test_the_html_sink_check_would_catch_a_real_assignment():
+    """A rule nobody has seen fail is a rule nobody has seen work."""
+    assert HTML_SINK.search("node.innerHTML = name;")
+    assert HTML_SINK.search("node.insertAdjacentHTML('beforeend', name);")
+    assert not HTML_SINK.search("node.textContent = name;")
 
 
 def test_every_interactive_control_is_a_real_element():

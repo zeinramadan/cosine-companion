@@ -701,6 +701,119 @@ button {
   font-size: var(--text-sm);
 }
 
+.note > * + * {
+  margin-top: var(--space-3);
+}
+
+/* A command the user is meant to type. Monospace and selectable, on its own
+   line, because a command run out of a tooltip-width paragraph gets copied
+   with the sentence around it. */
+.command {
+  display: block;
+  overflow-x: auto;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--surface-0);
+  color: var(--ink-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  user-select: all;
+}
+
+/* ---- playlist membership -------------------------------------------------
+   The count belongs beside the label, not inside the list: with 21 rows the
+   heading is the only part still on screen once the list is scrolled. */
+
+.section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.section-heading__count {
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-tertiary);
+}
+
+/* Bounded, and scrolling past the bound.
+
+   The real maximum is 21 (`Fireground - Never Sleep`) against a mean of 3, so
+   an unbounded list pushes the provenance line and the staleness prompt off
+   the bottom of the drawer for the tracks whose membership is most worth
+   reading. 22rem is about eight rows: enough that the common case never
+   scrolls at all, and short enough that what follows the list stays visible. */
+.playlists {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-height: 22rem;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.playlist {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+/* The folder path, above the name and quieter than it. Both are rendered:
+   36 leaf names are duplicated, so the name alone does not identify a
+   playlist, and the path alone is not what the user called it. */
+.playlist__path {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--ink-tertiary);
+}
+
+/* Dimmer than the segments it sits between, so a '/' that is part of a folder
+   NAME - `Collections/Hauls`, `08/2026`, both real - does not read as another
+   level of nesting. */
+.playlist__sep {
+  color: var(--ink-tertiary);
+  opacity: 0.55;
+}
+
+.playlist__line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.playlist__name {
+  min-width: 0;
+  color: var(--ink-primary);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.playlist__entries {
+  flex: none;
+  color: var(--ink-tertiary);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/* "from library_export_190826.xml · imported 19 Aug". Quiet by design: it
+   answers a question the user only asks when something looks wrong. */
+.provenance {
+  color: var(--ink-tertiary);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
 /* ==========================================================================
    Explore
    ========================================================================== */

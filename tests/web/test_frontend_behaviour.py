@@ -58,6 +58,7 @@ def test_the_javascript_suites_are_discoverable():
     names = {path.name for path in _suites()}
 
     assert names >= {
+        "drawer_playlists.test.mjs",
         "explore_copy.test.mjs",
         "explore_history.test.mjs",
         "format.test.mjs",
