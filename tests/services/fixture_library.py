@@ -1,7 +1,7 @@
 """A committed, fully explicit twelve-track library.
 
 Why this exists: `data/` is gitignored (it is the user's own music library), so
-CI has no 1,307-track fixture and every assertion made against it can only ever
+CI has no real-library fixture and every assertion made against it can only ever
 run on a developer's machine. Golden characterisation values that only run
 locally are not a baseline - the next PR is verified by CI.
 
@@ -9,8 +9,8 @@ So the engine's behaviour is pinned twice:
 
 * here, against a library whose every byte is in the repository, so the golden
   values run everywhere; and
-* in the ``_real_library`` tests, against the true 1,307 tracks, skipped when
-  `data/` is absent.
+* in the ``_real_library`` tests, against the fingerprinted library captured by
+  those goldens, skipped when `data/` is absent or has changed.
 
 Everything below is a literal. The vectors are small integers so the
 normalisation, the dot products and therefore the golden cosines are the same

@@ -18,8 +18,8 @@ matmul in ``core/index_builder.py``). 1e-6 is ~30x that noise and four orders of
 magnitude tighter than any behavioural change. See ``golden/README.md``.
 
 Both libraries are exercised: the twelve committed fixture tracks (everywhere,
-including CI) and the real 1,307-track library (skipped when ``data/`` is
-absent, which is always the case on CI because it is gitignored).
+including CI) and the fingerprinted real library (skipped when ``data/`` is
+absent or has changed; it is absent on CI because it is gitignored).
 """
 
 import pytest
@@ -85,8 +85,14 @@ def test_ranked_output_matches_the_golden_values_on_the_real_library(real_explor
     assert_matches_golden(got[: len(expected["head"])], expected["head"])
 
 
-def test_the_golden_real_library_is_the_one_we_captured(real_library):
-    assert real_library.track_count == GOLDEN_REAL["track_count"] == 1307
+def test_the_golden_real_library_is_the_one_we_captured(
+    real_library, real_library_fingerprint
+):
+    assert (
+        real_library.track_count
+        == GOLDEN_REAL["track_count"]
+        == real_library_fingerprint["track_count"]
+    )
 
 
 # --------------------------------------------------------------------------

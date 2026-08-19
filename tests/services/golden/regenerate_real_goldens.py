@@ -1,17 +1,25 @@
-"""Golden values captured from the real 1,307-track library."""
+"""Deliberately recapture the real-library goldens and their fingerprint."""
 import json, sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "src"))
+sys.path.insert(0, str(REPO / "tests" / "services"))
 
 from config import DATA
+from real_library_guard import fingerprint_ids
 from services.library_session import LibrarySession
 from services.set_builder import SetBuilder
 from recommendations.ranking import ranked_recommendations
 
 OUT = REPO / "tests" / "services" / "golden"
 lib = LibrarySession.load(DATA)
+
+if lib.track_count != len(lib.ids):
+    raise ValueError(
+        "cannot capture a real-library fingerprint: metadata has "
+        f"{lib.track_count} tracks but ids.json has {len(lib.ids)}"
+    )
 
 SEEDS = ["64638770", "24614611", "36999061"]
 FIELDS = ["track_id", "artist", "title", "bpm", "key", "cosine", "score", "key_score", "bpm_score"]
@@ -61,6 +69,9 @@ for case in CASES:
         ],
     }
 (OUT / "set_builder_real.json").write_text(json.dumps(sets, indent=2, sort_keys=True) + "\n")
+(OUT / "real_library_fingerprint.json").write_text(
+    json.dumps(fingerprint_ids(lib.ids), indent=2, sort_keys=True) + "\n"
+)
 print("real goldens written")
 for f in sorted(OUT.glob("*real*.json")):
     print(" ", f.name, f.stat().st_size, "bytes")

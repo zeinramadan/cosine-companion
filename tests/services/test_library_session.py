@@ -4,10 +4,10 @@ LibrarySession takes over the six loose attributes App used to hold (meta,
 meta_ix, emb_ix, idx, V, ids) and the deletion logic that lived in
 library_tab.py:213-273.
 
-Read-only assertions run against the real 1,307-track library in data/, which is
-treated as immutable input and skipped when that directory is absent (it is
-gitignored, so on CI it always is). Every destructive test builds its own small
-library under tmp_path; nothing here writes to data/.
+Read-only assertions run against the fingerprinted real library in data/, which
+is treated as immutable input and skipped when that directory is absent or has
+changed (it is absent on CI because it is gitignored). Every destructive test
+builds its own small library under tmp_path; nothing here writes to data/.
 
 The three divergent track searches are characterised in test_track_searches.py.
 
@@ -74,8 +74,8 @@ def _write_library(data_dir, rows):
 # --------------------------------------------------------------------------
 
 
-def test_loads_the_real_library(real_library):
-    assert real_library.track_count == 1307
+def test_loads_the_real_library(real_library, real_library_fingerprint):
+    assert real_library.track_count == real_library_fingerprint["track_count"]
 
 
 def test_exposes_the_six_attributes_app_used_to_hold(real_library):
@@ -92,8 +92,14 @@ def test_meta_ix_is_indexed_by_track_id(real_library):
     assert "track_id" not in real_library.meta_ix.columns
 
 
-def test_vectors_and_ids_agree_with_the_index(real_library):
-    assert real_library.vectors.shape[0] == len(real_library.ids) == 1307
+def test_vectors_and_ids_agree_with_the_index(
+    real_library, real_library_fingerprint
+):
+    assert (
+        real_library.vectors.shape[0]
+        == len(real_library.ids)
+        == real_library_fingerprint["track_count"]
+    )
     assert real_library.index.ids == real_library.ids
 
 

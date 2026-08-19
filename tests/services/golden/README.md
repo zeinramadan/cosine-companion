@@ -9,7 +9,12 @@ drifted. A tautology is not a baseline.
 | File | Library | Runs on CI |
 |---|---|---|
 | `explore_fixture.json`, `set_builder_fixture.json`, `export_fixture.json` | the twelve committed tracks in `../fixture_library.py` | **yes** |
-| `explore_real.json`, `set_builder_real.json` | the real 1,307-track library in `data/` | no — `data/` is gitignored, so those tests skip |
+| `explore_real.json`, `set_builder_real.json` | the library identified by `real_library_fingerprint.json` | no — `data/` is gitignored, so those tests skip |
+
+The fingerprint records the track count and a SHA-256 digest of the parsed,
+ordered `ids.json` list. A developer's `data/` must match both values before the
+real-library assertions run. This prevents routine library changes from looking
+like engine regressions while keeping re-baselining explicit.
 
 ## How exact is exact
 
@@ -29,8 +34,9 @@ catching exactly that.
 
 ## Regenerating
 
-Only ever regenerate deliberately, when a behaviour change is *intended*, and
-review the diff:
+Only ever regenerate deliberately, when a behaviour or real-library baseline
+change is *intended*, and review the diff. The real-library command updates its
+goldens and fingerprint together:
 
     python tests/services/golden/regenerate_fixture_goldens.py
     python tests/services/golden/regenerate_real_goldens.py   # needs data/

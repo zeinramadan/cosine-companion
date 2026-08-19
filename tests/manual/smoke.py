@@ -115,7 +115,7 @@ def _():
     tabs = [app.notebook.tab(i, "text") for i in range(len(app.notebook.tabs()))]
     assert tabs == ["Explore", "Set Creator", "Playlist Export", "Library"], tabs
     assert app.lbl_current.cget("text") == "Current track: —"
-    assert app.library.track_count == 1307, app.library.track_count
+    assert app.library.track_count == len(app.library.ids), app.library.track_count
     assert not hasattr(app, "idx") and not hasattr(app, "meta_ix")
 
 
@@ -284,8 +284,8 @@ def _():
 def _():
     app.notebook.select(3); pump()
     total = app.library_listbox.size()
-    assert total == 1307, total
-    assert app.library_stats_label.cget("text") == "1307 tracks"
+    assert total == app.library.track_count, total
+    assert app.library_stats_label.cget("text") == f"{total} tracks"
     app.library_search_var.set("boris"); app.filter_library(); pump()
     n = app.library_listbox.size()
     assert 0 < n < total
@@ -296,9 +296,9 @@ def _():
 @check(19, "Library: Clear and Refresh restore the full list")
 def _():
     app.clear_library_search(); pump()
-    assert app.library_listbox.size() == 1307
+    assert app.library_listbox.size() == app.library.track_count
     app.refresh_library(); pump()
-    assert app.library_listbox.size() == 1307
+    assert app.library_listbox.size() == app.library.track_count
     first = rows(app.library_listbox)[:3]
     assert first == sorted(first, key=lambda s: s.lower()), first
 
