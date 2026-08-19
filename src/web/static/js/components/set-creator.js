@@ -286,6 +286,10 @@ export function mountSetCreator({ store }) {
 
   function renderAnchors() {
     const section = element('section', 'setc__section');
+    // Dropped first, not rebuilt at the end: the empty-list branch below
+    // returns early, and leaving the previous render's rows here would have
+    // `selectAnchor` writing aria-selected onto detached nodes.
+    anchorRowNodes = [];
 
     const heading = element('div', 'setc__heading');
     heading.append(element('p', 'eyebrow', 'Anchor Tracks:'));

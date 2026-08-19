@@ -566,6 +566,29 @@ test('selecting an anchor does not rebuild the destination around it', async () 
   assert.equal(view.state().selectedAnchor, 5);
 });
 
+test('clearing the anchors leaves no stale rows behind to write on', async () => {
+  // `renderAnchors` returns early when there is nothing to list, so the cached
+  // row nodes have to be dropped at the TOP of it. Kept from the previous
+  // render, `selectAnchor` would be setting aria-selected on detached nodes.
+  const { view } = mount();
+  await addAnchor(ALPHA, 1);
+  anchorRows()[0].dispatch('click');
+  assert.equal(view.state().selectedAnchor, 1);
+
+  control('Clear Set').dispatch('click');
+  await settle();
+
+  assert.equal(anchorRows().length, 0);
+  assert.equal(view.state().selectedAnchor, null);
+
+  // Re-adding must produce a row that is itself selectable, not one shadowed
+  // by a node from two renders ago.
+  await addAnchor(BETA, 4, 1);
+  anchorRows()[0].dispatch('keydown', { key: 'Enter', preventDefault() {} });
+  assert.equal(view.state().selectedAnchor, 4);
+  assert.equal(anchorRows()[0].getAttribute('aria-selected'), 'true');
+});
+
 test('Enter on a selected anchor row deselects it', async () => {
   const { view } = mount();
   await addAnchor(ALPHA, 1);
