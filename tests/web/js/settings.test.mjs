@@ -64,3 +64,76 @@ test('the Settings destination loads and persists the edited XML path', async ()
   assert.equal(input.disabled, false);
   assert.equal(submit.disabled, false);
 });
+
+test('a failed Settings save reports the error and restores the form', async () => {
+  const fetches = installFetch();
+  const { form, input, submit, status } = buildSettingsDom();
+  const { mountSettings } = await import(
+    '../../../src/web/static/js/components/settings.js'
+  );
+
+  mountSettings();
+  fetches.deliver('/api/settings?q=', {
+    settings: { xml_path: '/old/collection.xml' },
+  });
+  await settle();
+
+  input.value = '/new/collection.xml';
+  form.dispatch('submit');
+  await settle();
+  fetches.reject('/api/settings?q=');
+  await settle();
+
+  assert.equal(status.textContent, 'Could not reach the local server.');
+  assert.equal(status.dataset.state, 'error');
+  assert.equal(input.disabled, false);
+  assert.equal(submit.disabled, false);
+});
+
+test('submitting Settings prevents the browser form navigation', async () => {
+  const fetches = installFetch();
+  const { form, input } = buildSettingsDom();
+  const { mountSettings } = await import(
+    '../../../src/web/static/js/components/settings.js'
+  );
+
+  mountSettings();
+  fetches.deliver('/api/settings?q=', {
+    settings: { xml_path: '/old/collection.xml' },
+  });
+  await settle();
+
+  let prevented = false;
+  input.value = '/new/collection.xml';
+  form.dispatch('submit', {
+    preventDefault() {
+      prevented = true;
+    },
+  });
+
+  assert.equal(prevented, true);
+});
+
+test('a blank Settings path is refused without sending a write', async () => {
+  const fetches = installFetch();
+  const { form, input, status } = buildSettingsDom();
+  const { mountSettings } = await import(
+    '../../../src/web/static/js/components/settings.js'
+  );
+
+  mountSettings();
+  fetches.deliver('/api/settings?q=', {
+    settings: { xml_path: '/old/collection.xml' },
+  });
+  await settle();
+
+  const requestsBeforeSubmit = fetches.requests.length;
+  input.value = '  \t  ';
+  form.dispatch('submit');
+  await settle();
+
+  assert.equal(fetches.requests.length, requestsBeforeSubmit);
+  assert.equal(status.textContent, 'Enter a Rekordbox XML path before saving.');
+  assert.equal(status.dataset.state, 'error');
+  assert.equal(input.focused, 1);
+});

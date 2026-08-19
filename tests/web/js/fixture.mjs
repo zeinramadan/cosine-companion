@@ -95,6 +95,15 @@ export function installFetch() {
       pending.delete(key);
       waiting.resolve({ ok: true, status: 200, json: async () => body });
     },
+    /** Fail one outstanding request as a network error. */
+    reject(key, error = new Error('network failure')) {
+      const waiting = pending.get(key);
+      if (!waiting) {
+        throw new Error(`no outstanding request for ${key}; have ${[...pending.keys()]}`);
+      }
+      pending.delete(key);
+      waiting.reject(error);
+    },
   };
 }
 

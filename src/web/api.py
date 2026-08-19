@@ -26,6 +26,7 @@ tests/web/test_no_heavy_imports.py.
 import dataclasses
 import math
 import re
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -60,6 +61,10 @@ EXPLORE_FINAL_TOP = 200
 
 DEFAULT_RECOMMENDATION_LIMIT = 50
 MAX_RECOMMENDATION_LIMIT = 200
+
+# Filesystem limits differ, but a path longer than this is not useful on any
+# platform the desktop app supports and can raise from a later UI callback.
+MAX_XML_PATH_CHARACTERS = 4096
 
 
 class ApiError(Exception):
@@ -247,6 +252,7 @@ class CocoApi:
         self.library = library
         self.settings = settings
         self.explore = explore if explore is not None else ExploreSession(library)
+        self._settings_write_lock = threading.Lock()
 
     # -- routing -----------------------------------------------------------
     #
@@ -335,13 +341,19 @@ class CocoApi:
         xml_path = body[XML_PATH_KEY]
         if not isinstance(xml_path, str) or not xml_path.strip():
             raise bad_request(f"{XML_PATH_KEY} must be a non-blank string.")
+        xml_path = xml_path.strip()
+        if len(xml_path) > MAX_XML_PATH_CHARACTERS:
+            raise bad_request(
+                f"{XML_PATH_KEY} must not exceed {MAX_XML_PATH_CHARACTERS} characters."
+            )
 
         # SettingsStore.set is deliberately the merge operation: changing the
         # XML path must preserve first_run_complete, as the Tkinter window does.
         # The chosen path is not checked for existence there, so it is not
         # checked here either.
-        self.settings.set(XML_PATH_KEY, xml_path)
-        return 200, self._settings_document()
+        with self._settings_write_lock:
+            self.settings.set(XML_PATH_KEY, xml_path)
+            return 200, self._settings_document()
 
     def _settings_document(self):
         return {

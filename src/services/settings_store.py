@@ -23,6 +23,8 @@ tests/test_services_are_ui_free.py, which enforces that with an AST walk.
 """
 
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, Union
 
@@ -75,5 +77,19 @@ class SettingsStore:
         return self.get(XML_PATH_KEY)
 
     def _write(self, settings: Dict[str, Any]) -> None:
-        with open(self.path, "w") as f:
-            json.dump(settings, f, indent=2)
+        temporary_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                dir=self.path.parent,
+                prefix=f".{self.path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as temporary:
+                temporary_path = Path(temporary.name)
+                json.dump(settings, temporary, indent=2)
+            os.replace(temporary_path, self.path)
+            temporary_path = None
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)

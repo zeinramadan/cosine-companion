@@ -6,6 +6,7 @@ onboarding, so the Settings destination may neither read nor write it.
 """
 
 import json
+import socket
 
 import pytest
 
@@ -32,6 +33,22 @@ def settings_path(tmp_path):
 @pytest.fixture
 def settings_api(settings_path):
     return CocoApi(EmptyLibrary(), SettingsStore(settings_path))
+
+
+def raw_exchange(port, request_bytes, limit=1 << 20):
+    connection = socket.create_connection(("127.0.0.1", port), timeout=10)
+    try:
+        connection.sendall(request_bytes)
+        connection.shutdown(socket.SHUT_WR)
+        received = b""
+        while len(received) < limit:
+            chunk = connection.recv(65536)
+            if not chunk:
+                break
+            received += chunk
+        return received
+    finally:
+        connection.close()
 
 
 def test_get_settings_reports_an_unset_path_without_creating_a_file(
@@ -112,6 +129,56 @@ def test_the_running_server_and_real_api_persist_the_same_post(
     }
 
 
+def test_a_short_but_valid_json_body_cannot_commit_a_write(
+    settings_path, static_dir
+):
+    body = b'{"xml_path":"/TRUNCATED-BUT-VALID.xml"}'
+    assert len(body) == 39
+    api = CocoApi(EmptyLibrary(), SettingsStore(settings_path))
+    running = CocoServer(api, static_dir)
+    running.start()
+    try:
+        authority = f"127.0.0.1:{running.port}".encode()
+        received = raw_exchange(
+            running.port,
+            b"POST /api/settings HTTP/1.1\r\nHost: "
+            + authority
+            + b"\r\nX-Coco-Token: "
+            + running.token.encode()
+            + b"\r\nContent-Type: application/json\r\n"
+            + b"Content-Length: 9999\r\nConnection: close\r\n\r\n"
+            + body,
+        )
+    finally:
+        running.stop()
+
+    head, separator, response_body = received.partition(b"\r\n\r\n")
+    assert separator, received[:200]
+    assert head.startswith(b"HTTP/1.1 400 "), head
+    assert json.loads(response_body)["error"]["message"] == (
+        "The request body ended before Content-Length bytes arrived."
+    )
+    assert not settings_path.exists(), "a truncated request committed its JSON prefix"
+
+
+def test_api_level_method_not_allowed_response_names_every_allowed_method(
+    settings_path, static_dir
+):
+    api = CocoApi(EmptyLibrary(), SettingsStore(settings_path))
+    running = CocoServer(api, static_dir)
+    running.start()
+    try:
+        response = client_for(running).post(
+            "/api/health", b"{}", token=running.token
+        )
+    finally:
+        running.stop()
+
+    assert response.status == 405
+    assert response.headers["Allow"] == "GET, HEAD, POST"
+    assert not settings_path.exists()
+
+
 def test_post_settings_does_not_require_the_chosen_file_to_exist(
     settings_api, settings_path
 ):
@@ -125,6 +192,32 @@ def test_post_settings_does_not_require_the_chosen_file_to_exist(
     assert status == 200
     assert body["settings"]["xml_path"] == chosen
     assert json.loads(settings_path.read_text(encoding="utf-8"))["xml_path"] == chosen
+
+
+def test_xml_path_is_trimmed_before_it_is_persisted(settings_api, settings_path):
+    status, body = settings_api.handle(
+        "POST", "/api/settings", {}, {"xml_path": "  /tmp/ok.xml  "}
+    )
+
+    assert status == 200
+    assert body == {"settings": {"xml_path": "/tmp/ok.xml"}}
+    assert json.loads(settings_path.read_text(encoding="utf-8")) == {
+        "xml_path": "/tmp/ok.xml"
+    }
+
+
+def test_an_absurdly_long_xml_path_is_rejected(settings_api, settings_path):
+    absurd_path = "/" + "x" * 5004
+    assert len(absurd_path) == 5005
+
+    status, body = settings_api.handle(
+        "POST", "/api/settings", {}, {"xml_path": absurd_path}
+    )
+
+    assert status == 400
+    assert body["error"]["code"] == "bad_request"
+    assert "4096" in body["error"]["message"]
+    assert not settings_path.exists()
 
 
 @pytest.mark.parametrize(

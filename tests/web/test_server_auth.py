@@ -521,16 +521,42 @@ def test_malformed_json_is_a_framed_400(client, server, stub_api, body):
 
 
 @pytest.mark.parametrize(
-    "length_headers,expected_status",
+    "length_headers,expected_status,expected_code,expected_message",
     [
-        (b"", 411),
-        (b"Content-Length: nope\r\n", 400),
-        (b"Content-Length: -1\r\n", 400),
-        (b"Content-Length: 0\r\nContent-Length: 0\r\n", 400),
+        (
+            b"",
+            411,
+            "length_required",
+            "POST requests require a Content-Length header.",
+        ),
+        (
+            b"Content-Length: nope\r\n",
+            400,
+            "bad_request",
+            "Content-Length must be a non-negative integer.",
+        ),
+        (
+            b"Content-Length: -1\r\n",
+            400,
+            "bad_request",
+            "Content-Length must be a non-negative integer.",
+        ),
+        (
+            b"Content-Length: 0\r\nContent-Length: 0\r\n",
+            400,
+            "bad_request",
+            "POST requests require exactly one Content-Length header.",
+        ),
     ],
+    ids=("missing", "non_integer", "negative", "duplicate"),
 )
-def test_bad_or_missing_body_lengths_are_framed_json(
-    server, stub_api, length_headers, expected_status
+def test_bad_or_missing_body_lengths_are_rejected_before_json_parsing(
+    server,
+    stub_api,
+    length_headers,
+    expected_status,
+    expected_code,
+    expected_message,
 ):
     authority = f"127.0.0.1:{server.port}".encode()
     received = raw_exchange(
@@ -556,7 +582,8 @@ def test_bad_or_missing_body_lengths_are_framed_json(
         )
     )
     assert declared == len(body) > 0
-    assert json.loads(body)["error"]["code"]
+    error = json.loads(body)["error"]
+    assert error == {"code": expected_code, "message": expected_message}
     assert stub_api.calls == []
 
 
