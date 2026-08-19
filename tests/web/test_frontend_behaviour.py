@@ -61,6 +61,8 @@ def test_the_javascript_suites_are_discoverable():
         "explore_copy.test.mjs",
         "explore_history.test.mjs",
         "format.test.mjs",
+        "globals.test.mjs",
+        "palette_modality.test.mjs",
         "palette_sequencing.test.mjs",
     }, f"a behavioural suite disappeared: {sorted(names)}"
 
@@ -107,10 +109,28 @@ def test_the_dom_shim_is_documented_as_a_shim():
     assert "WKWebView" in body
 
 
+#: Suites whose subject is the harness rather than the frontend, listed one by
+#: one. `globals.test.mjs` tests that the shim can install itself over a
+#: runtime-owned global - which is a property of the shim, not of any shipped
+#: module. Enumerating the exemption means a behavioural suite cannot join it
+#: by quietly dropping its import.
+HARNESS_SUITES = {"globals.test.mjs"}
+
+
 def test_no_javascript_suite_reimplements_what_it_tests():
     """Each suite must import from src/web/static/js. A suite that defines its
     own copy of the logic is a tautology, and this PR has been bitten by
     exactly that before."""
     for suite in _suites():
+        if suite.name in HARNESS_SUITES:
+            continue
         body = suite.read_text(encoding="utf-8")
         assert "src/web/static/js/" in body, f"{suite.name} imports no shipped module"
+
+
+def test_the_harness_exemption_names_files_that_exist():
+    """A dead exemption is an exemption nobody notices growing."""
+    present = {path.name for path in _suites()}
+
+    assert HARNESS_SUITES <= present, f"stale exemptions: {sorted(HARNESS_SUITES - present)}"
+    assert len(HARNESS_SUITES) < len(present), "every suite is exempt, so the rule is vacuous"

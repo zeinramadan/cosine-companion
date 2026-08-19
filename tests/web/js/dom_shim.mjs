@@ -256,13 +256,43 @@ export const navigator = {
   },
 };
 
+/**
+ * Put one value on `globalThis`, over whatever is already there.
+ *
+ * `defineProperty` rather than assignment, and that is not defensive
+ * pedantry. From node 21 the runtime defines `globalThis.navigator` itself as
+ * a GETTER-ONLY accessor, and an ES module is strict mode, so
+ * `globalThis.navigator = ...` throws:
+ *
+ *   TypeError: Cannot set property navigator of #<Object> which has only a getter
+ *
+ * This was written on node 18 and 20, where the property does not exist and
+ * assignment was fine; CI runs node 24, where every suite that shims
+ * `navigator` failed at import. `fetch` is the same shape of risk on a future
+ * runtime. Pinned by globals.test.mjs, which reproduces the getter-only case
+ * on any version.
+ */
+function define(name, value) {
+  Object.defineProperty(globalThis, name, {
+    value,
+    writable: true,
+    configurable: true,
+    enumerable: true,
+  });
+  if (globalThis[name] !== value) {
+    throw new Error(`the ${name} shim did not install`);
+  }
+}
+
 /** Install the shim as globals. Must run BEFORE any frontend module is imported. */
 export function installGlobals() {
-  globalThis.document = document;
-  globalThis.window = window;
-  globalThis.navigator = navigator;
-  globalThis.HTMLElement = Node;
+  define('document', document);
+  define('window', window);
+  define('navigator', navigator);
+  define('HTMLElement', Node);
 }
+
+export { define as defineGlobal };
 
 export function sleep(ms) {
   return new Promise((resolve) => globalThis.setTimeout(resolve, ms));

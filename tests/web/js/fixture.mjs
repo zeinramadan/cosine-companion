@@ -5,7 +5,7 @@
  * renamed id fails these tests loudly instead of silently mounting nothing.
  */
 
-import { Node, document, installGlobals, withId } from './dom_shim.mjs';
+import { Node, defineGlobal, document, installGlobals, withId } from './dom_shim.mjs';
 
 /** Build the palette's markup. Mirrors index.html:99-123. */
 export function buildPaletteDom() {
@@ -51,7 +51,9 @@ export function installFetch() {
   const requests = [];
   const pending = new Map();
 
-  globalThis.fetch = (url) => {
+  // defineGlobal, not assignment: `fetch` is a runtime-owned global too, and
+  // the node-21 `navigator` breakage is the same shape of risk here.
+  defineGlobal('fetch', (url) => {
     const path = url.pathname;
     const query = url.searchParams.get('q') || '';
     const key = `${path}?q=${query}`;
@@ -59,7 +61,7 @@ export function installFetch() {
     return new Promise((resolve, reject) => {
       pending.set(key, { resolve, reject });
     });
-  };
+  });
 
   return {
     requests,

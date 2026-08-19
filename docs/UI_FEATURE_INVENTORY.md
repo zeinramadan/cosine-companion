@@ -1618,10 +1618,14 @@ distinction is the whole of what those tests are worth — they can say what a
 module did, not what a user saw — and it is stated at the top of the shim as
 well as here.
 
-The one environmental dependency in the web suite is `node`, for those five
+The one environmental dependency in the web suite is `node`, for those six
 suites. When it is absent they skip with a reason naming the file that did not
 run; that was exercised by running the web suite with `node` off `PATH`, which
-gives 307 passed and 5 skipped. Beyond that, no web test reads `data/`: the
+gives 308 passed and 6 skipped. One of the six, `globals.test.mjs`, has the
+shim itself as its subject rather than any shipped module — CI runs node 24,
+where `globalThis.navigator` is a getter-only accessor the runtime owns, and
+the shim's original plain assignment to it threw at import. Beyond that, no
+web test reads `data/`: the
 library each one sees is built under `tmp_path` by
 `tests/web/webtest_support.py`, and it is what
 `tests/web/test_api_library.py::test_library_reports_the_real_track_count`
