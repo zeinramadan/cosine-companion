@@ -1,9 +1,7 @@
-/* The four destinations, and which one is showing.
+/* The destinations, and which one is showing.
  *
- * Explore is the only one this PR implements. The other three are rendered,
- * reachable and clearly labelled rather than hidden: the shape of the shell is
- * part of what is being reviewed, and a sidebar with one item would not show
- * it.
+ * Explore and Settings are implemented. The other three are rendered,
+ * reachable and clearly labelled rather than hidden.
  */
 
 const VIEW_TITLES = {
@@ -11,6 +9,7 @@ const VIEW_TITLES = {
   'set-creator': 'Set Creator',
   library: 'Library',
   export: 'Export',
+  settings: 'Settings',
 };
 
 export function mountSidebar({ store }) {

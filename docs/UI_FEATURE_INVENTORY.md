@@ -1510,18 +1510,19 @@ Every row is a user-reachable workflow catalogued above. Task 9 records pass/fai
 
 ---
 
-## 6. PR 3a coverage — the web UI
+## 6. Web UI coverage
 
 PR 3a adds a second front end (`src/web/`, launched with
 `python src/cosine_companion.py ui-web`) alongside the Tkinter app. Tkinter is
 untouched, is still the default, and is what the packaged `.app` launches;
 nothing in §1–§5 above describes behaviour that changed.
 
-This section records **which catalogued Explore controls the web UI
-reimplements**, so the rewrite can be reviewed against the contract rather than
-against a demo. It adds no claim about the Tkinter app. Only the Explore
-destination is in scope for PR 3a — Set Creator, Library and Export render a
-labelled placeholder, so §2.5, §2.6 and §2.7 are entirely outstanding.
+This section records **which catalogued controls the web UI reimplements**, so
+the rewrite can be reviewed against the contract rather than against a demo.
+It adds no claim about the Tkinter app. PR 3a implemented Explore; the small
+write-surface follow-up adds only the Rekordbox XML path from Settings. Set
+Creator, Library and Export still render a labelled placeholder, so §2.5, §2.6
+and §2.7 are entirely outstanding.
 
 The line numbers below are §2.4 and §3 coordinates in this document.
 
@@ -1560,13 +1561,15 @@ omission is on the record rather than left for a reviewer to notice.
 | Selection-error dialogs | :431-437 | `No Selection`, `No Recommendations` and `Invalid selection.` have no web equivalent; a row can only be clicked when it is rendered |
 | Suggestions list as a `tk.Listbox` | :340-341 | The web list is a scrollable container of buttons; the mouse-wheel-only scrolling noted in §2.4 does not carry over |
 
-Outside §2.4, the whole of §2.1, §2.3, §2.5, §2.6, §2.7, §2.8, §2.9, §2.10,
-§2.11, §2.12 and §2.13 are outstanding, and the three non-Explore destinations
-say so on screen.
+Outside §2.4, the whole of §2.1, §2.3, §2.5, §2.6, §2.7, §2.9, §2.10, §2.11,
+§2.12 and §2.13 are outstanding, and the three placeholder destinations say so
+on screen. Within §2.8, library statistics, deleted-track management and both
+reindex actions remain outstanding; this follow-up implements only reading and
+changing `xml_path`.
 
 ### 6.3 Deliberate divergences
 
-Three places where the web UI does something different on purpose. Each is a
+Four places where the web UI does something different on purpose. Each is a
 change of behaviour, not an omission, and is called out for that reason.
 
 **Blank palette query.** `pick_current` (:407-408) and the two selector dialogs
@@ -1604,25 +1607,51 @@ text; all 24 pill variants are re-derived and checked against a 4.5:1 contrast
 floor by
 `tests/web/test_frontend_conventions.py::test_every_camelot_pill_is_readable`.
 
+**Settings uses a path field, not a file picker.** The Tkinter window opens a
+native picker and receives the selected file's absolute path. A browser file
+input deliberately does not reveal that path, so using one would persist a
+synthetic filename that the indexer cannot open. The web destination exposes an
+explicit text field instead. Like §2.8, it does not require the file to exist,
+and its API uses `SettingsStore.set` so `first_run_complete` is preserved. The
+rest of §2.8 is deferred in §6.2.
+
 ### 6.4 What pins the web layer
 
-**The HTTP surface, stated exactly.** This server answers `GET` and `HEAD`.
-Every other method is a `405` whose `Allow` header names those two
-(`src/web/server.py:61`). `HEAD` is implemented rather than tolerated:
-`_dispatch` routes it as the `GET` it stands in for
-(`src/web/server.py:171`) and only the content is dropped, at the end of
-`_send` (`src/web/server.py:389`), so a `HEAD` response carries the status,
-the `Content-Type` and the `Content-Length` its `GET` would have carried — RFC
-9110 sections 9.3.2 and 8.6 (written out rather than with §, which in this
-document means a heading of this document). That is worth writing down because the first round-2
-implementation did only the second half: the body was elided correctly while
-routing sent `HEAD` down the unsupported-method branch, so `HEAD /api/health`
-answered `405` with `Content-Length 78` where `GET` answered `200` with
-`Content-Length 12`, and `HEAD /` answered `405` where `GET` returned 4907
-bytes. Pinned by
+**The HTTP surface, stated exactly.** Static assets still answer only `GET` and
+`HEAD`; their `405` names `GET, HEAD`. Authenticated API requests additionally
+answer `POST`, and an unsupported API method gets a JSON `405` naming `GET,
+HEAD, POST`. There is no `PUT`, `PATCH`, `DELETE` or `OPTIONS` implementation.
+Every method still enters through `_Handler.__getattr__` and `_dispatch`; POST
+does not add a per-verb handler or a second authentication door.
+
+`HEAD` remains implemented rather than tolerated: `_dispatch` routes it as the
+`GET` it stands in for and only the content is dropped at the end of `_send`, so
+a `HEAD` response carries the status, `Content-Type` and `Content-Length` its
+`GET` would have carried — RFC 9110 sections 9.3.2 and 8.6. That is worth
+writing down because the first round-2 implementation did only the second half:
+the body was elided correctly while routing sent `HEAD` down the
+unsupported-method branch. Pinned by
 `tests/web/test_server_auth.py::test_head_returns_what_get_returns_minus_the_content`,
 which asserts that parity across an API path and a static path in both a
 success and a failure state.
+
+**Why there is no Origin/CSRF gate.** The per-process token is an explicit
+bearer credential held by the page's JavaScript and sent in `X-Coco-Token`; it
+is not a cookie, client certificate or other credential a browser attaches
+ambiently. A hostile page can submit a form to loopback, but it cannot supply
+the unknown token. Supplying the custom header or an `application/json` body
+cross-origin requires a CORS preflight, and this server grants no CORS access.
+An Origin allow-list would therefore reject no request that has authority the
+token did not already grant, while making non-browser clients invent a browser
+header. The existing Host check remains useful DNS-rebinding defence in depth.
+
+**POST bodies are bounded before parsing.** Authentication runs first. A
+successful POST then requires exactly one `Content-Type` whose media type is
+`application/json`, exactly one non-negative `Content-Length`, and at most
+16 KiB. Wrong media types are 415, missing lengths 411, oversized bodies 413,
+and malformed UTF-8/JSON or invalid lengths 400. Every failure uses the shared
+JSON error shape, declares its byte length, and closes the connection when a
+body may remain unread so it cannot desynchronise the next request.
 
 **Transport errors are framed as well as JSON.** The request lines
 `parse_request` rejects before any routing happens — a one-word line, an
@@ -1657,10 +1686,10 @@ distinction is the whole of what those tests are worth — they can say what a
 module did, not what a user saw — and it is stated at the top of the shim as
 well as here.
 
-The one environmental dependency in the web suite is `node`, for those six
+The one environmental dependency in the web suite is `node`, for those seven
 suites. When it is absent they skip with a reason naming the file that did not
-run; that was exercised by running the web suite with `node` off `PATH`, which
-gives 314 passed and 6 skipped. One of the six, `globals.test.mjs`, has the
+run; the current web suite then gives **349 passed and 7 skipped**, one named
+skip per JavaScript file. One of the seven, `globals.test.mjs`, has the
 shim itself as its subject rather than any shipped module — CI runs node 24,
 where `globalThis.navigator` is a getter-only accessor the runtime owns, and
 the shim's original plain assignment to it threw at import. Beyond that, no
@@ -1670,12 +1699,11 @@ library each one sees is built under `tmp_path` by
 `tests/web/test_api_library.py::test_library_reports_the_real_track_count`
 counts.
 
-That was re-derived for this round rather than carried forward. A fresh clone
-of the branch with no `data/` directory, in a 3.10 venv holding only numpy,
-pandas, pyarrow, lxml, pytest and pywebview, gives **610 passed, 25 skipped**,
-and all 25 skips are the same pre-existing cases as before: 24 `real_library`
-cases across `tests/services/` and one private-XML case in
-`tests/test_xml_parser.py`. No skip in that run comes from the web suite.
+A fresh-clone gate for the write-surface follow-up is recorded in its PR. It
+installs only numpy, pandas, pyarrow, lxml and pytest: the API and server must
+work without Essentia, TensorFlow, FAISS or a GUI toolkit. In that profile the
+host module skips explicitly because pywebview is absent; no API or server test
+may skip with it.
 
 | Area | Pinned by |
 |---|---|
@@ -1687,6 +1715,9 @@ cases across `tests/services/` and one private-XML case in
 | The host not reaching Tkinter | `tests/web/test_host_importable.py::test_importing_the_host_does_not_load_tkinter` |
 | Design tokens, focus rings, reduced motion, contrast | `tests/web/test_frontend_conventions.py::test_body_text_clears_the_contrast_floor` |
 | Every HTTP method, defined or not, meeting the token check | `tests/web/test_server_auth.py::test_no_method_whatsoever_reaches_the_api_without_a_token` |
+| POST auth running before body parsing | `…::test_an_unauthenticated_post_is_rejected_before_its_body_or_api` |
+| POST body size and media-type limits | `…::test_an_oversized_body_is_rejected_before_it_is_read_or_dispatched`, `…::test_a_wrong_content_type_is_rejected_before_dispatch` |
+| Malformed JSON returning a framed API error | `…::test_malformed_json_is_a_framed_400` |
 | `HEAD` returning its `GET`'s status and `Content-Length` | `…::test_head_returns_what_get_returns_minus_the_content` |
 | A `HEAD` response not desynchronising the next one on the same connection | `…::test_a_head_response_leaves_the_connection_synchronised` |
 | Request lines the stdlib rejects still getting a status line | `…::test_a_rejected_request_line_still_gets_a_framed_json_response` |
@@ -1698,4 +1729,6 @@ cases across `tests/services/` and one private-XML case in
 | Copy acting on a recommendation without re-seeding | `…::test_frontend_behaviour` (`explore_copy.test.mjs`) |
 | The palette never rendering a superseded query | `…::test_frontend_behaviour` (`palette_sequencing.test.mjs`) |
 | `aria-modal` being backed by an inert shell and a Tab trap | `…::test_frontend_behaviour` (`palette_modality.test.mjs`) |
+| Settings loading and submitting the edited XML path | `…::test_frontend_behaviour` (`settings.test.mjs`) |
+| Settings preserving the onboarding flag | `tests/web/test_api_settings.py::test_post_settings_persists_immediately_and_preserves_onboarding` |
 | Browse, search and recommendation caps actually binding | `tests/web/test_api_library.py::test_tracks_clamps_an_absurd_limit_rather_than_serialising_the_library` |

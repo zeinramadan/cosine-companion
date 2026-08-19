@@ -17,7 +17,7 @@ import pytest
 from webtest_support import StubApi, client_for
 
 import web.server as server_module
-from web.server import CocoServer
+from web.server import MAX_REQUEST_BODY_BYTES, CocoServer
 
 
 # -- binding ---------------------------------------------------------------
@@ -192,6 +192,7 @@ def test_the_token_check_still_names_compare_digest(server):
 API_PATHS = [
     "/api/health",
     "/api/library",
+    "/api/settings",
     "/api/tracks",
     "/api/tracks/search?q=x",
     "/api/tracks/f01",
@@ -356,7 +357,7 @@ BODYLESS = {"HEAD"}
 #: *implemented* - routed as the GET it stands in for (server.py SAFE_ALIASES)
 #: - and not because it is tolerated; the HEAD/GET parity tests below are what
 #: hold that. Everything outside this set is a 405 naming these two in Allow.
-SUPPORTED_METHODS = ("GET", "HEAD")
+SUPPORTED_METHODS = ("GET", "HEAD", "POST")
 
 
 def test_no_verb_gets_its_own_handler_method():
@@ -406,10 +407,191 @@ def test_an_authenticated_unsupported_method_is_a_json_405(
 
     assert response.status == 405
     assert response.content_type == "application/json; charset=utf-8"
-    assert response.headers["Allow"] == "GET, HEAD"
+    assert response.headers["Allow"] == "GET, HEAD, POST"
     assert stub_api.calls == [], "an unsupported method must not reach the API"
     if method not in BODYLESS:
         assert response.error_code == "method_not_allowed"
+
+
+# -- authenticated JSON writes --------------------------------------------
+
+VALID_SETTINGS_BODY = b'{"xml_path":"/tmp/collection.xml"}'
+
+
+def test_an_unauthenticated_post_is_rejected_before_its_body_or_api(
+    client, stub_api
+):
+    """POST gains no side door: auth runs before body parsing and dispatch.
+
+    A valid JSON body is important here. An invalid one would also produce a
+    non-2xx response after removing the auth check, so the test would stay
+    green while the protection it claims to pin disappeared.
+    """
+    response = client.post("/api/settings", VALID_SETTINGS_BODY)
+
+    assert response.status == 401
+    assert response.error_code == "unauthorized"
+    assert stub_api.calls == [], "the POST reached the API without a token"
+
+
+def test_an_authenticated_post_reaches_the_api_with_its_decoded_body(
+    client, server, stub_api
+):
+    response = client.post(
+        "/api/settings", VALID_SETTINGS_BODY, token=server.token
+    )
+
+    assert response.status == 200
+    assert stub_api.calls == [
+        ("POST", "/api/settings", {}, {"xml_path": "/tmp/collection.xml"})
+    ]
+
+
+def test_an_oversized_body_is_rejected_before_it_is_read_or_dispatched(
+    client, server, stub_api
+):
+    body = json.dumps(
+        {"xml_path": "/" + "x" * MAX_REQUEST_BODY_BYTES}
+    ).encode("utf-8")
+    assert len(body) > MAX_REQUEST_BODY_BYTES, "the request does not cross the cap"
+
+    response = client.post("/api/settings", body, token=server.token)
+
+    assert response.status == 413
+    assert response.error_code == "payload_too_large"
+    assert response.headers["Connection"] == "close"
+    assert stub_api.calls == [], "the oversized body reached the API"
+
+
+def test_a_body_exactly_at_the_limit_is_accepted(client, server, stub_api):
+    prefix = b'{"xml_path":"/'
+    suffix = b'"}'
+    body = prefix + b"x" * (MAX_REQUEST_BODY_BYTES - len(prefix) - len(suffix)) + suffix
+    assert len(body) == MAX_REQUEST_BODY_BYTES, "the boundary request is mis-sized"
+
+    response = client.post("/api/settings", body, token=server.token)
+
+    assert response.status == 200
+    assert len(stub_api.calls[-1][-1]["xml_path"].encode("utf-8")) > 0
+
+
+def test_a_wrong_content_type_is_rejected_before_dispatch(client, server, stub_api):
+    response = client.post(
+        "/api/settings",
+        VALID_SETTINGS_BODY,
+        token=server.token,
+        content_type="text/plain",
+    )
+
+    assert response.status == 415
+    assert response.error_code == "unsupported_media_type"
+    assert response.headers["Connection"] == "close"
+    assert stub_api.calls == [], "a non-JSON body reached the API"
+
+
+def test_application_json_may_name_its_utf8_charset(client, server, stub_api):
+    response = client.post(
+        "/api/settings",
+        VALID_SETTINGS_BODY,
+        token=server.token,
+        content_type="Application/JSON; charset=utf-8",
+    )
+
+    assert response.status == 200
+    assert stub_api.calls[-1][-1] == {"xml_path": "/tmp/collection.xml"}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'{"xml_path":',
+        b"not-json",
+        b'"a scalar is JSON, but not malformed"'[:-1],
+        b"\xff",
+    ],
+)
+def test_malformed_json_is_a_framed_400(client, server, stub_api, body):
+    response = client.post("/api/settings", body, token=server.token)
+
+    assert response.status == 400
+    assert response.content_type == "application/json; charset=utf-8"
+    assert response.error_code == "bad_request"
+    assert int(response.headers["Content-Length"]) == len(response.body) > 0
+    assert stub_api.calls == [], "malformed JSON reached the API"
+
+
+@pytest.mark.parametrize(
+    "length_headers,expected_status,expected_code,expected_message",
+    [
+        (
+            b"",
+            411,
+            "length_required",
+            "POST requests require a Content-Length header.",
+        ),
+        (
+            b"Content-Length: nope\r\n",
+            400,
+            "bad_request",
+            "Content-Length must be a non-negative integer.",
+        ),
+        (
+            b"Content-Length: -1\r\n",
+            400,
+            "bad_request",
+            "Content-Length must be a non-negative integer.",
+        ),
+        (
+            b"Content-Length: 0\r\nContent-Length: 0\r\n",
+            400,
+            "bad_request",
+            "POST requests require exactly one Content-Length header.",
+        ),
+    ],
+    ids=("missing", "non_integer", "negative", "duplicate"),
+)
+def test_bad_or_missing_body_lengths_are_rejected_before_json_parsing(
+    server,
+    stub_api,
+    length_headers,
+    expected_status,
+    expected_code,
+    expected_message,
+):
+    authority = f"127.0.0.1:{server.port}".encode()
+    received = raw_exchange(
+        server.port,
+        b"POST /api/settings HTTP/1.1\r\nHost: "
+        + authority
+        + b"\r\nX-Coco-Token: "
+        + server.token.encode()
+        + b"\r\nContent-Type: application/json\r\n"
+        + length_headers
+        + b"Connection: close\r\n\r\n",
+    )
+
+    head, separator, body = received.partition(b"\r\n\r\n")
+    assert separator, received[:200]
+    assert head.startswith(f"HTTP/1.1 {expected_status} ".encode()), head
+    assert b"Content-Type: application/json; charset=utf-8\r\n" in head
+    declared = int(
+        next(
+            line.partition(b":")[2].strip()
+            for line in head.split(b"\r\n")
+            if line.lower().startswith(b"content-length:")
+        )
+    )
+    assert declared == len(body) > 0
+    error = json.loads(body)["error"]
+    assert error == {"code": expected_code, "message": expected_message}
+    assert stub_api.calls == []
+
+
+def test_static_files_remain_read_only_when_the_api_gains_post(client):
+    response = client.post("/index.html", VALID_SETTINGS_BODY)
+
+    assert response.status == 405
+    assert response.headers["Allow"] == "GET, HEAD"
 
 
 @pytest.mark.parametrize("method", EVERY_METHOD)

@@ -7,6 +7,10 @@ and how to hand a request to something that does know: any object with
 
     handle(method: str, path: str, query: dict[str, list[str]]) -> (int, dict)
 
+and, for a JSON write, ``handle(method, path, query, body)``. Reads keep the
+original three-argument protocol so adding the write surface does not disturb
+existing adapters.
+
 ``web.api.CocoApi`` is that object in production; the server's own tests use a
 stub, which is the point of keeping the protocol this narrow.
 
@@ -57,8 +61,15 @@ DEFAULT_CONTENT_TYPE = "application/octet-stream"
 
 JSON_CONTENT_TYPE = "application/json; charset=utf-8"
 
-#: Methods this server answers, in the order the ``Allow`` header lists them.
-ALLOWED_METHODS = "GET, HEAD"
+#: Methods each surface answers, in the order its ``Allow`` header lists them.
+#: Static files remain read-only; only authenticated API requests gain POST.
+API_ALLOWED_METHODS = "GET, HEAD, POST"
+STATIC_ALLOWED_METHODS = "GET, HEAD"
+
+#: A settings document contains one short filesystem path. Sixteen KiB leaves
+#: ample room for that path without letting a loopback caller make the server
+#: allocate an arbitrary request body before JSON parsing can reject it.
+MAX_REQUEST_BODY_BYTES = 16 * 1024
 
 #: Methods answered by running another method's handler. HEAD is *defined* as
 #: GET without the content (RFC 9110 §9.3.2), so the GET path is what has to
@@ -189,16 +200,25 @@ class _Handler(BaseHTTPRequestHandler):
         # messages built from the query.
         query.pop(TOKEN_QUERY_PARAM, None)
 
-        if method != "GET":
+        if method not in ("GET", "POST"):
             self._send_json(
                 405,
                 error_body("method_not_allowed", f"{method} is not supported."),
-                extra_headers={"Allow": ALLOWED_METHODS},
+                extra_headers={"Allow": API_ALLOWED_METHODS},
             )
             return
 
+        body = None
+        if method == "POST":
+            valid, body = self._read_json_body()
+            if not valid:
+                return
+
         try:
-            status, body = self.coco.api.handle(method, path, query)
+            if method == "POST":
+                status, response = self.coco.api.handle(method, path, query, body)
+            else:
+                status, response = self.coco.api.handle(method, path, query)
         except Exception:
             # The traceback goes to the developer, never to the client: an
             # exception message can carry a filesystem path or a track title.
@@ -208,7 +228,97 @@ class _Handler(BaseHTTPRequestHandler):
             )
             return
 
-        self._send_json(status, body)
+        extra_headers = {"Allow": API_ALLOWED_METHODS} if status == 405 else None
+        self._send_json(status, response, extra_headers=extra_headers)
+
+    def _read_json_body(self) -> Tuple[bool, Any]:
+        """Read one bounded UTF-8 JSON request body.
+
+        Authentication has already succeeded before this is called. That
+        ordering matters: an unauthenticated caller cannot make the server
+        read, allocate or parse a body merely by claiming it is a POST.
+
+        Errors that leave bytes unread close the connection. Otherwise those
+        bytes would be parsed as the next request line on HTTP/1.1 keep-alive,
+        turning a correctly framed error into a desynchronised connection.
+        Closing every body-error response is simpler and equally safe for the
+        malformed-JSON case, where the body has already been consumed.
+        """
+        content_types = self.headers.get_all("Content-Type") or []
+        media_type = (
+            content_types[0].partition(";")[0].strip().lower()
+            if len(content_types) == 1
+            else ""
+        )
+        if media_type != "application/json":
+            self._reject_body(
+                415,
+                "unsupported_media_type",
+                "POST requests require Content-Type: application/json.",
+            )
+            return False, None
+
+        lengths = self.headers.get_all("Content-Length") or []
+        if not lengths:
+            self._reject_body(
+                411,
+                "length_required",
+                "POST requests require a Content-Length header.",
+            )
+            return False, None
+        if len(lengths) != 1:
+            self._reject_body(
+                400,
+                "bad_request",
+                "POST requests require exactly one Content-Length header.",
+            )
+            return False, None
+
+        try:
+            length = int(lengths[0])
+        except (TypeError, ValueError):
+            length = -1
+        if length < 0:
+            self._reject_body(
+                400,
+                "bad_request",
+                "Content-Length must be a non-negative integer.",
+            )
+            return False, None
+        if length > MAX_REQUEST_BODY_BYTES:
+            self._reject_body(
+                413,
+                "payload_too_large",
+                f"Request bodies may not exceed {MAX_REQUEST_BODY_BYTES} bytes.",
+            )
+            return False, None
+
+        payload = self.rfile.read(length)
+        if len(payload) != length:
+            self._reject_body(
+                400,
+                "bad_request",
+                "The request body ended before Content-Length bytes arrived.",
+            )
+            return False, None
+
+        try:
+            return True, json.loads(payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self._reject_body(
+                400,
+                "bad_request",
+                "The request body must be valid UTF-8 JSON.",
+            )
+            return False, None
+
+    def _reject_body(self, status: int, code: str, message: str) -> None:
+        self.close_connection = True
+        self._send_json(
+            status,
+            error_body(code, message),
+            extra_headers={"Connection": "close"},
+        )
 
     def _presented_token(self, query: Dict[str, List[str]]) -> Optional[str]:
         """The token the caller offered, header first.
@@ -228,7 +338,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(
                 405,
                 error_body("method_not_allowed", f"{method} is not supported."),
-                extra_headers={"Allow": ALLOWED_METHODS},
+                extra_headers={"Allow": STATIC_ALLOWED_METHODS},
             )
             return
 
