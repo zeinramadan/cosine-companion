@@ -99,4 +99,13 @@ export const api = {
   track: (trackId) => request(`/api/tracks/${encodeURIComponent(trackId)}`),
   recommendations: (trackId, { limit } = {}) =>
     request(`/api/tracks/${encodeURIComponent(trackId)}/recommendations`, { limit }),
+  // POST, because the request is a `{position: track_id}` MAP plus a length and
+  // a query string has no encoding for a mapping. Nothing is stored: the set is
+  // computed and returned.
+  generateSet: (anchors, totalTracks) =>
+    request(
+      '/api/set',
+      {},
+      { method: 'POST', body: { anchors, total_tracks: totalTracks } },
+    ),
 };

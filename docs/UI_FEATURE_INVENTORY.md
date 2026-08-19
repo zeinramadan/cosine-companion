@@ -1520,11 +1520,12 @@ nothing in §1–§5 above describes behaviour that changed.
 This section records **which catalogued controls the web UI reimplements**, so
 the rewrite can be reviewed against the contract rather than against a demo.
 It adds no claim about the Tkinter app. PR 3a implemented Explore; the small
-write-surface follow-up adds only the Rekordbox XML path from Settings. Set
-Creator, Library and Export still render a labelled placeholder, so §2.5, §2.6
-and §2.7 are entirely outstanding.
+write-surface follow-up adds only the Rekordbox XML path from Settings; the Set
+Creator follow-up adds §2.5 and the §2.12 dialog it opens (§6.5, §6.6). Library
+and Export still render a labelled placeholder, so §2.6 and §2.7 are entirely
+outstanding.
 
-The line numbers below are §2.4 and §3 coordinates in this document.
+The line numbers below are coordinates in this document.
 
 ### 6.1 Explore controls reimplemented
 
@@ -1561,16 +1562,18 @@ omission is on the record rather than left for a reviewer to notice.
 | Selection-error dialogs | :431-437 | `No Selection`, `No Recommendations` and `Invalid selection.` have no web equivalent; a row can only be clicked when it is rendered |
 | Suggestions list as a `tk.Listbox` | :340-341 | The web list is a scrollable container of buttons; the mouse-wheel-only scrolling noted in §2.4 does not carry over |
 
-Outside §2.4, the whole of §2.1, §2.3, §2.5, §2.6, §2.7, §2.9, §2.10, §2.11,
-§2.12 and §2.13 are outstanding, and the three placeholder destinations say so
-on screen. Within §2.8, library statistics, deleted-track management and both
-reindex actions remain outstanding; this follow-up implements only reading and
-changing `xml_path`.
+Outside §2.4, the whole of §2.1, §2.3, §2.6, §2.7, §2.9, §2.10, §2.11 and
+§2.13 are outstanding, and the two remaining placeholder destinations say so on
+screen. §2.5 and §2.12 are covered by §6.5 and §6.6 below. Within §2.8, library
+statistics, deleted-track management and both reindex actions remain
+outstanding; this follow-up implements only reading and changing `xml_path`.
 
 ### 6.3 Deliberate divergences
 
-Four places where the web UI does something different on purpose. Each is a
-change of behaviour, not an omission, and is called out for that reason.
+Four places where PR 3a's Explore and Settings work does something different on
+purpose. Each is a change of behaviour, not an omission, and is called out for
+that reason. The Set Creator destination's divergences are listed with that
+destination, in §6.6.
 
 **Blank palette query.** `pick_current` (:407-408) and the two selector dialogs
 open with an empty list for a blank query — §4 defect #9. The palette lists the
@@ -1686,10 +1689,12 @@ distinction is the whole of what those tests are worth — they can say what a
 module did, not what a user saw — and it is stated at the top of the shim as
 well as here.
 
-The one environmental dependency in the web suite is `node`, for those seven
+The one environmental dependency in the web suite is `node`, for the JavaScript
 suites. When it is absent they skip with a reason naming the file that did not
-run; the current web suite then gives **349 passed and 7 skipped**, one named
-skip per JavaScript file. One of the seven, `globals.test.mjs`, has the
+run. With node present the web suite gives **434 passed**; without it, **424
+passed and 10 skipped** — one named skip per JavaScript file, and those ten
+files are what `tests/web/test_frontend_behaviour.py` discovers. One of them,
+`globals.test.mjs`, has the
 shim itself as its subject rather than any shipped module — CI runs node 24,
 where `globalThis.navigator` is a getter-only accessor the runtime owns, and
 the shim's original plain assignment to it threw at import. Beyond that, no
@@ -1732,3 +1737,132 @@ may skip with it.
 | Settings loading and submitting the edited XML path | `…::test_frontend_behaviour` (`settings.test.mjs`) |
 | Settings preserving the onboarding flag | `tests/web/test_api_settings.py::test_post_settings_persists_immediately_and_preserves_onboarding` |
 | Browse, search and recommendation caps actually binding | `tests/web/test_api_library.py::test_tracks_clamps_an_absurd_limit_rather_than_serialising_the_library` |
+
+### 6.5 Set Creator controls reimplemented
+
+§2.5 and the §2.12 dialog it opens. Line numbers are §2.5, §2.12 and §2.2
+coordinates in this document.
+
+| Control | line | How it appears in the web UI |
+|---|---|---|
+| `Total Tracks:` label and entry | :448-449 | A text field, default `"10"` held as a STRING so :501's "not an integer" check is still reachable. Pinned by `tests/web/js/set_creator.test.mjs` |
+| `Generate Set` | :450 | The primary button. Disabled while a request is in flight |
+| `Clear Set` | :451 | The button beside it. No confirmation, per :519 |
+| `Anchor Tracks:` label | :454 | The anchor section heading |
+| `+ Add Anchor` | :455 | Opens the §2.12 dialog. The macOS re-styling workaround at :456 has no web counterpart and is not one — §3.5, §4 #8 |
+| Anchor listbox | :457 | A single-selection list, ascending by position |
+| `Remove` | :458 | Removes the selected anchor, or warns (:523) |
+| `Generated Set:` label | :461 | The set section heading |
+| Generated-set listbox | :462 | The generated rows |
+| `Export to Clipboard` | :463 | The button below them |
+| Anchor row format | :471 | `{position}. {artist} – {title}`, built unconditionally as `update_anchor_listbox` builds it (`src/ui/set_creator_tab.py:90`), so a blank artist keeps the leading separator |
+| Ascending position order | :473 | Sorted numerically, not by the string the position renders as |
+| Generated row fields | :479-489 | Position, icon, `display_name` and the match percentage, laid out as a row rather than padded into one string — see §6.6. `display_name` and `icon` are computed by `SetTrack` and sent over the wire, so the four-branch resolution order at :484-486 has exactly one implementation |
+| Score suffix rule | :487-489 | ` ({score:.0%} match)` for non-anchors scoring above zero, and for nothing else. Anchors carry `score=1.0` and show none; the unfillable placeholder carries `0.0` and shows none. One condition, not two special cases |
+| `:.0%` rounding | :488 | Reproduced exactly, including the tie rule: Python rounds a tie to EVEN and both JavaScript roundings do not, which differs on 96 of 21,215 sampled values. `format.wholePercent`, pinned by `tests/web/js/set_creator.test.mjs` |
+| Unfillable slot row | :490-495 | Rendered from the placeholder's own fields, so it reads `No suitable track found – (Unknown Title)` with no score suffix. Pinned by `tests/web/test_api_set.py::test_an_unfillable_slot_arrives_with_the_fields_the_row_is_built_from` |
+| The three pre-generation checks | :501-503 | Made in the catalogued order with the catalogued titles and bodies, as modal dialogs. The ORDER is pinned by cases that make two conditions wrong at once |
+| `total == len(anchors)` is allowed | :505 | The check is `<`, and the web check is `<` |
+| `Generation Error` | :506-508 | `Failed to generate set: {error}`, carrying the service's own `ValueError` text over the wire as `set_generation_failed`. Pinned by `tests/web/test_api_set.py::test_an_anchor_past_the_end_is_the_generation_error_inventory_names` |
+| The four status strings | :510-514 | `🎵 Generating set... This may take a moment.`, `✅ Generated {n}-track set successfully!`, `❌ Set generation failed.` and `🧹 Set cleared.`, in a status line inside the destination |
+| Set Creator status hint | :271 | The resting text of that status line, verbatim |
+| `Remove` with no selection | :523 | `No Selection` / `Please select an anchor track to remove.` |
+| `Export to Clipboard` with no set | :529 | `No Set` / `Please generate a set first.` |
+| Clipboard contents | :530-533 | One `display_name` per line, no positions, icons or scores, and every row whose display name contains `No suitable track found` left out. Then `Exported` / `Copied {n} tracks to clipboard!` |
+| `AddAnchorDialog`, modal | :946 | A modal dialog whose `aria-modal` is backed by an inert shell and a Tab trap, as the palette's is |
+| `Position in Set:` entry, blank | :948 | Blank by default. It is not pre-filled with the next free slot, because :966 says the dialog does not know the set's length |
+| `Search for Track:` entry | :949 | Filters as you type, debounced 120 ms and sequenced by keystroke, as the palette is |
+| Results list, single selection | :950 | Nothing is selected until a row is clicked, which is what keeps :961 reachable |
+| `<Double-Button-1>` = `Add to Set` | :951 | Double-clicking a row adds it |
+| `Add to Set` / `Cancel`, Cancel rightmost | :952 | Both, in that visual order |
+| Search implementation A, `limit=50` | :954 | `GET /api/tracks/search?limit=50`, which is `LibrarySession.search_tracks` — implementation A unchanged. Rows render `{artist} – {title}` |
+| The four dialog checks | :961-964 | In the catalogued order with the catalogued strings. `Position Taken` is a Yes/No question whose No returns to the dialog with the selection and the typed position intact |
+| No upper bound on the position | :966 | The dialog accepts 9999 against a 10-track set; the builder is what refuses it, as :506-508 says |
+| The same track at several positions | :967 | The dialog permits it. What GENERATION then does with it is not catalogued anywhere in §2.5 or §2.12 — see §6.6 |
+
+**What pins it.**
+
+| Area | Pinned by |
+|---|---|
+| The generated set matching committed golden sequences over the API | `tests/web/test_api_set.py::test_the_endpoint_returns_the_golden_sequence` |
+| `display_name` and `icon` surviving serialisation | `…::test_the_two_computed_strings_survive_serialisation` |
+| The set length cap being refused rather than clamped | `…::test_a_set_longer_than_the_cap_is_refused_rather_than_quietly_shortened` |
+| A position below 1 being refused before it lands on the last slot | `…::test_position_zero_would_otherwise_land_on_the_last_slot` |
+| `POST /api/set` needing the token like every other API path | `…::test_the_set_endpoint_needs_the_token_like_every_other_api_path` |
+| The three pre-generation checks running in the catalogued order | `tests/web/test_frontend_behaviour.py::test_frontend_behaviour` (`set_creator.test.mjs`) |
+| The four dialog checks running in the catalogued order | `…::test_frontend_behaviour` (`anchor_dialog.test.mjs`) |
+| `Export to Clipboard` leaving the unfillable rows out | `…::test_frontend_behaviour` (`set_creator.test.mjs`) |
+| A message box over the dialog making the DIALOG inert as well as the shell | `…::test_frontend_behaviour` (`anchor_dialog.test.mjs`) |
+| The Set Creator destination no longer rendering a placeholder | `tests/web/test_frontend_conventions.py::test_the_set_creator_destination_is_no_longer_a_placeholder` |
+
+### 6.6 Set Creator: deferred, divergent, and found along the way
+
+**Deferred.** Everything catalogued under §2.5 or §2.12 that this follow-up does
+not reimplement, so the omission is on the record.
+
+| Control | line | Note |
+|---|---|---|
+| Widget geometry, fonts and colours | :448-463, :946-952 | `Helvetica 10 bold`, `bg="lightgreen"`, `height=4`, `height=15`, `width=5`, `padx=(0, 80)`, `500x500`. The web UI is built from the design tokens in `tokens.css`; the layout intent — a narrow numeric field, a short anchor list, a long set list, an affirmative primary button — is carried, the measurements are not |
+| `+ Add Anchor` re-styling | :455-456, §2.2 | One of the ~350 lines of macOS Tk workarounds (§3.5, §4 #8). There is nothing to work around here |
+| No scrollbar widgets on either listbox | :465-466 | Both web lists scroll normally, with a scrollbar. §2.7's table row is a Tk fact |
+| An anchor row skipped when its `track_id` has left `meta_ix` | :473 | The web anchor carries the artist and title read from the library at the moment it was chosen, so there is no second lookup to fail. Not reachable in the web UI in this PR: nothing in it deletes a track. Workflow 22e (:1483) remains a Tkinter row |
+| Parsing the position back out of the anchor row text | :524-525 | The web row keeps its position as data, so the split-on-first-`.` and its silently-ignored failure have nothing to do. Same observable behaviour |
+| Window title `Add Anchor Track`, 500×500, resizable | :946 | The dialog is a panel in the page, not a window. The title is rendered as its heading |
+
+**Divergences.** Each is a change of behaviour on purpose, not an omission.
+
+*The blank query opens on a browse, not on nothing.* :955 records that the
+dialog opens EMPTY, because search implementation A returns `[]` for a blank
+query — §4 defect #9. The web dialog lists the first 50 tracks instead, from the
+same browse endpoint the ⌘K palette uses and for the same reason (§6.3). The
+service is untouched and the characterisation of defect #9 still holds.
+
+*The generated row is a row, not a padded string.* :479 specifies
+`[{position:2d}] {icon} {display_name}{score_text}`. The web row renders the
+same four fields in columns: the position right-aligned in its own column, which
+is what the two-character field buys on screen and which still reads at three
+digits, then the icon, the name and the suffix. This is the same decision §6.1
+records for the Explore row at :356-366. The clipboard, which is where the
+string actually matters, is byte-for-byte :530-533.
+
+*A set length has an upper bound.* :501-503 lists three checks and a maximum is
+not among them, so the Tkinter tab will accept `100000` and freeze for as long
+as it takes. `POST /api/set` refuses anything over `MAX_SET_TRACKS` (500, about
+1.2 s of work at the measured ~2.3 ms per slot) with a 400 naming the cap. It is
+refused rather than clamped, because a silently shortened set is not the set
+that was asked for.
+
+*A position below 1 is refused at the API as well as in the dialog.* :963 is a
+dialog rule, and `generate_set` has no equivalent: it assigns
+`set_slots[position - 1]`, so position `0` is Python's index `-1` and the anchor
+silently becomes the LAST track of the set. The endpoint applies :963's rule at
+the layer that can be reached without the dialog. Derivation pinned by
+`tests/web/test_api_set.py::test_position_zero_would_otherwise_land_on_the_last_slot`.
+
+*Enter submits the anchor dialog.* §2.12 catalogues no keyboard binding, so this
+is an addition rather than a reimplementation of one.
+
+**Found along the way.** Two things the code does that §2.5 and §2.12 do not
+say, reported rather than changed.
+
+*The same track anchored twice loses the second anchor AND its slot.* :967 says
+"The same track may be anchored at several positions", which is true of the
+dialog — §2.12 has no such check — and says nothing about generation.
+`generate_set` places both anchors, then its final de-duplication pass
+(`src/recommendations/set_generator.py:176-187`) keeps only the first occurrence
+of a repeated id. The dropped one takes its whole slot with it, because the pass
+filters the assembled list rather than refilling the position. A five-track
+request with the same track anchored at 1 and 4 therefore returns FOUR tracks
+whose positions read 1, 2, 3, 5 — a visible gap in the rendered rows — plus
+`⚠️  Warning: Duplicate tracks detected in generated set` on stdout, which no UI
+shows. Pinned as current behaviour by
+`tests/web/test_api_set.py::test_the_same_track_anchored_twice_loses_the_second_anchor_and_its_slot`.
+
+*The 2.76 s at :511-512 is no longer the number.* That figure was captured
+before the transition-vector work. Measured on this branch against the same
+`SetBuilder` the Tkinter tab calls, on the 1,532-track library: a 30-track set
+takes **0.064 s**, a 100-track set 0.222 s and a 500-track set 1.154 s. The
+sentence it sits in — that the window is unresponsive for the duration, because
+generation runs on the Tk main thread behind `self.update()` — is unchanged and
+still true; only the duration is different. This is why the web destination has
+no progress stream and no cancellation: there is nothing to report.

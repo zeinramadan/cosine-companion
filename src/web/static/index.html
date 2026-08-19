@@ -26,7 +26,6 @@
         <button class="nav__item" type="button" data-destination="set-creator">
           <span class="nav__glyph" aria-hidden="true">≡</span>
           <span>Set Creator</span>
-          <span class="nav__soon">Soon</span>
         </button>
         <button class="nav__item" type="button" data-destination="library">
           <span class="nav__glyph" aria-hidden="true">▤</span>
@@ -62,16 +61,7 @@
       <div class="viewport" id="viewport">
         <section class="view" id="view-explore" aria-labelledby="view-title"></section>
 
-        <section class="view" id="view-set-creator" hidden aria-label="Set Creator">
-          <div class="placeholder">
-            <p class="placeholder__eyebrow">Coming in the next PR</p>
-            <h2 class="placeholder__title">Set Creator</h2>
-            <p class="placeholder__body">
-              Multi-hop set generation from anchor tracks. The engine behind it already
-              exists as <code>SetBuilder</code>; this destination is where it lands.
-            </p>
-          </div>
-        </section>
+        <section class="view" id="view-set-creator" hidden aria-label="Set Creator"></section>
 
         <section class="view" id="view-library" hidden aria-label="Library">
           <div class="placeholder">
@@ -156,6 +146,8 @@
       </div>
     </div>
   </div>
+
+  <div class="modal-layer" id="modal-layer"></div>
 
   <script type="module" src="/js/main.js"></script>
 </body>

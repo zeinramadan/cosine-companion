@@ -110,6 +110,61 @@ export function percentClamped(value) {
   return `${(Math.max(0, Math.min(1, number)) * 100).toFixed(1)}%`;
 }
 
+/**
+ * Python's `f"{value:.0%}"`, which is what inventory :487 specifies for the
+ * generated-set row's ` ({score:.0%} match)` suffix.
+ *
+ * NOT `Math.round(value * 100)` and not `.toFixed(0)`. Both round a tie AWAY
+ * from zero; Python's float formatting rounds a tie to EVEN. Across 21,215
+ * values - 20,000 random plus every thousandth and every two-hundredth of the
+ * unit interval - the two disagree on 96 of them, all of the `x.5` form:
+ * `0.045` is `4%` in Python and `5%` under both JS roundings. Cosine-derived
+ * transition scores land on an exact tie about never, so this is not a bug
+ * anyone would have hit; it is one line either way, and the one that matches
+ * is not the obvious one. Pinned with those cases by
+ * tests/web/js/set_creator.test.mjs.
+ *
+ * The multiplication is IEEE 754 double arithmetic in both languages, so `x *
+ * 100` is bit-identical before either rounds; only the tie rule differs.
+ */
+export function wholePercent(value) {
+  const scaled = Number(value) * 100;
+  if (!Number.isFinite(scaled)) {
+    return null;
+  }
+  const below = Math.floor(scaled);
+  const remainder = scaled - below;
+  if (remainder > 0.5) {
+    return below + 1;
+  }
+  if (remainder < 0.5) {
+    return below;
+  }
+  return below % 2 === 0 ? below : below + 1;
+}
+
+/**
+ * `int(text)` as Python performs it, or `null` when it would raise ValueError.
+ *
+ * Both `Total Tracks` (inventory :501) and `Position in Set` (:962) are read
+ * with a bare `int()` whose ValueError is the branch that raises the dialog, so
+ * what counts as "not an integer" is Python's answer and not JavaScript's.
+ * `Number()` accepts `"3.0"`, `""` and `"0x10"`; `parseInt` accepts `"3 apples"`
+ * and `"3.9"`. Python accepts none of those, and it DOES accept surrounding
+ * whitespace and a leading sign.
+ *
+ * The sign matters for the ORDER of §2.12's checks: `"-2"` has to parse so the
+ * next rule can reject it as "Position must be 1 or greater" (:963) rather than
+ * this one rejecting it as "not a valid position number" (:962).
+ */
+export function parseIntegerStrictly(text) {
+  const trimmed = String(text === null || text === undefined ? '' : text).trim();
+  if (!/^[+-]?\d+$/.test(trimmed)) {
+    return null;
+  }
+  return Number.parseInt(trimmed, 10);
+}
+
 /** BPM is a float64 column, so it always renders with a decimal (`128.0`). */
 export function bpm(value) {
   const number = Number(value);
