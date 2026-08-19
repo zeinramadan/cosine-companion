@@ -57,6 +57,29 @@ def ui():
     run_ui()
 
 
+@cli.command("ui-web")
+def ui_web(
+    debug: bool = typer.Option(False, "--debug", help="Open with devtools enabled"),
+    data_dir: str = typer.Option(None, "--data-dir", help="Index directory to open (default: the configured one)")
+):
+    """EXPERIMENTAL: open the web UI in a pywebview window (Tkinter is still the default)."""
+    # Imported here, not at module scope: this is the only path that needs
+    # pywebview, and `ui` must keep launching Tkinter on a machine that does
+    # not have it installed.
+    try:
+        from web.host import run_web_ui
+    except ImportError as error:
+        typer.echo(
+            f"The web UI needs pywebview ({error}).\n"
+            "Install it with:  pip install pywebview",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    from pathlib import Path
+    run_web_ui(data_dir=Path(data_dir) if data_dir else None, debug=debug)
+
+
 @cli.command()
 def clean_duplicates(
     xml: str = typer.Argument(..., help="Path to Rekordbox XML export")
