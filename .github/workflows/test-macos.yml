@@ -28,8 +28,12 @@ jobs:
       # lxml is here because processing/xml_parser.py parses the Rekordbox XML
       # that the indexing characterisation tests feed through the pipeline; it
       # is a 4 MB parser, not the 483 MB TensorFlow stack.
+      # pywebview is the web backbone's one new runtime dependency. Only
+      # src/web/host.py imports it, and only tests/web/test_host_importable.py
+      # needs it installed; the API tests deliberately run without any GUI
+      # toolkit loaded - see tests/web/test_no_heavy_imports.py.
       - name: Install test dependencies
-        run: python -m pip install numpy pandas pyarrow lxml "pytest>=7.0"
+        run: python -m pip install numpy pandas pyarrow lxml "pytest>=7.0" pywebview
 
       - name: Run tests
         run: python -m pytest -q

@@ -92,6 +92,17 @@ This analyzes your audio files and builds a searchable index. Re-run when you ad
 python src/cosine_companion.py ui
 ```
 
+Or try the **experimental** web UI, which runs the same services in a
+pywebview window:
+
+```bash
+python src/cosine_companion.py ui-web
+```
+
+Tkinter remains the default and is what `ui` and the packaged `.app` launch.
+`ui-web` currently implements the Explore workflow only; Set Creator, Library
+and Export render a placeholder. See [the web UI](#the-experimental-web-ui).
+
 ### 4. Start Exploring
 
 1. Click **"Set Current Track"** and search for a track
@@ -120,12 +131,48 @@ python src/cosine_companion.py index /path/to/rekordbox.xml
 # Force full re-index (rebuilds everything)
 python src/cosine_companion.py index /path/to/rekordbox.xml --force
 
-# Launch the graphical interface
+# Launch the graphical interface (Tkinter - the default)
 python src/cosine_companion.py ui
+
+# Launch the experimental web UI (pywebview; Explore only for now)
+python src/cosine_companion.py ui-web
+
+# ...with devtools, and against a specific index directory
+python src/cosine_companion.py ui-web --debug --data-dir /path/to/data
 
 # Check for duplicate tracks
 python src/cosine_companion.py clean-duplicates /path/to/rekordbox.xml
 ```
+
+## The experimental web UI
+
+`ui-web` opens a [pywebview](https://pywebview.flowrl.com/) window (WKWebView on
+macOS - the same engine as Safari) onto a small JSON API served over loopback.
+It exists because the Tkinter UI is hard to make look like a 2026 application;
+the engine underneath is identical.
+
+**Status.** Experimental. Explore works end to end - pick a seed with ⌘K, see
+ranked recommendations with Camelot keys and match scores, re-seed by clicking
+one, go back through history. The other three destinations render a
+"coming in the next PR" placeholder. Tkinter is unchanged, is still the
+default, and is what the packaged `.app` launches.
+
+**How it is wired.**
+
+- A `ThreadingHTTPServer` binds `127.0.0.1` on an ephemeral port in a daemon
+  thread; pywebview owns the main thread, as macOS requires.
+- Every `/api/` request needs a per-process token, `/api/health` included. The
+  token reaches the page in its own URL and moves to a header from there.
+- The frontend is hand-written HTML, CSS and ES modules. **There is no build
+  step and no Node toolchain** - what is in `src/web/static/` is what the
+  browser loads.
+- No business logic lives in `src/web/`. It translates JSON to service calls
+  and back.
+
+**Extra dependency.** `pywebview` - the only one the web UI adds. It is in
+`requirements.txt`. Nothing else needs it: `src/web/server.py` and
+`src/web/api.py` deliberately do not import it, which is what lets the API be
+tested on a headless CI runner. Only `src/web/host.py` does.
 
 ## How It Works
 
@@ -160,7 +207,9 @@ cosine-companion/
 │   ├── core/               # Data loading, persistence, exact cosine index
 │   ├── processing/         # Audio analysis and XML parsing
 │   ├── recommendations/    # Recommendation engine and scoring
-│   └── ui/                 # Tkinter GUI
+│   ├── services/           # Headless session/service layer (no UI imports)
+│   ├── ui/                 # Tkinter GUI (the default)
+│   └── web/                # Experimental web UI: loopback API + no-build frontend
 ├── tests/                  # pytest suite (run in CI on every PR)
 ├── benchmarks/             # Recommendation benchmark harness and results
 ├── models/                 # ML models (download required)
@@ -187,6 +236,7 @@ cosine-companion/
 - `lxml` - XML parsing
 - `typer` - CLI
 - `tkinter` - GUI (included with Python)
+- `pywebview` - experimental web UI only; `ui` does not need it
 
 ## Contributing
 
