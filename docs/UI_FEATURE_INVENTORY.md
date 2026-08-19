@@ -1776,7 +1776,7 @@ coordinates in this document.
 | Results list, single selection | :950 | Nothing is selected until a row is chosen, which is what keeps :961 reachable. Both web lists are operable from the keyboard - roving tabindex, arrows to move, Enter or Space to choose - because `role="option"` on an unfocusable row is a promise the row cannot keep |
 | `<Double-Button-1>` = `Add to Set` | :951 | Double-clicking a row adds it |
 | `Add to Set` / `Cancel`, Cancel rightmost | :952 | Both, in that visual order |
-| Search implementation A, `limit=50` | :954 | `GET /api/tracks/search?limit=50`, which is `LibrarySession.search_tracks` — implementation A unchanged. Rows render `{artist} – {title}` |
+| Search implementation A, `limit=50` | :954 | `GET /api/tracks/search?limit=50`, which is `LibrarySession.search_tracks` — implementation A unchanged. What the ROWS render is **not** parity and is declared as a divergence in §6.6: a blank field is dropped, and the separator with it |
 | The four dialog checks | :961-964 | In the catalogued order with the catalogued strings. `Position Taken` is a Yes/No question whose No returns to the dialog with the selection and the typed position intact |
 | No upper bound on the position | :966 | The dialog accepts 9999 against a 10-track set; the builder is what refuses it, as :506-508 says |
 | The same track at several positions | :967 | The dialog permits it. What GENERATION then does with it is not catalogued anywhere in §2.5 or §2.12 — see §6.6 |
@@ -1842,6 +1842,45 @@ the layer that can be reached without the dialog. Derivation pinned by
 
 *Enter submits the anchor dialog.* §2.12 catalogues no keyboard binding, so this
 is an addition rather than a reimplementation of one.
+
+*A blank field is dropped from the Add Anchor dialog's rows, and the separator
+with it.* :954 says the rows render `{artist} – {title}`, and Tk builds that
+string unconditionally: `search_tracks` composes it as `f"{artist} – {title}"`
+(`recommendations/search.py:38`) and the dialog inserts the result as it stands
+(`ui/dialogs.py:90`). A track whose artist is blank therefore opens its row with
+a separator and nothing to the left of it. This dialog composes the row from the
+fields the track actually has — `format.displayName`, the same helper the ⌘K
+palette and the Explore rows already use — so that track reads as its title
+alone.
+
+This is not a corner case in this library. **69 of its 1,532 tracks carry an
+artist of `''`** — 4.5 %, measured on the `data/meta.parquet` this branch was
+developed against. `Skee Mask - Reviver` is one of them: the artist field is
+empty and the artist's name is inside the title, which is why the missing left
+half is not obvious on screen but the dangling separator is.
+
+Two consequences worth stating rather than leaving to be discovered. The first
+is that the SET CREATOR'S ANCHOR ROW does not follow: :471 catalogues
+`{position}. {artist} – {title}` and `update_anchor_listbox` builds it
+unconditionally (`ui/set_creator_tab.py:90`), that row is delivered as
+catalogued, and so the same blank-artist track reads `Skee Mask - Reviver` in
+the dialog and `1.  – Skee Mask - Reviver` once it is an anchor. Two renderings
+of one track, a few centimetres apart. The second is that this is the same
+decision §6.3 records for `Copy`, taken for the same reason and against the same
+69 tracks; it is declared separately because it is a different control on a
+different surface.
+
+The rows the two implementations produce, which
+`tests/web/js/anchor_dialog.test.mjs` reads out of this table rather than
+restating in its assertions, and whose Tk column
+`tests/web/test_anchor_row_contract.py` re-derives from
+`recommendations/search.py` rather than trusting:
+
+| artist | title | Tk's row (`recommendations/search.py:38`) | this dialog's row |
+|---|---|---|---|
+| `Blawan` | `Why They Hide` | `Blawan – Why They Hide` | `Blawan – Why They Hide` |
+| | `Skee Mask - Reviver` | ` – Skee Mask - Reviver` | `Skee Mask - Reviver` |
+| `Skee Mask` | | `Skee Mask – ` | `Skee Mask` |
 
 **Found along the way.** Two things the code does that §2.5 and §2.12 do not
 say, reported rather than changed.

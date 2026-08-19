@@ -19,6 +19,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import {
   byClass,
@@ -46,6 +48,66 @@ const TRACKS = [
   { track_id: 'b2', artist: 'Alva Noto', title: 'Xerrox' },
   { track_id: 'c3', artist: '', title: 'Reviver' },
 ];
+
+/* -- the declared contract, read out of the document that declares it ------
+ *
+ * What these rows render is a DIVERGENCE from :954, not parity with it: Tk
+ * builds `{artist} – {title}` unconditionally and this dialog drops a blank
+ * field along with the separator. §6.6 declares that, and carries the specimen
+ * table below as the statement of what each implementation produces.
+ *
+ * The table is read rather than restated because an assertion written out here
+ * would have the IMPLEMENTATION as its oracle: it would catch the code
+ * drifting, and pass in silence if someone decided the dialog should match Tk
+ * after all - which is a decision, and the document is where this project
+ * records decisions. Reading it means the expectation moves when the DECISION
+ * moves, and the suite goes red when only one of the two does.
+ */
+const INVENTORY = fileURLToPath(
+  new URL('../../../docs/UI_FEATURE_INVENTORY.md', import.meta.url),
+);
+
+const SPECIMEN_HEADER =
+  "| artist | title | Tk's row (`recommendations/search.py:38`) | this dialog's row |";
+
+function contractRows() {
+  const body = readFileSync(INVENTORY, 'utf8');
+  const start = body.indexOf(SPECIMEN_HEADER);
+  assert.notEqual(
+    start,
+    -1,
+    'the §6.6 specimen table for the Add Anchor dialog rows is gone or was reworded; ' +
+      'the divergence it declares is what this suite checks against',
+  );
+
+  const rows = [];
+  // The header line and the `|---|` separator under it.
+  for (const line of body.slice(start).split('\n').slice(2)) {
+    if (!line.startsWith('|')) {
+      break;
+    }
+    const cells = line.split('|').slice(1, -1).map((cell) => {
+      const text = cell.trim();
+      // Backticks are the document's quoting, and they are what preserve the
+      // leading and trailing spaces that are the whole point of two of these
+      // rows. Strip the quoting, keep the spaces.
+      return text.startsWith('`') && text.endsWith('`') ? text.slice(1, -1) : text;
+    });
+    rows.push({ artist: cells[0], title: cells[1], tk: cells[2], web: cells[3] });
+  }
+
+  assert.ok(rows.length >= 3, `the specimen table has only ${rows.length} rows`);
+  return rows;
+}
+
+const CONTRACT_ROWS = contractRows();
+
+/** The specimen table's artist/title pairs as tracks the browse endpoint can return. */
+const CONTRACT_TRACKS = CONTRACT_ROWS.map((row, index) => ({
+  track_id: `spec${index}`,
+  artist: row.artist,
+  title: row.title,
+}));
 
 /* The debounce is 120 ms of real time, and the palette suite already
  * establishes that faking the clock would test the fake. */
@@ -112,10 +174,10 @@ function searchField() {
  * `await open()` block until the dialog closed - which is the thing the caller
  * has not done yet. The whole file deadlocked on it.
  */
-async function open({ existingAnchors = {} } = {}) {
+async function open({ existingAnchors = {}, tracks = TRACKS } = {}) {
   const answered = openAnchorDialog({ existingAnchors });
   await settle();
-  fetches.deliver(BROWSE_KEY, { tracks: TRACKS, total: TRACKS.length });
+  fetches.deliver(BROWSE_KEY, { tracks, total: tracks.length });
   await settle();
   return { answered };
 }
@@ -161,16 +223,36 @@ test('the dialog opens on the browse endpoint, not on a blank search', async () 
   assert.equal(await answered, null);
 });
 
-test('rows read "{artist} – {title}"', async () => {
-  const { answered } = await open();
+test('the rows are the ones §6.6 declares, with a blank field dropped', async () => {
+  const { answered } = await open({ tracks: CONTRACT_TRACKS });
 
-  assert.deepEqual(
-    options().map((option) => option.textContent),
-    ['Blawan – Why They Hide', 'Alva Noto – Xerrox', 'Reviver'],
-  );
+  // Closed in a `finally`: a dialog left open by a failed assertion cancels
+  // every test after it in this file, which buries the one real failure under
+  // two dozen `cancelledByParent` lines.
+  try {
+    assert.deepEqual(
+      options().map((option) => option.textContent),
+      CONTRACT_ROWS.map((row) => row.web),
+    );
 
-  press('Cancel');
-  await answered;
+    // And the table still describes a DIVERGENCE rather than parity. Without
+    // this the check above would keep passing if someone rewrote the table to
+    // say the two implementations agree, without touching either of them.
+    const blankArtist = CONTRACT_ROWS.find((row) => row.artist === '');
+    assert.ok(blankArtist, 'the table no longer carries a blank-artist specimen');
+    assert.notEqual(
+      blankArtist.web,
+      blankArtist.tk,
+      'the table stopped declaring a divergence for a blank artist',
+    );
+    assert.ok(
+      blankArtist.tk.startsWith(' –'),
+      `Tk's row for a blank artist should open with the dangling separator, not ${blankArtist.tk}`,
+    );
+  } finally {
+    press('Cancel');
+    await answered;
+  }
 });
 
 test('nothing is selected when the dialog opens', async () => {
