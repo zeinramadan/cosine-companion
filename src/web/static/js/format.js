@@ -119,13 +119,35 @@ export function bpm(value) {
   return number.toFixed(1);
 }
 
+/**
+ * One track as a line of text: `{artist} – {title}`, joining only what is
+ * there.
+ *
+ * This is not only a visual helper. It is what the row's Copy button puts on
+ * the clipboard and what the Details button announces, and this library really
+ * contains tracks with an empty artist - "Skee Mask - Reviver" is one, where
+ * the artist field is blank. The unconditional join produced " – Reviver" for
+ * those: invisible on screen, because the visual surfaces substitute "Unknown
+ * artist" for the empty field themselves, and intact in the clipboard.
+ *
+ * `display_name` is a LAST resort rather than the first choice, and that is
+ * deliberate. `services.recommendations.search.search_tracks` builds it as
+ * `{artist} – {title}` unconditionally and `web/api.py::_summary` mirrors that
+ * shape on purpose, so the supplied string carries the same dangling
+ * separator. Composing from the fields fixes every consumer at once instead of
+ * once per surface; the supplied value is still used when a record carries
+ * nothing else.
+ */
 export function displayName(track) {
-  if (track && track.display_name) {
-    return track.display_name;
+  const artist = String((track && track.artist) || '').trim();
+  const title = String((track && track.title) || '').trim();
+  const parts = [artist, title].filter(Boolean);
+
+  if (parts.length) {
+    return parts.join(` ${EN_DASH} `);
   }
-  const artist = (track && track.artist) || '';
-  const title = (track && track.title) || '';
-  return `${artist} ${EN_DASH} ${title}`;
+  const supplied = track && track.display_name;
+  return supplied ? String(supplied) : 'Untitled';
 }
 
 /** Replace an element's children in one call. */

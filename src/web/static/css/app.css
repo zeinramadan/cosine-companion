@@ -922,17 +922,25 @@ button {
   color: var(--ink-secondary);
 }
 
+/* The two trailing controls on a row: Copy (inventory :327) and Details. Same
+   size and same treatment, because they are the same kind of thing - an action
+   on this row that is not "make it the current track". */
+.rec__copy,
 .rec__info {
   align-self: center;
   width: 2rem;
   height: 2rem;
-  margin-right: var(--space-2);
   border-radius: var(--radius-sm);
   color: var(--ink-tertiary);
   transition: background var(--motion-fast) var(--ease-out),
               color var(--motion-fast) var(--ease-out);
 }
 
+.rec__info {
+  margin-right: var(--space-2);
+}
+
+.rec__copy:hover,
 .rec__info:hover {
   background: var(--surface-3);
   color: var(--ink-primary);

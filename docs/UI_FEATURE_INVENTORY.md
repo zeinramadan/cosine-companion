@@ -1531,7 +1531,7 @@ The line numbers below are §2.4 and §3 coordinates in this document.
 |---|---|---|
 | `Set Current Track` | :326 | The ⌘K palette. Unlike `pick_current` it lists the first 50 tracks for a blank query rather than an empty list — see §6.3 |
 | `← Back` | :325 | A button on the seed card, disabled until the history is non-empty, per §3.10 :1397 |
-| History behaviour | :414-421 | Pushed only when a seed and a list both exist; capacity 20 (§3.9 :1387); going back restores the stored list with its sort order and no recomputation |
+| History behaviour | :414-421 | Pushed only when a seed and a list both exist; capacity 20 (§3.9 :1387). Going back restores the stored list **in the order it was stored in**, with no recomputation, and re-renders honouring the **current** Top-N — the asymmetry :420-421 states. Pinned by `tests/web/test_frontend_behaviour.py::test_frontend_behaviour`, which runs `tests/web/js/explore_history.test.mjs` against the shipped module |
 | `Set Selected as Current` | :328 | Clicking a recommendation row re-seeds |
 | `<Double-Button-1>` re-seed | :347 | Folded into the single click above — the web list is a set of buttons, not a `tk.Listbox` |
 | Sort buttons | :335, :377-387 | A segmented control with the same five keys and directions, including the ascending lexicographic Camelot sort at :381 |
@@ -1543,7 +1543,8 @@ The line numbers below are §2.4 and §3 coordinates in this document.
 | Computation parameters | :370, §3.9 :1378 | `topk=500, final_top=200`, passed explicitly rather than left to a default. Pinned by `tests/web/test_api_recommendations.py::test_the_explore_tab_configuration_is_used_by_default` |
 | Full set retained, `topn` rendered | :372-373 | All 200 are fetched once and kept client-side |
 | Current-track header | §3.2 :1211-1218 | The gradient seed card, carrying the same fields |
-| `Copy Selected to Clipboard` | :327 | A `Copy` button on the seed card — see §6.3 for how it differs |
+| `Copy Selected to Clipboard` | :327 | A `Copy` control on **each recommendation row**, which is the target :423-429 describes. The seed card also carries one; that is an addition rather than this control — see §6.3. The clipboard FORMAT still differs from Tkinter's on purpose, also §6.3 |
+| Sort selection follows the list | :380 | A fresh computation arrives in cosine order — :380, "matches the post-refresh default order" — and the segmented control returns to `Cosine` to say so, matching `refresh_suggestions` replacing `current_recommendations` without reapplying the last sort |
 
 ### 6.2 Deferred to PR 3b
 
@@ -1552,7 +1553,7 @@ omission is on the record rather than left for a reviewer to notice.
 
 | Control | §2.4 line | Note |
 |---|---|---|
-| Right-click context menu | :348-354 | Both of its items (`Set as Current Track`, `Copy to Clipboard`) exist as controls; the menu itself, and the `listbox.nearest` selection it performs first, are outstanding |
+| Right-click context menu | :348-354 | Both of its items exist as controls on the row itself — `Set as Current Track` is the row click, `Copy to Clipboard` is the row's `Copy` control (both pinned by `tests/web/js/explore_copy.test.mjs`). The **menu** itself, and the `listbox.nearest` selection it performs before opening, are outstanding |
 | Status-bar message strings | :389-403 | The web UI shows a row count and a history count, not the catalogued strings, colours or the 3-second revert |
 | `SimplePicker` and search implementation B | :405-412, §3.4 | The palette calls the service `search_tracks` (implementation A) over the API. The regex `.head(50)` variant and the modal picker are outstanding |
 | `No match` dialog | :409 | The palette shows an inline empty state instead of a modal |
@@ -1576,11 +1577,24 @@ still holds; this is a second surface answering the same question, pinned by
 `tests/web/test_api_library.py::test_search_with_no_query_is_a_bad_request` and
 its browse counterparts.
 
-**Copy.** The Tkinter implementation (:423-429) splits the rendered row at the
-first of six candidate separators and copies what follows, which yields the
-title alone and truncates differently when a hyphen sits inside an artist name.
-The web `Copy` puts `{artist} – {title}` on the clipboard. Workflow row 11
-(:1464) describes the Tkinter behaviour and still does.
+**Copy.** Two things differ, and an earlier version of this section recorded
+only one of them.
+
+*What it copies.* The Tkinter implementation (:423-429) splits the rendered row
+at the first of six candidate separators and copies what follows, which yields
+the title alone and truncates differently when a hyphen sits inside an artist
+name. The web `Copy` puts `{artist} – {title}` on the clipboard, and omits the
+separator entirely when either field is empty — this library really does hold
+tracks with a blank artist. Workflow row 11 (:1464) describes the Tkinter
+behaviour and still does.
+
+*What it copies FROM.* :423-429 operates on the selected recommendation, and
+the web control that answers it is the `Copy` on each recommendation row. The
+seed card carries a second `Copy` that puts the **current track** on the
+clipboard. That one is an ADDITION with no counterpart in §2.4, not a
+reimplementation of :327, and it is recorded here rather than counted in §6.1
+for that reason. Re-seeding to a row in order to copy it would not be
+equivalent to either: it pushes to history and recomputes the list.
 
 **Camelot keys are coloured.** §3.1 :1209 records that the key is displayed as
 stored, with no conversion. That still holds — the pill's text is the stored
@@ -1592,17 +1606,76 @@ floor by
 
 ### 6.4 What pins the web layer
 
-The web UI has no automated test of the rendered DOM — that is a stated gap,
-and the visual pass was done by hand in WKWebView. Everything below it is
-tested, and none of the web tests depend on `data/`, so every one of them runs
-in CI rather than skipping there. That was re-derived rather than assumed: the
-suite was run in a fresh clone with no `data/` directory and every skip
-enumerated, and all 25 of them are the pre-existing `real_library` and private
-XML cases in `tests/services/` and `tests/test_xml_parser.py`. The fixture the
-web tests use instead is built under `tmp_path` by
+**The HTTP surface, stated exactly.** This server answers `GET` and `HEAD`.
+Every other method is a `405` whose `Allow` header names those two
+(`src/web/server.py:61`). `HEAD` is implemented rather than tolerated:
+`_dispatch` routes it as the `GET` it stands in for
+(`src/web/server.py:171`) and only the content is dropped, at the end of
+`_send` (`src/web/server.py:389`), so a `HEAD` response carries the status,
+the `Content-Type` and the `Content-Length` its `GET` would have carried — RFC
+9110 sections 9.3.2 and 8.6 (written out rather than with §, which in this
+document means a heading of this document). That is worth writing down because the first round-2
+implementation did only the second half: the body was elided correctly while
+routing sent `HEAD` down the unsupported-method branch, so `HEAD /api/health`
+answered `405` with `Content-Length 78` where `GET` answered `200` with
+`Content-Length 12`, and `HEAD /` answered `405` where `GET` returned 4907
+bytes. Pinned by
+`tests/web/test_server_auth.py::test_head_returns_what_get_returns_minus_the_content`,
+which asserts that parity across an API path and a static path in both a
+success and a failure state.
+
+**Transport errors are framed as well as JSON.** The request lines
+`parse_request` rejects before any routing happens — a one-word line, an
+invalid version, `HTTP/2.0` — were answered with a JSON body and no status
+line in front of it. `BaseHTTPRequestHandler` suppresses the status line, the
+headers and the blank line ending them while `request_version` holds the
+`HTTP/0.9` sentinel, and `parse_request` installs that sentinel before it
+reads anything, so every line it rejects on the way to a verdict is answered
+while the suppression is still on. A real client does not read the result as a
+response at all: `http.client` raises `BadStatusLine` and never sees the status
+or the body. This is inherited stdlib behaviour rather than something this
+branch introduced — `main@c5bf32e`, which has no `send_error` override,
+returns an unframed **HTML** page for the same three request lines — but the
+override's docstring claimed these were now JSON, which was half true and read
+as wholly true. `_ensure_framable` (`src/web/server.py:321`) makes it wholly
+true, on the one path every response takes. Pinned over **raw sockets** rather
+than `http.client`, which is forgiving enough to hand back a body that never
+had a status line, by
+`tests/web/test_server_auth.py::test_a_rejected_request_line_still_gets_a_framed_json_response`.
+No token is required to receive any of these, and that is correct: they happen
+before a single header has been parsed, so there is no API request to protect.
+
+The web UI still has no automated test of the **rendered** DOM: nothing here
+lays out CSS, resolves a cascade or measures a pixel, so whether the result
+looks right is settled by hand in WKWebView and the pass is recorded in the PR
+description. What *is* automated, since the round-2 fixes, is frontend
+**behaviour**: `tests/web/js/` imports the shipped modules and runs them under
+`node --test` against the documented shim in `tests/web/js/dom_shim.mjs`,
+driven from pytest by
+`tests/web/test_frontend_behaviour.py::test_frontend_behaviour`. That
+distinction is the whole of what those tests are worth — they can say what a
+module did, not what a user saw — and it is stated at the top of the shim as
+well as here.
+
+The one environmental dependency in the web suite is `node`, for those six
+suites. When it is absent they skip with a reason naming the file that did not
+run; that was exercised by running the web suite with `node` off `PATH`, which
+gives 314 passed and 6 skipped. One of the six, `globals.test.mjs`, has the
+shim itself as its subject rather than any shipped module — CI runs node 24,
+where `globalThis.navigator` is a getter-only accessor the runtime owns, and
+the shim's original plain assignment to it threw at import. Beyond that, no
+web test reads `data/`: the
+library each one sees is built under `tmp_path` by
 `tests/web/webtest_support.py`, and it is what
 `tests/web/test_api_library.py::test_library_reports_the_real_track_count`
 counts.
+
+That was re-derived for this round rather than carried forward. A fresh clone
+of the branch with no `data/` directory, in a 3.10 venv holding only numpy,
+pandas, pyarrow, lxml, pytest and pywebview, gives **610 passed, 25 skipped**,
+and all 25 skips are the same pre-existing cases as before: 24 `real_library`
+cases across `tests/services/` and one private-XML case in
+`tests/test_xml_parser.py`. No skip in that run comes from the web suite.
 
 | Area | Pinned by |
 |---|---|
@@ -1613,3 +1686,16 @@ counts.
 | The API layer staying free of a GUI toolkit | `tests/web/test_no_heavy_imports.py::test_only_host_may_import_webview` |
 | The host not reaching Tkinter | `tests/web/test_host_importable.py::test_importing_the_host_does_not_load_tkinter` |
 | Design tokens, focus rings, reduced motion, contrast | `tests/web/test_frontend_conventions.py::test_body_text_clears_the_contrast_floor` |
+| Every HTTP method, defined or not, meeting the token check | `tests/web/test_server_auth.py::test_no_method_whatsoever_reaches_the_api_without_a_token` |
+| `HEAD` returning its `GET`'s status and `Content-Length` | `…::test_head_returns_what_get_returns_minus_the_content` |
+| A `HEAD` response not desynchronising the next one on the same connection | `…::test_a_head_response_leaves_the_connection_synchronised` |
+| Request lines the stdlib rejects still getting a status line | `…::test_a_rejected_request_line_still_gets_a_framed_json_response` |
+| There being one auth entry point rather than one per verb | `…::test_no_verb_gets_its_own_handler_method` |
+| The token check reaching `compare_digest` for wrong-length candidates | `…::test_every_wrong_token_is_decided_by_compare_digest` |
+| Requests addressed to another host name | `…::test_a_request_addressed_to_another_name_is_refused` |
+| The printed URL not carrying the token | `tests/web/test_host_importable.py::test_the_url_the_host_prints_does_not_carry_the_token` |
+| `← Back` restoring the stored order under the current Top-N | `tests/web/test_frontend_behaviour.py::test_frontend_behaviour` (`explore_history.test.mjs`) |
+| Copy acting on a recommendation without re-seeding | `…::test_frontend_behaviour` (`explore_copy.test.mjs`) |
+| The palette never rendering a superseded query | `…::test_frontend_behaviour` (`palette_sequencing.test.mjs`) |
+| `aria-modal` being backed by an inert shell and a Tab trap | `…::test_frontend_behaviour` (`palette_modality.test.mjs`) |
+| Browse, search and recommendation caps actually binding | `tests/web/test_api_library.py::test_tracks_clamps_an_absurd_limit_rather_than_serialising_the_library` |

@@ -57,6 +57,16 @@ DEFAULT_CONTENT_TYPE = "application/octet-stream"
 
 JSON_CONTENT_TYPE = "application/json; charset=utf-8"
 
+#: Methods this server answers, in the order the ``Allow`` header lists them.
+ALLOWED_METHODS = "GET, HEAD"
+
+#: Methods answered by running another method's handler. HEAD is *defined* as
+#: GET without the content (RFC 9110 §9.3.2), so the GET path is what has to
+#: produce its status, its headers and its Content-Length; ``_Handler._send``
+#: is where the content alone is dropped. Written as a mapping rather than an
+#: ``if`` so that "which methods stand in for which" is one readable fact.
+SAFE_ALIASES = {"HEAD": "GET"}
+
 INDEX_FILE = "index.html"
 
 #: ``serve_forever`` polls for the shutdown flag on this interval, so it also
@@ -92,38 +102,78 @@ class _Handler(BaseHTTPRequestHandler):
     def coco(self) -> "CocoServer":
         return self.server.coco
 
-    # -- verbs -------------------------------------------------------------
+    # -- the one entry point -----------------------------------------------
 
-    def do_GET(self):
-        self._dispatch("GET")
+    def __getattr__(self, name: str):
+        """Route *every* HTTP method into ``_dispatch``.
 
-    def do_POST(self):
-        self._dispatch("POST")
+        There is deliberately no ``do_GET`` / ``do_POST`` / ... on this class,
+        and that absence is the security property.
+        ``BaseHTTPRequestHandler.handle_one_request`` resolves a request by
+        looking up ``'do_' + self.command`` with ``hasattr`` and, when that
+        lookup fails, answering 501 with an HTML page **before any code of
+        ours runs**. With per-verb methods the token check is therefore one
+        branch among six, and every verb nobody thought to define - HEAD,
+        TRACE, or a string that is not a verb at all - skips it. Nothing was
+        exposed by that, because 501 is an error page, but the contract in this
+        module's docstring says every ``/api/`` request needs a token and
+        returns JSON, and that was false; worse, the next ``do_HEAD`` added for
+        static files would have been a real bypass with no test failing.
 
-    def do_PUT(self):
-        self._dispatch("PUT")
+        Making this lookup succeed for every name gives ``_dispatch`` sole
+        custody of the auth-and-routing decision. Chosen over overriding
+        ``handle_one_request``, which would mean carrying a copy of the ~30
+        stdlib lines that read the request line, enforce its length limit, call
+        ``parse_request`` and answer ``Expect: 100-continue`` - a fork that rots
+        silently across Python versions. This intercepts exactly the one
+        attribute lookup the stdlib performs and leaves the rest of it alone.
 
-    def do_PATCH(self):
-        self._dispatch("PATCH")
-
-    def do_DELETE(self):
-        self._dispatch("DELETE")
-
-    def do_OPTIONS(self):
-        self._dispatch("OPTIONS")
+        Pinned by tests/web/test_server_auth.py::
+        test_no_verb_gets_its_own_handler_method and the parameterised
+        method tests beside it.
+        """
+        # Only method names. Everything else must still raise, or a typo
+        # anywhere in this class becomes a silent no-op returning a callable.
+        if name.startswith("do_") and len(name) > len("do_"):
+            method = name[len("do_") :]
+            return lambda: self._dispatch(method)
+        raise AttributeError(name)
 
     # -- routing -----------------------------------------------------------
 
     def _dispatch(self, method: str) -> None:
         try:
+            # Before anything else, including the token: a request addressed to
+            # a name this server does not answer to was not meant for it. See
+            # CocoServer.allowed_host_names for why this is worth having when
+            # the token is already the real control.
+            if not self.coco.accepts_host(self.headers.get("Host")):
+                self._send_json(
+                    403,
+                    error_body(
+                        "forbidden",
+                        "This server does not answer to that host name.",
+                    ),
+                )
+                return
+
             split = urlsplit(self.path)
             path = unquote(split.path)
             query = parse_qs(split.query, keep_blank_values=True)
 
+            # HEAD is routed as GET. RFC 9110 §9.3.2 defines a HEAD response as
+            # the one GET would have produced with the content removed, and
+            # §8.6 requires the Content-Length to keep describing that removed
+            # content - so answering HEAD with its own 405 would satisfy
+            # neither. Aliasing here, after the Host check and before the two
+            # servers, means HEAD reaches _serve_api's token check by exactly
+            # the same route GET does; nothing about auth is special-cased.
+            routed = SAFE_ALIASES.get(method, method)
+
             if path == API_PREFIX or path.startswith(API_PREFIX + "/"):
-                self._serve_api(method, path, query)
+                self._serve_api(routed, path, query)
             else:
-                self._serve_static(method, path)
+                self._serve_static(routed, path)
         except Exception:  # pragma: no cover - defensive
             traceback.print_exc(file=sys.stderr)
             self._send_json(500, error_body("internal", "The server failed to respond."))
@@ -143,7 +193,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(
                 405,
                 error_body("method_not_allowed", f"{method} is not supported."),
-                extra_headers={"Allow": "GET"},
+                extra_headers={"Allow": ALLOWED_METHODS},
             )
             return
 
@@ -178,7 +228,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(
                 405,
                 error_body("method_not_allowed", f"{method} is not supported."),
-                extra_headers={"Allow": "GET"},
+                extra_headers={"Allow": ALLOWED_METHODS},
             )
             return
 
@@ -238,7 +288,84 @@ class _Handler(BaseHTTPRequestHandler):
 
         self._send(status, payload.encode("utf-8"), JSON_CONTENT_TYPE, extra_headers)
 
+    def send_error(self, code, message=None, explain=None) -> None:
+        """Answer the stdlib's own transport errors in JSON as well.
+
+        ``parse_request`` still rejects a malformed request line, an over-long
+        request URI and an unsupported HTTP version before any routing happens,
+        and the base implementation answers those with an HTML page. That is
+        the last place an HTML body could leave this server, and the frontend
+        reads every non-2xx body as JSON, so these are translated rather than
+        left as the one exception.
+
+        The JSON is only half of it: most of these are raised while
+        ``request_version`` still holds the sentinel that suppresses response
+        framing entirely, so the translated body needed a status line in front
+        of it before it was a response at all. ``_ensure_framable`` is what
+        supplies that, on the shared path rather than here.
+        """
+        try:
+            shortmsg = self.responses[code][0]
+        except (KeyError, TypeError):  # pragma: no cover - unlisted status
+            shortmsg = "Error"
+
+        slug = "internal" if int(code) >= 500 else "bad_request"
+        self._send_json(
+            int(code),
+            error_body(slug, str(message or shortmsg)),
+            extra_headers={"Connection": "close"},
+        )
+        # These are all unrecoverable framing errors; the stdlib closes too.
+        self.close_connection = True
+
+    def _ensure_framable(self) -> None:
+        """Guarantee this response gets a status line, headers and a blank line.
+
+        ``BaseHTTPRequestHandler`` suppresses all three whenever
+        ``request_version`` is the ``HTTP/0.9`` sentinel - ``send_response_only``,
+        ``send_header`` and ``end_headers`` each open with the same
+        ``if self.request_version != 'HTTP/0.9'``. That is how the base class
+        speaks 0.9, which has no response framing at all.
+
+        The trap is that ``parse_request`` installs that sentinel *before* it
+        reads anything and only replaces it once it has a version it accepts.
+        Every request line it rejects on the way there - a one-word line,
+        ``HTTP/9.9``, ``HTTP/2.0`` - is therefore answered while the sentinel is
+        still in place, and what went on the wire was a naked JSON body with no
+        ``HTTP/1.1`` line in front of it. A real client does not read that as
+        our 400: ``http.client`` raises ``BadStatusLine`` and never sees the
+        status or the body. (The 414 escaped this only because
+        ``handle_one_request`` blanks ``request_version`` rather than leaving
+        the sentinel, which is a difference of one line in the stdlib and not
+        something to rely on.)
+
+        This is inherited behaviour, not something the ``send_error`` override
+        introduced - the same request lines got an unframed HTML page before
+        it. What the override did was make the module docstring's promise
+        louder than what was delivered.
+
+        Normalising here rather than inside ``send_error`` puts it on the one
+        path every response takes, so a future error route cannot miss it, and
+        it is safe unconditionally because there is no HTTP/0.9 client to
+        confuse: a 0.9 request carries no headers, so it cannot carry ``Host``,
+        and ``_dispatch`` refuses it 403 either way. Framing that refusal makes
+        it legible instead of leaving a bare body on the socket.
+
+        Note what this deliberately does **not** do: it does not authorise
+        anything. These failures happen before a header has been parsed, so
+        there is no API request here to protect - only a request line this
+        server could not read, which it must be able to say so about.
+
+        Pinned by the raw-socket cases in tests/web/test_server_auth.py, which
+        use sockets rather than ``http.client`` precisely because
+        ``http.client`` is forgiving enough to hand an unframed body back as a
+        response.
+        """
+        if self.request_version == "HTTP/0.9":
+            self.request_version = "HTTP/1.1"
+
     def _send(self, status: int, payload: bytes, content_type: str, extra_headers=None):
+        self._ensure_framable()
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))
@@ -248,7 +375,19 @@ class _Handler(BaseHTTPRequestHandler):
         for name, value in (extra_headers or {}).items():
             self.send_header(name, value)
         self.end_headers()
-        self.wfile.write(payload)
+        # The only difference between a HEAD response and its GET, and the
+        # last moment at which it can be made. _dispatch already routed this
+        # request as GET, so the status, the Content-Type and the
+        # Content-Length above are the GET's - which is what RFC 9110 §9.3.2
+        # and §8.6 require - and all that is left is to not write the content.
+        #
+        # Writing it anyway does NOT show up as a stray body: the client stops
+        # reading on the method's semantics, so it reports no body either way.
+        # It shows up one response later, on a keep-alive connection, when the
+        # bytes still in the socket are read as the start of the NEXT response.
+        # That is why the test for this reuses its connection.
+        if self.command != "HEAD":
+            self.wfile.write(payload)
 
 
 class _ThreadingServer(ThreadingHTTPServer):
@@ -322,7 +461,66 @@ class CocoServer:
     @property
     def url(self) -> str:
         """The page URL, carrying the token so the frontend can pick it up."""
-        return f"http://{self._host}:{self.port}/?key={self._token}"
+        return f"{self.display_url}/?key={self._token}"
+
+    @property
+    def display_url(self) -> str:
+        """The same URL with the token removed, for anything a human reads.
+
+        ``url`` is what the webview is pointed at and it has to carry the
+        token. Printing that to stdout writes a live credential into terminal
+        scrollback, shell history files and any log the launcher is piped
+        into, where it outlives the process that could still use it.
+        """
+        return f"http://{self._host}:{self.port}"
+
+    #: Extra names, beyond the bound address, that mean "this machine".
+    LOOPBACK_ALIASES = ("localhost",)
+
+    @property
+    def allowed_host_names(self) -> frozenset:
+        """The host names this server will answer to, lower-cased.
+
+        Defence in depth, and deliberately labelled as such. A page on another
+        origin can point a name it controls at 127.0.0.1 - DNS rebinding - and
+        make a browser send requests here. The *token* is what stops those
+        reading anything, because the attacker's script cannot read it out of a
+        cross-origin response; this only closes the door one step earlier.
+
+        The reason it earns its place anyway is that it makes the answer
+        explicit. It is derived from the bound address, so pointing ``host`` at
+        a LAN interface to reach the UI from a phone widens this in one place
+        and on purpose, rather than leaving "which names work" as something
+        nobody decided.
+        """
+        return frozenset({self._host.lower(), *self.LOOPBACK_ALIASES})
+
+    def accepts_host(self, header: Optional[str]) -> bool:
+        """Whether a ``Host`` header names this server.
+
+        An absent header is refused rather than waved through: HTTP/1.1
+        requires one, and treating "absent" as "fine" would make the check
+        skippable by anything that can open a socket - which is precisely the
+        caller it exists for.
+        """
+        if not header:
+            return False
+
+        candidate = header.strip()
+        if candidate.startswith("["):  # an IPv6 literal: [::1] or [::1]:8000
+            name, _, rest = candidate.partition("]")
+            name = name[1:]
+            port = rest[1:] if rest.startswith(":") else ""
+        else:
+            name, separator, port = candidate.partition(":")
+            if not separator:
+                port = ""
+
+        # A name with no port is accepted; a name with the WRONG port is not,
+        # because that request was addressed to a different server.
+        if port and port != str(self.port):
+            return False
+        return name.lower() in self.allowed_host_names
 
     @property
     def thread(self) -> Optional[threading.Thread]:

@@ -120,40 +120,136 @@ def test_the_type_scale_has_at_most_six_sizes():
 # ---------------------------------------------------------------------------
 
 
+DURATION = re.compile(r"(\d+(?:\.\d+)?)(ms|s)\b")
+
+#: Under the preference, motion is meant to be gone, not merely brisk.
+REDUCED_MOTION_CEILING_MS = 10
+
+#: A repeating indicator is a rate, not a delay anyone waits out. This bounds
+#: it anyway, so "exempt" does not mean "unbounded".
+REPEATING_CEILING_MS = 1000
+
+
+def _milliseconds(value):
+    """The single duration in a declaration value, in ms, or None."""
+    match = DURATION.search(value)
+    if match is None:
+        return None
+    number, unit = match.groups()
+    return float(number) * (1000 if unit == "s" else 1)
+
+
+def _rules(text):
+    """(selector, declarations) for every innermost block in ``text``."""
+    return re.findall(r"([^{}]+)\{([^{}]*)\}", without_comments(text))
+
+
+def _declared_durations():
+    """(milliseconds, declaration) for every duration in every stylesheet."""
+    found = []
+    for sheet in stylesheets():
+        for _selector, declarations in _rules(read(sheet)):
+            for declaration in declarations.split(";"):
+                for number, unit in DURATION.findall(declaration):
+                    found.append(
+                        (
+                            float(number) * (1000 if unit == "s" else 1),
+                            " ".join(declaration.split()),
+                        )
+                    )
+    return found
+
+
 def test_reduced_motion_is_respected_at_the_token_level():
     """Overriding the duration TOKENS means every transition in the app obeys
-    the preference without any component opting in individually."""
+    the preference without any component opting in individually.
+
+    The VALUES are asserted, not the presence of the property names. Checking
+    only that the words appeared let the whole block be kept while the numbers
+    inside it were raised back to their normal durations - a guard that passes
+    for a stylesheet which does not reduce motion at all is worse than none,
+    because it reads like a check.
+    """
     body = read(TOKENS_CSS)
 
     assert "@media (prefers-reduced-motion: reduce)" in body
     reduced = body[body.index("@media (prefers-reduced-motion: reduce)") :]
-    assert "--motion-base:" in reduced and "--motion-fast:" in reduced
-    assert "animation-duration" in reduced
-    assert "transition-duration" in reduced
+
+    for name in (
+        "--motion-base",
+        "--motion-fast",
+        "animation-duration",
+        "transition-duration",
+    ):
+        match = re.search(rf"{re.escape(name)}\s*:\s*([^;]+);", reduced)
+        assert match, f"{name} is not overridden under prefers-reduced-motion"
+
+        milliseconds = _milliseconds(match.group(1))
+        assert milliseconds is not None, (
+            f"{name} is overridden with {match.group(1)!r}, which is not a duration"
+        )
+        assert milliseconds <= REDUCED_MOTION_CEILING_MS, (
+            f"{name} is still {milliseconds:g} ms under prefers-reduced-motion"
+        )
+
+    # A 1 ms animation that still repeats forever is still motion.
+    assert re.search(r"animation-iteration-count\s*:\s*1\b", reduced), (
+        "repeating animations are not stopped under prefers-reduced-motion"
+    )
 
 
 def test_no_transition_or_animation_is_longer_than_two_hundred_milliseconds():
-    durations = []
-    for sheet in stylesheets():
-        body = without_comments(read(sheet))
-        durations += [int(value) for value in re.findall(r"(\d+)ms\b", body)]
-        durations += [
-            int(float(value) * 1000) for value in re.findall(r"(\d+(?:\.\d+)?)s\b", body)
-        ]
+    """The exemption is keyed on what the declaration IS, not on its value.
 
-    assert durations, "no durations found; the regex stopped matching"
-    assert max(durations) <= 700, f"durations over 700 ms: {sorted(set(durations))}"
-    # The spinner is a repeating indicator, not a transition; everything that
-    # moves in response to an action is under 200 ms.
-    transitions = [d for d in durations if d != 700]
-    assert max(transitions) <= 200, f"transitions over 200 ms: {sorted(set(transitions))}"
+    This used to exempt every duration equal to 700 ms, on the grounds that the
+    spinner is 700 ms. That meant setting an interaction token to 700 ms passed
+    the check - the guard exempted a number rather than a kind of thing. The
+    distinction that actually matters is whether the animation repeats: a
+    repeating indicator is a rate, and anything that runs ONCE in response to
+    an action is a delay the user sits through.
+    """
+    found = _declared_durations()
+    assert found, "no durations found; the regex stopped matching"
+
+    repeating = [row for row in found if "infinite" in row[1]]
+    once = [row for row in found if "infinite" not in row[1]]
+
+    assert repeating, (
+        "no repeating animation is declared, so the exemption below is vacuous "
+        "and this test would silently stop distinguishing anything"
+    )
+    assert once, "no one-shot durations found; the regex stopped matching"
+
+    worst_repeating = max(repeating)
+    assert worst_repeating[0] <= REPEATING_CEILING_MS, (
+        f"repeating animation over {REPEATING_CEILING_MS} ms: {worst_repeating[1]}"
+    )
+
+    worst_once = max(once)
+    assert worst_once[0] <= 200, f"transition over 200 ms: {worst_once[1]}"
 
 
-def test_there_is_a_visible_focus_ring():
+def test_there_is_a_visible_focus_ring(tokens):
+    """The token has to BE a ring, not merely exist.
+
+    ``--focus-ring: none`` satisfies every name-presence check in this file
+    while removing the focus indicator from the whole application, which is the
+    exact outcome the check is here to prevent.
+    """
     body = without_comments(read(APP_CSS))
 
     assert ":focus-visible" in body
     assert "--focus-ring" in body
+
+    ring = " ".join(tokens["--focus-ring"].split())
+
+    assert "none" not in ring, f"--focus-ring draws nothing: {ring!r}"
+    assert re.search(r"\b[1-9]\d*(?:\.\d+)?(?:px|rem|em)\b", ring), (
+        f"--focus-ring has no non-zero thickness: {ring!r}"
+    )
+    assert "var(--" in ring or HEX_COLOUR.search(ring), (
+        f"--focus-ring names no colour: {ring!r}"
+    )
 
 
 def test_focus_is_never_removed_without_being_replaced():
@@ -304,12 +400,24 @@ def test_nothing_is_loaded_from_another_origin():
 
 
 def test_the_shell_uses_real_landmarks():
+    """A landmark is an ELEMENT, not a class name.
+
+    This asserted ``class="main"``, which a ``<div>`` satisfies - so the guard
+    endorsed the very thing the plan (step 2: "semantic landmarks (<nav>,
+    <main>, <aside>)") asks for and the markup did not do. ``<main>`` is what
+    "skip to main content" and every screen reader's landmark rotor navigate
+    by; a div with a class is not in that list at all.
+    """
     body = read(INDEX_HTML)
 
-    assert "<nav" in body
-    assert "<aside" in body
-    assert 'class="main"' in body
-    assert "<h1" in body
+    assert re.search(r"<nav\b", body)
+    assert re.search(r"<aside\b", body)
+    assert re.search(r"<main\b", body), "the content region is not a <main> landmark"
+    assert "</main>" in body
+    assert re.search(r"<h1\b", body)
+
+    # Exactly one, or "the main landmark" stops being a thing you can name.
+    assert len(re.findall(r"<main\b", body)) == 1
 
 
 def test_all_four_destinations_are_present():

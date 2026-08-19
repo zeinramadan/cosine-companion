@@ -15,6 +15,8 @@ the web UI a different result set from the Tkinter one.
 
 import pytest
 
+from services.explore_session import Recommendation
+
 from webtest_support import NAN_BPM_TRACK_ID
 
 from web.api import (
@@ -228,11 +230,95 @@ def test_the_default_limit_is_fifty(recording_api, api):
     assert len(body["recommendations"]) == min(50, 13)
 
 
-def test_the_limit_is_clamped_to_two_hundred(api):
+class OversizedExplore:
+    """An ExploreSession that returns more recommendations than the cap.
+
+    The fixture library has fourteen tracks, so ``recommend`` can never return
+    more than thirteen and ``len(recommendations) <= 200`` was true whatever
+    the cap was - raising MAX_RECOMMENDATION_LIMIT to 9999 left the clamp test
+    green. Only a ranked list longer than the cap can make the cap bite, and
+    the ranking is not what is under test here: the API's own truncation is.
+    """
+
+    def __init__(self, rows):
+        self.rows = rows
+        self.calls = []
+
+    def recommend(self, track_id, topk=None, final_top=None):
+        self.calls.append({"track_id": track_id, "topk": topk, "final_top": final_top})
+        return [
+            Recommendation(
+                track_id=f"r{index:04d}",
+                artist=f"Artist {index:04d}",
+                title=f"Title {index:04d}",
+                bpm=120.0 + index,
+                key="8A",
+                path_local=f"/nonexistent/{index}.mp3",
+                cosine=1.0 - index / self.rows,
+                score=1.0 - index / self.rows,
+                key_score=1.0,
+                bpm_score=1.0,
+            )
+            for index in range(self.rows)
+        ]
+
+
+#: Comfortably past MAX_RECOMMENDATION_LIMIT (200).
+OVERSIZED_ROWS = 500
+
+
+@pytest.fixture
+def oversized_api(web_library, settings):
+    """The real library (so the seed lookup is real) with a ranking stub."""
+    explore = OversizedExplore(OVERSIZED_ROWS)
+    return CocoApi(web_library, settings, explore=explore), explore
+
+
+def test_the_limit_is_clamped_to_two_hundred(oversized_api):
     """200 is the most the Tkinter Top-N combobox offers (inventory :337)."""
+    api, explore = oversized_api
+
     body = recommendations(api, limit=99999)
 
-    assert len(body["recommendations"]) <= MAX_RECOMMENDATION_LIMIT
+    # The literal as well as the constant: `limit=99999` resolving to
+    # MAX_RECOMMENDATION_LIMIT is trivially true when that constant is 99999.
+    # 200 is the largest value the Tkinter Top-N combobox offers (:337), so it
+    # is a contract number rather than an implementation detail.
+    assert MAX_RECOMMENDATION_LIMIT == 200
+    assert OVERSIZED_ROWS > MAX_RECOMMENDATION_LIMIT, "the stub cannot bind the cap"
+    assert len(body["recommendations"]) == 200
+    # And it is the API doing the truncating, not the ranking: the session was
+    # still asked for the full Explore pool.
+    assert explore.calls == [
+        {"track_id": SEED, "topk": EXPLORE_TOPK, "final_top": EXPLORE_FINAL_TOP}
+    ]
+
+
+def test_the_recommendation_cap_is_the_documented_number(oversized_api):
+    """One below, at, and one above, so an off-by-one in the clamp shows."""
+    api, _ = oversized_api
+
+    under = recommendations(api, limit=MAX_RECOMMENDATION_LIMIT - 1)
+    at = recommendations(api, limit=MAX_RECOMMENDATION_LIMIT)
+    over = recommendations(api, limit=MAX_RECOMMENDATION_LIMIT + 1)
+
+    assert len(under["recommendations"]) == MAX_RECOMMENDATION_LIMIT - 1
+    assert len(at["recommendations"]) == MAX_RECOMMENDATION_LIMIT
+    assert len(over["recommendations"]) == MAX_RECOMMENDATION_LIMIT
+
+
+def test_the_truncation_keeps_the_head_of_the_ranking(oversized_api):
+    """Clamping must take the FIRST n, not a slice from anywhere else: the
+    order is by raw cosine and the head is the answer (§3.3)."""
+    api, _ = oversized_api
+
+    body = recommendations(api, limit=3)
+
+    assert [rec["track_id"] for rec in body["recommendations"]] == [
+        "r0000",
+        "r0001",
+        "r0002",
+    ]
 
 
 def test_a_zero_limit_returns_the_seed_and_no_recommendations(api):

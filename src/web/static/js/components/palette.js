@@ -9,9 +9,20 @@
  * the service is untouched; this is a different surface answering the same
  * question better, through /api/tracks rather than through search_tracks.
  *
- * Responses are sequenced. Typing fast means several searches in flight, and
- * without a sequence number a slow early one can land after a fast later one
- * and repaint the list with results for a query the user has moved past.
+ * Responses are sequenced, and the sequence is bumped by the KEYSTROKE rather
+ * than by the request it eventually causes. Bumping it inside `load` looks
+ * equivalent and is not, because `load` runs 120 ms late:
+ *
+ *   t=0    type "a"       debounce timer set for t=120
+ *   t=120  load("a")      mine = 1, sequence = 1, request goes out
+ *   t=150  type "b"       timer reset for t=270 - but sequence is still 1
+ *   t=200  "a" responds   mine === sequence, so it RENDERS results for "a"
+ *                         while the input reads "ab" and Enter is one
+ *                         keypress away from choosing the wrong track.
+ *
+ * Every keystroke is the moment the previous query stops being current, so
+ * that is where the invalidation belongs. Pinned by
+ * tests/web/js/palette_sequencing.test.mjs.
  */
 
 import { api } from '../api.js';
@@ -26,6 +37,10 @@ export function mountPalette({ onSelect }) {
   const input = document.getElementById('palette-input');
   const list = document.getElementById('palette-results');
   const trigger = document.getElementById('search-trigger');
+  /* The application shell. The palette is a SIBLING of it in index.html, which
+   * is what lets the whole shell be taken out of reach while the panel is
+   * open. */
+  const shell = document.getElementById('app');
 
   let results = [];
   let cursor = 0;
@@ -35,8 +50,13 @@ export function mountPalette({ onSelect }) {
 
   // -- data ---------------------------------------------------------------
 
-  async function load(query) {
-    const mine = ++sequence;
+  /** Invalidate every response still in flight. Returns the new ticket. */
+  function invalidate() {
+    sequence += 1;
+    return sequence;
+  }
+
+  async function load(query, mine) {
     const trimmed = query.trim();
 
     try {
@@ -62,7 +82,10 @@ export function mountPalette({ onSelect }) {
 
   function scheduleLoad(query) {
     window.clearTimeout(debounce);
-    debounce = window.setTimeout(() => load(query), DEBOUNCE_MS);
+    // Here, not inside load(): the keystroke is what makes the previous query
+    // stale, and it happens DEBOUNCE_MS before the next request exists.
+    const mine = invalidate();
+    debounce = window.setTimeout(() => load(query, mine), DEBOUNCE_MS);
   }
 
   // -- rendering ----------------------------------------------------------
@@ -151,11 +174,22 @@ export function mountPalette({ onSelect }) {
     }
     restoreFocusTo = document.activeElement;
     root.hidden = false;
+    // The panel declares role="dialog" aria-modal="true" (index.html:100),
+    // which tells assistive technology that everything behind it is
+    // unreachable. These two lines are what make that claim true rather than
+    // decorative: `inert` removes the shell from the tab order AND from the
+    // accessibility tree, and aria-hidden covers the browsers that do not
+    // implement inert yet. The Tab case in the keydown handler below is the
+    // belt to this pair of braces.
+    if (shell) {
+      shell.setAttribute('inert', '');
+      shell.setAttribute('aria-hidden', 'true');
+    }
     input.value = '';
     results = [];
     renderMessage('Loading…');
     input.focus();
-    load('');
+    load('', invalidate());
   }
 
   function close() {
@@ -165,7 +199,13 @@ export function mountPalette({ onSelect }) {
     root.hidden = true;
     window.clearTimeout(debounce);
     // Invalidate anything in flight so it cannot repaint a closed palette.
-    sequence += 1;
+    invalidate();
+    // BEFORE restoring focus, not after: focus() into an inert subtree is
+    // ignored, and the control that opened the palette lives inside the shell.
+    if (shell) {
+      shell.removeAttribute('inert');
+      shell.removeAttribute('aria-hidden');
+    }
     if (restoreFocusTo && typeof restoreFocusTo.focus === 'function') {
       restoreFocusTo.focus();
     }
@@ -200,6 +240,15 @@ export function mountPalette({ onSelect }) {
       case 'Escape':
         event.preventDefault();
         close();
+        break;
+      case 'Tab':
+        // The trap. The panel holds exactly ONE focusable element - this input
+        // - because the results are a listbox driven by aria-activedescendant
+        // rather than by focus. So trapping Tab means sending it nowhere,
+        // forwards or backwards, and the focus() is what recovers if anything
+        // else has taken it in the meantime.
+        event.preventDefault();
+        input.focus();
         break;
       default:
         break;

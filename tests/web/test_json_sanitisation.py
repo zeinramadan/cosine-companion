@@ -74,11 +74,63 @@ def test_a_numpy_scalar_becomes_the_python_scalar(value, expected):
 
 
 @pytest.mark.parametrize(
-    "missing", [float("nan"), np.float64("nan"), None, pd.NaT, pd.NA]
+    "missing",
+    [
+        float("nan"),
+        np.float64("nan"),
+        None,
+        pd.NaT,
+        pd.NA,
+        # numpy has its own not-a-time, and it is NOT pd.NaT. `pd.NaT is
+        # np.datetime64("NaT")` is False, so the identity test above never saw
+        # these two and each failed differently:
+        #   np.datetime64("NaT")  fell through to str() and serialised as the
+        #                         four-character string "NaT", which the
+        #                         frontend renders as a date;
+        #   np.timedelta64("NaT") is an np.signedinteger SUBCLASS, so it was
+        #                         caught by the integer branch, where int()
+        #                         raises TypeError and takes the endpoint down
+        #                         with a 500.
+        np.datetime64("NaT"),
+        np.timedelta64("NaT"),
+    ],
 )
 def test_every_flavour_of_missing_becomes_null(missing):
     assert _jsonable(missing) is None
     assert dumps(_jsonable(missing)) == "null"
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        (np.datetime64("2020-01-02T03:04:05"), "2020-01-02T03:04:05"),
+        (np.datetime64("2020-01-02"), "2020-01-02"),
+        (np.timedelta64(5, "D"), "5 days"),
+        (np.timedelta64(90, "s"), "90 seconds"),
+    ],
+)
+def test_a_real_numpy_temporal_scalar_survives_as_text(value, expected):
+    """The non-NaT half of the same hole.
+
+    ``np.timedelta64(5, "D")`` raised TypeError too - not only the NaT one -
+    because the integer branch caught every timedelta64 and ``int()`` on one
+    returns a ``datetime.timedelta``. Text rather than a number because the
+    unit is part of the value and a bare integer would silently drop it.
+    """
+    converted = _jsonable(value)
+
+    assert converted == expected
+    assert dumps(converted)
+
+
+def test_a_frame_of_dates_round_trips_through_the_sanitiser():
+    """The realistic route in: a metadata column pandas has typed as
+    datetime64, holding a gap. Reading a row out of one yields the numpy
+    scalars above, not the pandas ones."""
+    frame = pd.DataFrame({"added": pd.to_datetime(["2020-01-02", None])})
+    values = frame["added"].to_numpy()
+
+    assert dumps(_jsonable(list(values))) == '["2020-01-02T00:00:00.000000000", null]'
 
 
 @pytest.mark.parametrize("value", [float("inf"), float("-inf"), np.float64("inf")])

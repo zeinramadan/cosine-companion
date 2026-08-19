@@ -90,10 +90,16 @@ def run_web_ui(data_dir: Optional[Path] = None, debug: bool = False) -> None:
     server.start()
 
     try:
+        # display_url, not url: url carries ?key=<token>, and printing that
+        # writes a live credential into terminal scrollback, shell history and
+        # whatever log the launcher is piped into - where it outlives the
+        # process that could still use it. The webview is handed the real URL
+        # below; nothing a human reads gets the token.
+        #
         # flush=True: launched from a terminal the output is a pipe, not a
         # tty, so without it the URL sits in the buffer until the window closes
         # - which is exactly when it stops being useful.
-        print(f"Cosine Companion web UI on {server.url}", flush=True)
+        print(f"Cosine Companion web UI on {server.display_url}", flush=True)
         print(f"{library.track_count} tracks indexed", flush=True)
 
         webview.create_window(
