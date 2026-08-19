@@ -152,7 +152,10 @@ function copyControl({ className, resting, restingLabel, text }) {
   button.title = restingLabel;
 
   button.addEventListener('click', async (event) => {
-    // The row's own click handler re-seeds. Copying must not.
+    // Belt to the braces, not the mechanism: on a row this control is a
+    // SIBLING of the button that re-seeds, not a child of it, so a click here
+    // does not reach that handler in the first place. This is what keeps that
+    // true if the row is ever restructured.
     if (event && typeof event.stopPropagation === 'function') {
       event.stopPropagation();
     }
