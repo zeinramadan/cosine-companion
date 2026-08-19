@@ -1,2 +1,178 @@
-/* Design tokens. Written in Task 5. */
-:root { color-scheme: dark; }
+/* Design tokens. The ONLY file in this project that contains a literal colour.
+ *
+ * Everything downstream - app.css, every component - refers to these by name,
+ * so the palette can be re-tuned in one place and a reviewer can check the
+ * whole colour system by reading one file. tests/web/test_frontend_conventions.py
+ * enforces that: app.css is asserted to contain no hex literal and no raw
+ * colour function.
+ *
+ * The direction is "mockup B": near-black surfaces separated by ELEVATION
+ * rather than by borders on everything, generous space, a real type scale, and
+ * exactly one accent that earns its place.
+ *
+ * Contrast: every text-on-surface pair below is at or above 4.5:1, checked
+ * numerically rather than by eye - see the WCAG table in
+ * tests/web/test_frontend_conventions.py, which recomputes the ratios from
+ * this file on every run.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* -- surfaces ---------------------------------------------------------
+   * Five steps, each a small lift. Cards read as raised because they are
+   * lighter and carry a shadow, not because they are outlined.
+   */
+  --surface-0: #0b0c0f;   /* the window itself */
+  --surface-1: #101319;   /* sidebar, top bar */
+  --surface-2: #171b23;   /* cards, rows, panels */
+  --surface-3: #1e232d;   /* hover */
+  --surface-4: #283040;   /* pressed / selected */
+
+  --surface-overlay: rgba(6, 7, 10, 0.72);  /* behind the palette */
+
+  /* -- ink ----------------------------------------------------------------
+   * Named --ink-*, not --text-*, so the colour namespace and the type scale
+   * below stay separable. They were both --text-* first, which made "how many
+   * font sizes are there" an unanswerable question.
+   */
+  --ink-primary: #f3f5f9;
+  --ink-secondary: #b3bccb;
+  --ink-tertiary: #959fb0;
+  --ink-on-accent: #0b0c0f;
+
+  /* -- accent ------------------------------------------------------------
+   * One hue family. The second is used only inside gradients and the score
+   * bar, never as a competing interactive colour.
+   */
+  --accent: #93a4ff;
+  --accent-strong: #7186ff;
+  --accent-dim: rgba(147, 164, 255, 0.14);
+  --accent-2: #6fe3cd;
+
+  --danger: #ff9d9d;
+
+  /* -- lines ------------------------------------------------------------- */
+  --border-subtle: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.13);
+
+  /* -- gradients ---------------------------------------------------------
+   * The seed card is the one place the UI is allowed to be decorative: it is
+   * the answer to "what am I mixing out of", and it should look like it.
+   */
+  --gradient-seed:
+    radial-gradient(120% 140% at 0% 0%, rgba(113, 134, 255, 0.30) 0%, rgba(113, 134, 255, 0) 55%),
+    radial-gradient(110% 130% at 100% 20%, rgba(111, 227, 205, 0.18) 0%, rgba(111, 227, 205, 0) 60%),
+    linear-gradient(135deg, #1a2036 0%, #191b2b 48%, #141d24 100%);
+  --gradient-score: linear-gradient(90deg, var(--accent-strong) 0%, var(--accent-2) 100%);
+  --gradient-brand: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+
+  /* -- type --------------------------------------------------------------
+   * Six sizes, no more. The system stack first: on macOS this resolves to SF,
+   * which is what every other native surface uses.
+   */
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
+    Helvetica, Arial, sans-serif;
+  --font-mono:
+    ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+  --text-xs: 0.6875rem;   /* 11px - eyebrow labels, pill text */
+  --text-sm: 0.8125rem;   /* 13px - metadata, secondary rows */
+  --text-md: 0.9375rem;   /* 15px - body, list titles */
+  --text-lg: 1.1875rem;   /* 19px - section headings */
+  --text-xl: 1.5rem;      /* 24px - view titles */
+  --text-2xl: 2.125rem;   /* 34px - the seed track */
+
+  --leading-tight: 1.2;
+  --leading-normal: 1.5;
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  --tracking-wide: 0.08em;   /* eyebrow labels only */
+
+  /* -- space -------------------------------------------------------------
+   * A 4px base. Generous by default: the Tkinter app's problem was density,
+   * not information.
+   */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+
+  /* -- shape -------------------------------------------------------------- */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.625rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.25rem;
+  --radius-pill: 999px;
+
+  /* -- depth -------------------------------------------------------------- */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.55);
+
+  /* -- motion -------------------------------------------------------------
+   * Nothing over 200 ms. Overridden wholesale under prefers-reduced-motion at
+   * the bottom of this file, so no component has to remember to opt in.
+   */
+  --motion-fast: 110ms;
+  --motion-base: 170ms;
+  --ease-out: cubic-bezier(0.22, 0.9, 0.34, 1);
+
+  /* -- focus --------------------------------------------------------------
+   * A two-tone ring: a dark inner halo so the bright outer ring reads on any
+   * surface, light or dark, without needing a per-component variant.
+   */
+  --focus-ring:
+    0 0 0 2px var(--surface-0),
+    0 0 0 4px var(--accent);
+
+  /* -- layout -------------------------------------------------------------- */
+  --sidebar-width: 15rem;
+  --drawer-width: 23rem;
+  --content-max: 60rem;
+
+  /* -- Camelot pills -------------------------------------------------------
+   * The wheel is 12 positions, so hue = (n - 1) * 30 degrees puts harmonic
+   * neighbours (n +/- 1) next to each other in colour as well as in number.
+   * `--camelot-hue` is set per element by the component; these two tokens are
+   * resolved lazily against whatever it is, which is why 24 hard-coded pairs
+   * are not needed.
+   *
+   * Colour is never the ONLY signal - the pill always renders its own text
+   * ("8A"), so the wheel position is readable without perceiving hue at all.
+   * A/B differ in lightness as well as in that text.
+   */
+  --camelot-bg: hsl(var(--camelot-hue, 220deg) 42% 20%);
+  --camelot-fg: hsl(var(--camelot-hue, 220deg) 82% 80%);
+  --camelot-edge: hsl(var(--camelot-hue, 220deg) 45% 34%);
+  --camelot-bg-major: hsl(var(--camelot-hue, 220deg) 34% 24%);
+  --camelot-fg-major: hsl(var(--camelot-hue, 220deg) 70% 84%);
+}
+
+/* Motion is a preference, not a decoration. One override, applied to the
+ * tokens themselves, so every transition and animation in the app respects it
+ * without any component opting in individually. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 1ms;
+    --motion-base: 1ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}

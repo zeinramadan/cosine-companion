@@ -1,1 +1,127 @@
-<!doctype html><title>Cosine Companion</title>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Cosine Companion</title>
+  <link rel="stylesheet" href="/css/tokens.css">
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <div class="app" id="app" data-drawer="closed">
+
+    <nav class="sidebar" aria-label="Destinations">
+      <div class="brand">
+        <span class="brand__mark" aria-hidden="true"></span>
+        <span class="brand__name">Cosine Companion</span>
+      </div>
+
+      <div class="nav" id="nav">
+        <p class="nav__label" id="nav-label">Workspace</p>
+        <button class="nav__item" type="button" data-destination="explore" aria-current="page">
+          <span class="nav__glyph" aria-hidden="true">◎</span>
+          <span>Explore</span>
+        </button>
+        <button class="nav__item" type="button" data-destination="set-creator">
+          <span class="nav__glyph" aria-hidden="true">≡</span>
+          <span>Set Creator</span>
+          <span class="nav__soon">Soon</span>
+        </button>
+        <button class="nav__item" type="button" data-destination="library">
+          <span class="nav__glyph" aria-hidden="true">▤</span>
+          <span>Library</span>
+          <span class="nav__soon">Soon</span>
+        </button>
+        <button class="nav__item" type="button" data-destination="export">
+          <span class="nav__glyph" aria-hidden="true">↥</span>
+          <span>Export</span>
+          <span class="nav__soon">Soon</span>
+        </button>
+      </div>
+
+      <div class="sidebar__footer">
+        <p><span class="sidebar__count" id="library-count">—</span> tracks indexed</p>
+      </div>
+    </nav>
+
+    <div class="main">
+      <header class="topbar">
+        <h1 class="topbar__title" id="view-title">Explore</h1>
+        <button class="search-trigger" type="button" id="search-trigger">
+          <span aria-hidden="true">⌕</span>
+          <span>Search tracks…</span>
+          <span class="kbd" aria-hidden="true">⌘K</span>
+        </button>
+      </header>
+
+      <div class="viewport" id="viewport">
+        <section class="view" id="view-explore" aria-labelledby="view-title"></section>
+
+        <section class="view" id="view-set-creator" hidden aria-label="Set Creator">
+          <div class="placeholder">
+            <p class="placeholder__eyebrow">Coming in the next PR</p>
+            <h2 class="placeholder__title">Set Creator</h2>
+            <p class="placeholder__body">
+              Multi-hop set generation from anchor tracks. The engine behind it already
+              exists as <code>SetBuilder</code>; this destination is where it lands.
+            </p>
+          </div>
+        </section>
+
+        <section class="view" id="view-library" hidden aria-label="Library">
+          <div class="placeholder">
+            <p class="placeholder__eyebrow">Coming in the next PR</p>
+            <h2 class="placeholder__title">Library</h2>
+            <p class="placeholder__body">
+              Browse, filter and prune the indexed collection. Use ⌘K to find a track
+              in the meantime.
+            </p>
+          </div>
+        </section>
+
+        <section class="view" id="view-export" hidden aria-label="Export">
+          <div class="placeholder">
+            <p class="placeholder__eyebrow">Coming in the next PR</p>
+            <h2 class="placeholder__title">Export</h2>
+            <p class="placeholder__body">
+              M3U playlist export with determinate progress and real cancellation —
+              the long-running-work surface described in the spec.
+            </p>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <aside class="drawer" id="drawer" hidden aria-label="Track details"></aside>
+  </div>
+
+  <div class="palette" id="palette" hidden>
+    <div class="palette__panel" role="dialog" aria-modal="true" aria-label="Search tracks">
+      <div class="palette__search">
+        <span class="palette__glyph" aria-hidden="true">⌕</span>
+        <label class="visually-hidden" for="palette-input">Search artist or title</label>
+        <input
+          class="palette__input"
+          id="palette-input"
+          type="text"
+          role="combobox"
+          autocomplete="off"
+          spellcheck="false"
+          aria-expanded="true"
+          aria-controls="palette-results"
+          placeholder="Search artist or title…">
+      </div>
+      <ul class="palette__results" id="palette-results" role="listbox" aria-label="Tracks"></ul>
+      <div class="palette__hint">
+        <span><kbd>↵</kbd> set as seed</span>
+        <span><kbd>⇧↵</kbd> details</span>
+        <span><kbd>↑↓</kbd> move</span>
+        <span><kbd>esc</kbd> close</span>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>
