@@ -23,6 +23,7 @@ This module must not import a UI toolkit or Essentia; see
 tests/web/test_no_heavy_imports.py.
 """
 
+import dataclasses
 import math
 import re
 from pathlib import Path
@@ -319,6 +320,44 @@ class CocoApi:
 
     def _track(self, query, track_id):
         return 200, {"track": self._detail(track_id)}
+
+    def _recommendations(self, query, track_id):
+        """Ranked recommendations for a seed track.
+
+        Emptiness is checked before the seed is looked up. Both errors are true
+        of a library with no index, and the 409 is the more informative one -
+        it says why nothing can be recommended rather than blaming the id. It
+        is also the only ordering under which the 409 is reachable at all:
+        ``LibrarySession.delete_tracks`` empties ``meta_ix`` along with the
+        index, so there is no such thing as a known track id in a library that
+        has none.
+        """
+        if self.library.is_empty:
+            raise empty_library()
+
+        seed = self._detail(track_id)
+
+        topk = _int_param(query, "topk", EXPLORE_TOPK)
+        final_top = _int_param(query, "final_top", EXPLORE_FINAL_TOP)
+        limit = _int_param(
+            query,
+            "limit",
+            DEFAULT_RECOMMENDATION_LIMIT,
+            MAX_RECOMMENDATION_LIMIT,
+        )
+
+        ranked = self.explore.recommend(track_id, topk=topk, final_top=final_top)
+
+        # Truncation happens HERE, after ranking, and `limit` is never passed
+        # as final_top. final_top decides the *membership* of the result by
+        # weighted score; the order is then by raw cosine (inventory §3.3).
+        # Confusing the two changes which tracks come back, not merely how many.
+        return 200, {
+            "seed": seed,
+            "recommendations": [
+                _jsonable(dataclasses.asdict(rec)) for rec in ranked[:limit]
+            ],
+        }
 
     # -- helpers -----------------------------------------------------------
 
