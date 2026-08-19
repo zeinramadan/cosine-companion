@@ -88,6 +88,10 @@ reference tracks by that same ID (`<TRACK Key="…"/>`, `KeyType="0"` on all pla
 
 - Join rate against the configured XML: **1307/1307 (100%)**.
 - TrackID stability verified across five exports spanning Oct–Nov 2025: 1106/1106 identical each time.
+- **Re-verified 2026-08-19 against a fresh export** (`data/library_export_190826.xml`, 1.46 MB):
+  all **1307/1307** of CoCo's indexed `track_id`s are still present, **zero missing**, across a
+  ~10-month gap. This is the strongest available evidence that the join key is durable, and it
+  removes the "re-exported XML changes TrackIDs" risk in §9 from the plausible list.
 - `xml_parser.py:26` already parses the whole tree and reads only `//COLLECTION/TRACK` —
   the `<PLAYLISTS>` half is loaded and discarded.
 - Full parse + reverse index of the 1.2 MB XML measured at **14 ms**.
@@ -193,17 +197,49 @@ Rekordbox XML → parse <PLAYLISTS> → playlists.parquet
 `playlists.parquet` — `playlist_id`, `name`, `folder_path`, `parent_id`, `entries`
 `playlist_membership.parquet` — `track_id`, `playlist_id`
 
-Two tables, **not** columns on `meta.parquet`: membership is many-to-many (mean 2.05, max 10
-playlists per track), and `meta.parquet` is rewritten wholesale in two places that would clobber
-it.
+Two tables, **not** columns on `meta.parquet`: membership is many-to-many, and `meta.parquet` is
+rewritten wholesale in two places that would clobber it.
 
-Sizes are trivial — ~2.7k membership rows, well under 100 KB.
+Measured on the 2026-08-19 export: **4,669 membership rows**, mean **3.18** playlists per
+indexed track, **max 21** (`Fireground — Never Sleep`). Still trivially small — well under
+200 KB — but the drawer must handle a 21-item list gracefully rather than assuming a handful.
+Earlier figures in this document (2.05 mean / max 10 / ~2.7k rows) came from the stale 67-playlist
+export and are superseded.
 
 ### 6.3 XML structure
 
 `<NODE Type="0">` = folder (attrs `Type`, `Name`, `Count`); `<NODE Type="1">` = playlist (attrs
-`Type`, `Name`, `Entries`, `KeyType`). Membership is `<TRACK Key="…"/>` children. Observed max
-nesting depth 3; all 67 playlist paths unique; zero duplicate leaf names.
+`Type`, `Name`, `Entries`, `KeyType`). Membership is `<TRACK Key="…"/>` children.
+
+Measured on the 2026-08-19 export — **these supersede the earlier 67-playlist figures**:
+
+| Property | Value |
+|---|---|
+| Playlists (`Type="1"`) | **141** |
+| Folders (`Type="0"`) | 14 (plus a single root node literally named `ROOT`) |
+| `KeyType` | `"0"` on **all 141** — membership is by TrackID, never by path |
+| Membership entries | 4,669, **100% resolvable** against the export's own collection (zero dangling `Key`s) |
+| Max nesting depth | **4** display segments (5 including `ROOT`) |
+| Full playlist paths | 141, **all unique** |
+| Duplicate leaf names | **36** |
+| Empty playlists | 0 |
+| `Entries` attribute vs actual `<TRACK>` children | 0 mismatches — the attribute is trustworthy |
+
+**Two consequences for the UI, both new:**
+
+1. **Folder path is mandatory, not decorative.** 36 playlist names are duplicated — `deep techno`,
+   `nibiru`, `hard 1hr` and 33 others each appear twice under different parents. Rendering the
+   bare leaf name would show the user two identical rows with no way to tell them apart. Full
+   paths are unique, so the drawer must render `Mischief / Collections–Hauls / biscuit (funk) /
+   hard 1hr`, not `hard 1hr`. The earlier claim of "zero duplicate leaf names" was true of the
+   stale export and is now false.
+2. **Strip the `ROOT` segment.** Every path begins with a single node literally named `ROOT`,
+   which is Rekordbox's container, not a folder the user made. It carries no information and
+   must not be displayed.
+
+Note a folder name contains a forward slash (`Collections/Hauls`), so ` / ` is ambiguous as a
+join separator. Store `folder_path` as a **list of segments** and let the UI join them, rather
+than persisting a pre-joined string.
 
 ### 6.4 Staleness
 
@@ -211,16 +247,25 @@ Persist `source_xml` and `imported_at` alongside the tables. Display provenance 
 ("from `242.xml`, imported 12 Aug"). Watch the XML's mtime; when it changes, **prompt** the user
 to re-import. **Never auto-import.**
 
-This matters concretely: the current export contains 67 playlists while the live Rekordbox
-library has 166.
+This matters concretely, and the 2026-08-19 re-export demonstrates the cost of staleness in both
+directions at once:
+
+| | Nov 2025 export | Aug 2026 export |
+|---|---:|---:|
+| Playlists | 67 | **141** |
+| Collection tracks | ~1,300 | **1,610** |
+| Membership entries | ~2.7k | **4,669** |
+
+**The configured `xml_path` still points at `data_backup/242.xml` (24 Nov 2025).** Until it is
+repointed, the app reads a nine-month-old snapshot missing more than half the playlists.
 
 ### 6.5 Edge cases
 
 | Case | Behaviour |
 |---|---|
-| Track in CoCo, in no playlist | Drawer shows "In 0 playlists" |
-| Track in Rekordbox but not CoCo | Not shown (CoCo's library is the universe) |
-| Playlist references an unknown TrackID | Ignored; counted in an import summary |
+| Track in CoCo, in no playlist | Drawer shows "In 0 playlists". Note: on the 2026-08-19 export **every one of the 1,307 indexed tracks is in at least one playlist**, so this state is unreachable with current data and must be covered by a fixture rather than by manual testing. |
+| Track in Rekordbox but not CoCo | Not shown (CoCo's library is the universe). **This is the common case, not an edge case:** the 2026-08-19 export holds 1,610 tracks against CoCo's 1,307 indexed, so **303 tracks** are Rekordbox-only. |
+| Playlist references an unknown TrackID | Ignored; counted in an import summary. Measured: **514 of 4,669 entries (11.01%)** resolve to a Rekordbox track CoCo has not indexed. The import summary must report this as *"514 entries reference tracks not in your library — reindex to include them"*, **not** as an error. Silently dropping 11% of membership would make playlist counts quietly wrong. |
 | No XML imported yet | Drawer shows an import call-to-action |
 | XML missing at recorded path | Show provenance + a re-pick action; do not crash |
 
