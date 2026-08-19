@@ -1960,6 +1960,66 @@ whose positions read 1, 2, 3, 5 — a visible gap in the rendered rows — plus
 shows. Pinned as current behaviour by
 `tests/web/test_api_set.py::test_the_same_track_anchored_twice_loses_the_second_anchor_and_its_slot`.
 
+**Known defect, declared here rather than fixed: the library can change under
+an in-flight operation, and nothing notices.** One defect, two places it shows.
+Neither is fixed in this PR, and both fixes belong to the same follow-up.
+
+*Half 1 — `SetBuilder.build` does not capture the library atomically.*
+`build` takes one `LibrarySession.snapshot()`, and `snapshot()`
+(`services/library_session.py:149-166`) is itself six unlocked sequential
+attribute reads; its own docstring says a delete landing between two of them can
+be observed half-applied. `delete_tracks` rebinds `_meta_ix`, then `_emb_ix`,
+then `_index` (`:202-224`), so the two run into each other from both directions.
+Reproduced on the twelve-track fixture library, `{1: f01}` over five tracks:
+
+| interleaving | result |
+| --- | --- |
+| delete lands between two of `snapshot()`'s reads — pre-delete `meta_ix`, post-delete `index` | the set changes silently, `['f01','f02','f03','f05','f04']` → `['f01','f02','f03','f12','f10']` |
+| the reader lands inside `delete_tracks`, after the `meta_ix` rebind (`:202`) and before the index rebuild (`:220`) — post-delete `meta_ix`, pre-delete `index` | `KeyError: 'f05'` out of `SetBuilder.build` |
+
+The second is the one that raises, and it is NOT the one a probe on
+`snapshot()`'s own reads produces — it needs the reader interleaved into the
+delete rather than the delete into the reader. Both are reachable for the same
+reason: a delete and a build are two requests served off the Tk main thread
+rather than two turns of one event loop.
+
+Round 2 shipped a test named
+`test_a_delete_between_the_property_reads_cannot_be_observed_half_applied`
+asserting this was closed. It was not. The test patched the PUBLIC `meta_ix`
+property and `snapshot()` reads the private attribute, so the delete never fired
+and `fired == []` recorded only that the capture went through `snapshot()`. The
+test is kept — the capture route is worth pinning — under a name that says so,
+and `SetBuilder.build`'s docstring no longer claims the capture narrowed the
+window from three reads to one. It never did: the previous code read the three
+properties as three arguments of one call, which is already one window per
+build. The per-seed-to-per-run reduction is `ExportService`'s alone.
+
+*Half 2 — the Set Creator's `configurationKey()` does not capture the library.*
+`configurationKey()` (`set-creator.js:154-186`) is a derived key over the
+anchors and the parsed length. That covers every input of the REQUEST — `POST
+/api/set` takes exactly those two fields (`web/api.py:325-339`) — and none of
+the server state the answer also depends on. Refresh the Library destination
+while a generation is outstanding and the anchors and the length are unchanged,
+so the key compares EQUAL and a set built against a library that has since moved
+on is accepted and rendered. A sequence counter would not have caught this
+either: it is a missing INPUT, not a misplaced bump site.
+
+It cannot be closed from the frontend as the API stands. `POST /api/set` returns
+`{tracks: [...]}` with no library identity, and `GET /api/library` exposes
+`track_count` but no revision — and a count is not a revision, since a delete
+followed by a reindex restores it.
+
+*The fix, for both halves: atomic publish in `LibrarySession`.* One immutable
+snapshot object rebound as a unit, so a reader's single attribute read is atomic
+by construction and the object it gets can carry the revision the response needs
+to echo. This codebase has used that shape three times already — PR #15 (the
+transitions vector cache, built privately and published by rebinding an
+immutable tuple), PR #17 (`_Generation` + `MappingProxyType`) and PR #19
+(generation files behind a manifest pointer). It is deliberately not in this PR:
+it rewrites `delete_tracks`, which the sibling Library PR also rewrites, and a
+core-services concurrency change deserves its own review rather than riding
+inside a UI destination.
+
 *The 2.76 s at :511-512 is no longer the number.* That figure was captured
 before the transition-vector work. Measured on this branch against the same
 `SetBuilder` the Tkinter tab calls, on the 1,532-track library: a 30-track set

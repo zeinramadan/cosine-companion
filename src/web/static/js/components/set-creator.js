@@ -150,7 +150,35 @@ export function mountSetCreator({ store }) {
    * and touching the field without changing the number it holds should not
    * discard an answer that is still correct. `null` for a length that does not
    * parse is a value like any other - a build cannot have been started from
-   * one, so a key holding it can only ever compare unequal. */
+   * one, so a key holding it can only ever compare unequal.
+   *
+   * WHAT THE KEY DOES NOT COVER: THE LIBRARY. Declared, not fixed.
+   * The key covers every input of the REQUEST - `POST /api/set` takes exactly
+   * `anchors` and `total_tracks` (`web/api.py:325-339`) and both are in here,
+   * with no component-local seed, sort or exclusion hiding behind them. It
+   * covers none of the SERVER STATE the answer also depends on. The generated
+   * set is a function of the library too, and the library is mutable: the
+   * sibling Library destination's DELETE lands on the same session this build
+   * is reading.
+   *
+   * So a refresh on the Library destination while a generation is outstanding
+   * leaves the anchors and the length untouched, the key compares EQUAL, and a
+   * set built against a library that no longer exists is accepted and
+   * rendered. A counter would not have caught it either - this is not the bug
+   * PR #14 fixed, it is a different input missing from the oracle entirely.
+   *
+   * It cannot be closed from here. The response is `{tracks: [...]}` and
+   * carries no library identity, and `GET /api/library` exposes `track_count`
+   * but no revision - and a count is not a revision, because a delete followed
+   * by a reindex can restore it. The robust form is this semantic key PLUS a
+   * library revision, or explicit invalidation when the library mutates; the
+   * first needs new response surface and the second needs the sibling PR's
+   * delete path, and this PR owns neither.
+   *
+   * Inventory §6.6 records it together with the SetBuilder snapshot window,
+   * because they are one defect wearing two hats: the library can change under
+   * an in-flight operation and nothing notices. Both are fixed in the
+   * follow-up that gives `LibrarySession` an atomically published snapshot. */
   function configurationKey() {
     return JSON.stringify([
       anchorPositions().map((position) => [position, anchors[position].track_id]),
