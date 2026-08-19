@@ -143,6 +143,40 @@ export function wholePercent(value) {
   return below % 2 === 0 ? below : below + 1;
 }
 
+/* The characters Python's `int()` strips from the ends of its argument.
+ *
+ * NOT `String.prototype.trim()`, which differs from it in both directions: it
+ * leaves U+0085 NEXT LINE in place, and it strips U+FEFF, which Python does
+ * not. Enumerated by running `int()` over every code point rather than written
+ * from memory - `tests/web/test_integer_parsing_matches_python.py` re-derives
+ * this whole function's answers from CPython, and those two are the characters
+ * only such a check would ever find. */
+const PYTHON_SPACE =
+  '\\t\\n\\v\\f\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000';
+const SURROUNDING_SPACE = new RegExp(`^[${PYTHON_SPACE}]+|[${PYTHON_SPACE}]+$`, 'g');
+
+/* Python's decimal-literal grammar: an optional sign, then digits carrying
+ * single underscores BETWEEN them - never leading, never trailing, never
+ * doubled. `\p{Nd}` is the character class `int()` accepts, which is every
+ * Unicode decimal digit and not only `0-9`. */
+const PYTHON_INTEGER = /^([+-]?)(\p{Nd}(?:_?\p{Nd})*)$/u;
+
+const DECIMAL_DIGIT = /\p{Nd}/u;
+
+/** The value of one Unicode decimal digit, an Arabic-Indic seven as readily as `7`. */
+function decimalValue(character) {
+  const code = character.codePointAt(0);
+  // Decimal digits are laid out in blocks of ten whose first member is the
+  // zero, and consecutive blocks can be adjacent - U+1D7CE..U+1D7FF is five of
+  // them with no gap - so the offset is taken from the start of the contiguous
+  // run and reduced modulo ten rather than from the previous non-digit.
+  let start = code;
+  while (start > 0 && DECIMAL_DIGIT.test(String.fromCodePoint(start - 1))) {
+    start -= 1;
+  }
+  return (code - start) % 10;
+}
+
 /**
  * `int(text)` as Python performs it, or `null` when it would raise ValueError.
  *
@@ -153,16 +187,44 @@ export function wholePercent(value) {
  * and `"3.9"`. Python accepts none of those, and it DOES accept surrounding
  * whitespace and a leading sign.
  *
+ * THE CONTRACT IS PYTHON'S, INCLUDING THE PARTS THAT LOOK LIKE QUIRKS.
+ * An earlier version of this function said exactly that and then implemented
+ * `/^[+-]?\d+$/`, which is JavaScript's answer wearing Python's description: it
+ * refused `"1_0"`, which `int()` reads as 10, and it refused every non-ASCII
+ * decimal digit. The second one is not hypothetical here. `int()` reads an
+ * Arabic-Indic ten as 10, an Arabic keyboard layout on macOS is what produces
+ * those digits when you type a ten, and this library's owner has one - so the
+ * narrow version answered "Please enter a valid number for total tracks." to a
+ * length the Tkinter tab would have generated without comment. Both are fixed
+ * by reading the grammar `int()` reads.
+ *
+ * The one place it still stops short of `int()` is magnitude: Python's integers
+ * are unbounded and these arrive as a JavaScript number, so a value past
+ * `Number.MAX_SAFE_INTEGER` loses precision. `Number.parseInt` did too, and
+ * both are some fifteen orders of magnitude past `MAX_SET_TRACKS`.
+ *
  * The sign matters for the ORDER of §2.12's checks: `"-2"` has to parse so the
  * next rule can reject it as "Position must be 1 or greater" (:963) rather than
  * this one rejecting it as "not a valid position number" (:962).
  */
 export function parseIntegerStrictly(text) {
-  const trimmed = String(text === null || text === undefined ? '' : text).trim();
-  if (!/^[+-]?\d+$/.test(trimmed)) {
+  const stripped = String(text === null || text === undefined ? '' : text).replace(
+    SURROUNDING_SPACE,
+    '',
+  );
+  const match = PYTHON_INTEGER.exec(stripped);
+  if (!match) {
     return null;
   }
-  return Number.parseInt(trimmed, 10);
+
+  let value = 0;
+  // By code point, so an astral digit such as U+1D7CE counts as one character.
+  for (const character of match[2]) {
+    if (character !== '_') {
+      value = value * 10 + decimalValue(character);
+    }
+  }
+  return match[1] === '-' ? -value : value;
 }
 
 /** BPM is a float64 column, so it always renders with a decimal (`128.0`). */
