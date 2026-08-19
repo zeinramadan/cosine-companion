@@ -448,11 +448,26 @@ def test_the_drawer_renders_playlists_from_the_field_it_is_given():
     What replaces it keeps the two properties the original was protecting -
     the drawer invents nothing, and it does not reach for an endpoint that does
     not exist - and adds the ones that matter now.
+
+    THIS IS A SOURCE-TEXT CHECK, AND ONLY A SOURCE-TEXT CHECK
+    ---------------------------------------------------------
+    Everything below greps drawer.js. That is worth having - it is where the
+    convention tests live and it reads as documentation of the decision - but
+    it does not establish what the drawer DOES. A drawer that builds the path
+    at runtime (``'/api/pl' + 'aylists'``) passes every assertion here.
+
+    The behavioural half is
+    ``tests/web/js/drawer_playlists.test.mjs`` -> "no playlist state makes the
+    drawer call any endpoint but track detail", which mounts the real module
+    and reads back every request it makes across all five playlist states. That
+    mutant turns those red and leaves this one green, which is the whole reason
+    both exist.
     """
     body = read(JS / "components" / "drawer.js")
 
-    # Still no endpoint: the field rides on the track detail the drawer already
-    # fetches, so no route was added and none is called.
+    # Still no endpoint, as a matter of source text: the field rides on the
+    # track detail the drawer already fetches, so no route was added. That it
+    # is not CALLED is pinned in the JS suite named above, not here.
     assert "/api/playlists" not in body
     assert "Playlist membership arrives in the next update." not in body
 

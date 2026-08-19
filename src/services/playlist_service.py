@@ -16,7 +16,8 @@ one whose cost lands on the wrong interaction.
 
 DEGRADES, NEVER CRASHES
 -----------------------
-Four states are reachable and all four are answers, not errors:
+Every state below is reachable, and every one of them is an answer rather
+than an error:
 
 * the tables do not exist (nothing imported yet) -> ``lookup(...).imported`` is
   False and ``playlists`` is ``None``;
@@ -28,7 +29,10 @@ Four states are reachable and all four are answers, not errors:
   1,307-track library and is now false;
 * the recorded ``source_xml`` is gone from disk -> ``source_missing``, with the
   provenance still shown;
-* the tables are corrupt or half-written -> read as "nothing imported".
+* the tables are corrupt, half-written, a MIXED GENERATION from an import that
+  was interrupted between two of its three writes, or written to a schema this
+  build does not read -> all of them read as "nothing imported". Not one of
+  them raises; ``reload`` is a funnel of guards and every one of them returns.
 
 NO MODULE-LEVEL HEAVY IMPORTS
 -----------------------------
@@ -51,6 +55,7 @@ from core.playlist_store import (
     digest_file,
     read_playlist_tables,
     read_provenance,
+    tables_match,
 )
 
 #: What the drawer tells the user to run when nothing has been imported, and
@@ -137,27 +142,65 @@ class PlaylistService:
     # -- loading -----------------------------------------------------------
 
     def reload(self) -> None:
-        """Re-read both tables and rebuild the reverse index."""
+        """Re-read both tables and rebuild the reverse index.
+
+        Every failure below leaves the service in exactly the state it starts
+        this method in - no provenance, no index - which is the "nothing
+        imported" answer the drawer already knows how to render. That is why
+        ``_provenance`` is assigned at the very END and not at the top: a
+        function whose early return has to remember to undo an assignment is a
+        function that will one day forget, and the thing it would leak into is
+        ``GET /api/tracks/{id}``, the request every drawer open makes.
+
+        The order is a funnel, cheapest and most decisive first:
+
+        1. **no usable manifest** - absent, malformed, or a schema this build
+           does not know. Nothing is read from the tables at all; there is
+           nothing to say about bytes whose provenance cannot be read.
+        2. **the tables are not the ones the manifest was committed for** - a
+           mixed generation from an interrupted import. See ``tables_match``.
+        3. **the tables cannot be read, or have not got the columns this build
+           reads** - see ``read_playlist_tables``.
+        4. **the rows will not build an index** - a column of the right name
+           holding something unusable.
+        """
         self._loaded = True
         self._by_track = {}
-        self._provenance = read_provenance(self.data_dir)
+        self._provenance = None
+
+        provenance = read_provenance(self.data_dir)
+        if provenance is None:
+            return
+
+        if not tables_match(self.data_dir, provenance):
+            return
 
         try:
             tables = read_playlist_tables(self.data_dir)
         except Exception:  # noqa: BLE001 - a corrupt table is "nothing imported"
-            tables = None
-
+            return
         if tables is None:
-            self._provenance = None
             return
 
         playlists, membership = tables
         try:
             refs = self._build_refs(playlists)
-            self._by_track = self._build_reverse_index(membership, refs)
-        except (KeyError, TypeError, ValueError):
-            self._by_track = {}
-            self._provenance = None
+            by_track = self._build_reverse_index(membership, refs)
+        except Exception:  # noqa: BLE001
+            # Broad on purpose, and the narrow tuple that was here before is
+            # the defect this replaces: it named KeyError, TypeError and
+            # ValueError, and a table whose COLUMNS were not the expected ones
+            # raised AttributeError out of `row.playlist_id`, straight through
+            # this handler and out of the track-detail endpoint as a 500. The
+            # contract of this module is that it degrades, so the handler has
+            # to be the whole of what "the tables did not work out" can raise -
+            # including whatever a future pandas or pyarrow decides to throw.
+            return
+
+        # Committed together, last: until here, this service reports that
+        # nothing has been imported.
+        self._by_track = by_track
+        self._provenance = provenance
 
     @staticmethod
     def _build_refs(playlists) -> Dict[str, Tuple[int, PlaylistRef]]:

@@ -50,6 +50,7 @@ that resolution and reports the count.
 import hashlib
 import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from lxml import etree
@@ -168,8 +169,24 @@ def parse_playlists(xml_path) -> ParsedPlaylists:
     rather than an error: that is a Rekordbox export with nothing in it, not a
     corrupt file, and the caller's summary says "0 playlists" either way.
     """
-    tree = etree.parse(str(xml_path))
-    return parse_playlists_element(tree.getroot().find("PLAYLISTS"))
+    return parse_playlists_bytes(Path(xml_path).read_bytes())
+
+
+def parse_playlists_bytes(data: bytes) -> ParsedPlaylists:
+    """The same parse, over a buffer that has already been read from a file.
+
+    ``services.playlist_import`` hashes the export and parses it, and those two
+    have to be the same bytes: reading twice let a re-export land in between,
+    after which the manifest recorded the digest of a file the tables were not
+    built from and the staleness check reported "fresh" for data that did not
+    match. So the importer reads once and passes the buffer here.
+
+    BYTES, NOT ``str``. lxml refuses a ``str`` carrying an encoding
+    declaration, and every Rekordbox export opens with one. The declaration is
+    also how the document's encoding is known, so decoding first and re-encoding
+    would be guessing at something the file already states.
+    """
+    return parse_playlists_element(etree.fromstring(data).find("PLAYLISTS"))
 
 
 def parse_playlists_element(playlists_element) -> ParsedPlaylists:

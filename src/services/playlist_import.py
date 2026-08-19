@@ -43,8 +43,8 @@ from typing import List, Optional, Tuple
 
 from core.playlist_store import (
     PlaylistProvenance,
-    describe_source,
     playlist_file_paths,
+    read_source,
     resolve_membership,
     write_playlist_tables,
 )
@@ -159,7 +159,7 @@ def import_playlists(
     # ``processing``, whose package __init__ pulls in the indexing pipeline;
     # keeping it local means merely importing this service costs nothing and
     # does not require lxml to be installed.
-    from processing.playlist_parser import parse_playlists
+    from processing.playlist_parser import parse_playlists_bytes
 
     xml_path = Path(xml_path).resolve()
     if data_dir is None:
@@ -168,10 +168,17 @@ def import_playlists(
         data_dir = DATA
     data_dir = Path(data_dir)
 
-    parsed = parse_playlists(xml_path)
+    # ONE read, hashed and parsed. The export used to be opened twice - once
+    # by the parser and once by the digest - and Rekordbox rewrites this file
+    # whenever the user re-exports, so a re-export landing between the two
+    # reads left the tables holding one version and the manifest recording the
+    # digest of another. ``staleness()`` then said "fresh" about data that did
+    # not match the file on disk, which is precisely the lie the manifest
+    # exists to make impossible. 1.5 MB in memory is free.
+    data, sha256, size_bytes, mtime = read_source(xml_path)
+    parsed = parse_playlists_bytes(data)
     membership = parsed.membership
 
-    sha256, size_bytes, mtime = describe_source(xml_path)
     stamp = now if now is not None else datetime.now(timezone.utc)
     provenance = PlaylistProvenance(
         source_xml=str(xml_path),
@@ -183,7 +190,11 @@ def import_playlists(
         membership_count=len(membership),
     )
 
-    write_playlist_tables(data_dir, parsed.playlists, membership, provenance)
+    # The record that comes back is the one on disk: it carries the digests of
+    # the two tables just committed, which are only knowable after the write.
+    provenance = write_playlist_tables(
+        data_dir, parsed.playlists, membership, provenance
+    )
 
     indexed, indexed_count = _indexed_track_ids(data_dir)
     resolved, unresolved = resolve_membership(membership, indexed)

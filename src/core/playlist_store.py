@@ -37,9 +37,10 @@ here is cast to ``str`` on the way in and asserted on the way out.
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass
+import os
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
 
@@ -51,8 +52,18 @@ PLAYLIST_COLUMNS = ["playlist_id", "name", "folder_path", "parent_id", "entries"
 MEMBERSHIP_COLUMNS = ["track_id", "playlist_id"]
 
 #: Bumped when the on-disk shape changes. A record written by a newer schema is
-#: treated as absent rather than misread.
-PROVENANCE_SCHEMA = 1
+#: treated as absent rather than misread - and so is one written by an OLDER
+#: one, which is what makes the bump safe. 2 adds the two table digests that
+#: make a mixed generation detectable; a schema-1 record does not carry them,
+#: cannot be checked, and is therefore read as "nothing imported" rather than
+#: trusted. The cost of the bump is one re-import, which is the command the
+#: drawer is already showing in that state.
+PROVENANCE_SCHEMA = 2
+
+#: Appended to a file's name while it is being written. A crash leaves this
+#: beside the real file rather than on top of it; nothing reads it, and the
+#: next import overwrites it.
+STAGING_SUFFIX = ".importing"
 
 #: Read in blocks rather than whole: the export is 1.5 MB today and there is no
 #: reason for the digest to be the thing that caps how big it may get.
@@ -111,6 +122,21 @@ class PlaylistProvenance:
     ``source_bytes`` and ``source_mtime`` are recorded anyway - not as the
     check, but because "the file is 200 KB now and was 1.5 MB then" is the
     first thing a human wants when the digest disagrees.
+
+    THE RECORD ALSO NAMES ITS OWN TABLES, WHICH IS WHAT MAKES IT THE COMMIT
+    ----------------------------------------------------------------------
+    ``playlists_sha256`` and ``membership_sha256`` are the digests of the two
+    parquet files this record was committed FOR. Three files cannot be replaced
+    in one atomic step, so the guarantee is not that an interrupted import is
+    impossible - it is that an interrupted import is DETECTABLE. This record is
+    written last, and a reader that finds tables whose digests are not these
+    two is looking at a mixed generation and treats it as nothing imported.
+    See ``write_playlist_tables`` and ``tables_match``.
+
+    They are digests rather than the row counts already recorded beside them
+    because a count answers "how many rows" and the question is "are these the
+    same bytes". ``playlist_count`` and ``membership_count`` stay as the
+    human-readable record they always were.
     """
 
     source_xml: str
@@ -120,6 +146,11 @@ class PlaylistProvenance:
     imported_at: str
     playlist_count: int
     membership_count: int
+    #: Filled in by ``write_playlist_tables`` once the bytes it is committing
+    #: exist. Empty on a record that has been built but not yet committed,
+    #: which is a state no reader ever sees.
+    playlists_sha256: str = ""
+    membership_sha256: str = ""
     schema_version: int = PROVENANCE_SCHEMA
 
     @property
@@ -136,11 +167,41 @@ class PlaylistProvenance:
         return asdict(self)
 
 
-def describe_source(xml_path) -> Tuple[str, int, float]:
-    """``(sha256, size_bytes, mtime)`` for an XML export on disk."""
-    path = Path(xml_path)
-    stat = path.stat()
-    return digest_file(path), int(stat.st_size), float(stat.st_mtime)
+def read_source(xml_path) -> Tuple[bytes, str, int, float]:
+    """``(bytes, sha256, size_bytes, mtime)`` from ONE read of the export.
+
+    Replaces a ``describe_source`` that opened the file a second time to hash
+    it. Rekordbox rewrites its export whenever the user re-exports, and an
+    import takes long enough for that to land between two reads - after which
+    the tables held one version and the manifest recorded the digest of
+    another, and ``PlaylistService.staleness`` reported "fresh" for data that
+    did not match the file. A false *stale* costs a re-import; a false *fresh*
+    is the drawer lying, which is the failure this whole record exists to
+    prevent.
+
+    So the caller gets the bytes back, and hashes and parses the SAME buffer.
+    The digest describes exactly what was parsed, by construction rather than
+    by timing. The real export is 1.5 MB, so holding it is free.
+
+    ``size_bytes`` is ``len(data)`` and not ``st_size`` for the same reason,
+    and the ``stat`` comes from the open descriptor rather than the path, so
+    all four values describe one file at one moment.
+    """
+    with open(xml_path, "rb") as handle:
+        data = handle.read()
+        stat = os.fstat(handle.fileno())
+    return data, hashlib.sha256(data).hexdigest(), len(data), float(stat.st_mtime)
+
+
+def _stage(path: Path, write: Callable[[Path], None]) -> Tuple[Path, str]:
+    """Write through a sibling temp file. Returns ``(staged path, its digest)``.
+
+    The digest is taken from the bytes that actually landed, not from the frame
+    that produced them, so nothing here assumes a parquet write is reproducible.
+    """
+    staged = path.with_name(path.name + STAGING_SUFFIX)
+    write(staged)
+    return staged, digest_file(staged)
 
 
 def write_playlist_tables(
@@ -148,17 +209,48 @@ def write_playlist_tables(
     playlists: Sequence,
     membership: Sequence[Tuple[str, str]],
     provenance: PlaylistProvenance,
-) -> Tuple[Path, Path, Path]:
-    """Write both tables and the provenance record. Returns the three paths.
+) -> PlaylistProvenance:
+    """Write both tables and the provenance record. Returns the record committed.
 
     ``playlists`` is a sequence of ``processing.playlist_parser.ParsedPlaylist``
     (anything with the same five attributes will do; this module deliberately
     does not import the parser, so that reading the tables never needs lxml).
 
-    Not atomic, and deliberately consistent with the rest of the project:
-    ``LibrarySession._persist`` writes its four files the same way. What is
-    different here is that these three files are *derived* - a half-written set
-    is repaired by re-running the import, not by restoring a backup.
+    The returned record is not the one passed in: it carries the two table
+    digests, which cannot be known until the tables have been written.
+
+    STAGED, THEN COMMITTED, WITH THE MANIFEST LAST
+    ----------------------------------------------
+    All three files are written under ``STAGING_SUFFIX`` names first, then moved
+    into place with ``os.replace``, which is atomic per file on one filesystem.
+    Three files still cannot be replaced in one step, so the property being
+    bought is not "an interrupted import leaves nothing behind" - it is **an
+    interrupted import can never be reported as imported**:
+
+    * die before any ``os.replace`` - the previous generation is intact, and its
+      manifest still names its own two tables. Nothing changed.
+    * die between the two table replaces, or after both and before the manifest
+      - the manifest on disk is the PREVIOUS one, and it names the previous
+      tables. At least one table has been replaced, so at least one digest
+      disagrees, and ``tables_match`` rejects the pair. The reader answers
+      "nothing imported" and the drawer shows the import command.
+    * die after the manifest replace - there is nothing left to do; all three
+      files are the new generation and their digests agree.
+
+    The manifest is therefore the commit point, and it is the last write. A
+    reader can never see a manifest that outruns its tables.
+
+    The cost is honest and stated: an interrupted import loses the PREVIOUS
+    import too, because the reader cannot tell which half of a mixed pair is
+    old. Re-running the command repairs it, which is what the "nothing
+    imported" state already tells the user to do. Keeping two generations side
+    by side to avoid that is a rollback log, and this is three derived files.
+
+    NOT fsync'd, deliberately. fsync would change WHICH generation survives a
+    power cut; it cannot change whether an inconsistent one is trusted, because
+    the check is over content and not over ordering. A manifest that lands
+    while a table's blocks do not simply fails its digest, exactly like any
+    other mixed generation.
     """
     playlists_pq, membership_pq, provenance_json = playlist_file_paths(data_dir)
     playlists_pq.parent.mkdir(parents=True, exist_ok=True)
@@ -193,13 +285,53 @@ def write_playlist_tables(
     # the join against meta.parquet is by exact string.
     membership_frame = membership_frame.astype({"track_id": "object", "playlist_id": "object"})
 
-    playlist_frame.to_parquet(playlists_pq, index=False)
-    membership_frame.to_parquet(membership_pq, index=False)
-    provenance_json.write_text(
-        json.dumps(provenance.as_dict(), indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-    return playlists_pq, membership_pq, provenance_json
+    staged: List[Path] = []
+    try:
+        staged_playlists, playlists_sha256 = _stage(
+            playlists_pq, lambda target: playlist_frame.to_parquet(target, index=False)
+        )
+        staged.append(staged_playlists)
+        staged_membership, membership_sha256 = _stage(
+            membership_pq, lambda target: membership_frame.to_parquet(target, index=False)
+        )
+        staged.append(staged_membership)
+
+        committed = replace(
+            provenance,
+            playlists_sha256=playlists_sha256,
+            membership_sha256=membership_sha256,
+        )
+        staged_manifest, _ = _stage(
+            provenance_json,
+            lambda target: target.write_text(
+                json.dumps(committed.as_dict(), indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            ),
+        )
+        staged.append(staged_manifest)
+
+        # The commit. Tables first, manifest last - see the docstring.
+        os.replace(staged_playlists, playlists_pq)
+        os.replace(staged_membership, membership_pq)
+        os.replace(staged_manifest, provenance_json)
+    except BaseException:
+        # Including KeyboardInterrupt: a cancelled import should not leave its
+        # scratch files in the user's data directory either. A staged file that
+        # was already committed has been renamed away and is simply not there,
+        # so this is the same statement for both halves of the try.
+        #
+        # A SIGKILL or a power cut runs none of this, and can leave the scratch
+        # files behind. They are inert: nothing reads a STAGING_SUFFIX name,
+        # the names are fixed rather than unique, and the next import writes
+        # straight over them.
+        for leftover in staged:
+            try:
+                leftover.unlink()
+            except OSError:
+                pass
+        raise
+
+    return committed
 
 
 def read_provenance(data_dir) -> Optional[PlaylistProvenance]:
@@ -231,16 +363,63 @@ def read_provenance(data_dir) -> Optional[PlaylistProvenance]:
             imported_at=str(raw["imported_at"]),
             playlist_count=int(raw["playlist_count"]),
             membership_count=int(raw["membership_count"]),
+            # Required, not defaulted: a schema-2 record without them is one
+            # nothing can check, and an uncheckable record is not usable.
+            playlists_sha256=str(raw["playlists_sha256"]),
+            membership_sha256=str(raw["membership_sha256"]),
         )
     except (KeyError, TypeError, ValueError):
         return None
 
 
-def read_playlist_tables(data_dir) -> Optional[Tuple[pd.DataFrame, pd.DataFrame]]:
-    """``(playlists, membership)`` as DataFrames, or ``None`` if either is absent.
+def tables_match(data_dir, provenance: PlaylistProvenance) -> bool:
+    """Whether the two tables on disk are the ones ``provenance`` was committed for.
 
-    Both or neither: a playlist table with no membership table is not a state
-    the writer can produce, and half of the answer is worse than none.
+    The check that turns "an import can be interrupted" into "an interrupted
+    import cannot be reported as imported". A mixed generation - a new table
+    beside an old one, from an import that died between two ``os.replace``
+    calls - fails here, and its reader answers "nothing imported" rather than
+    serving a playlist table and a membership table that disagree.
+
+    A missing or unreadable table is False for the same reason: the manifest
+    names bytes that are not there.
+
+    Two SHA-256 passes over two small files, and it runs once per ``reload``
+    rather than once per lookup. Measured on the real export - 141 playlists
+    and 4,669 entries, which is 8.3 KB of playlists.parquet and 25.3 KB of
+    playlist_membership.parquet - **0.045 ms**, against the 0.57 ms the
+    staleness digest of the 1.5 MB XML already costs on the same request.
+    """
+    playlists_pq, membership_pq, _ = playlist_file_paths(data_dir)
+    try:
+        return (
+            digest_file(playlists_pq) == provenance.playlists_sha256
+            and digest_file(membership_pq) == provenance.membership_sha256
+        )
+    except OSError:
+        return False
+
+
+def read_playlist_tables(data_dir) -> Optional[Tuple[pd.DataFrame, pd.DataFrame]]:
+    """``(playlists, membership)`` as DataFrames, or ``None`` when unusable.
+
+    Unusable means either file is absent, or either is missing a column this
+    build reads. Both or neither: a playlist table with no membership table is
+    not a state the writer can produce, and half of the answer is worse than
+    none.
+
+    THE COLUMN CHECK IS WHY A FUTURE SCHEMA CANNOT 500 THE DRAWER
+    -------------------------------------------------------------
+    A parquet file that reads perfectly well and simply does not have the
+    columns this build wants - what renaming one in a later PR produces - used
+    to reach ``PlaylistService._build_refs`` and raise ``AttributeError`` out
+    of ``row.playlist_id``. That is a 500 on ``GET /api/tracks/{id}``, which is
+    the request the drawer makes for everything, so a schema change would have
+    broken track detail entirely rather than merely losing playlists.
+
+    A SUPERSET is fine and deliberate: a later schema that ADDS a column is
+    still readable by this one, and only a column this build needs and cannot
+    find is a refusal.
     """
     playlists_pq, membership_pq, _ = playlist_file_paths(data_dir)
     if not playlists_pq.is_file() or not membership_pq.is_file():
@@ -248,6 +427,10 @@ def read_playlist_tables(data_dir) -> Optional[Tuple[pd.DataFrame, pd.DataFrame]
 
     playlists = pd.read_parquet(playlists_pq)
     membership = pd.read_parquet(membership_pq)
+    if not set(PLAYLIST_COLUMNS).issubset(playlists.columns):
+        return None
+    if not set(MEMBERSHIP_COLUMNS).issubset(membership.columns):
+        return None
     return playlists, membership
 
 

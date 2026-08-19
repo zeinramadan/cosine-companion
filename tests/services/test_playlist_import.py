@@ -20,6 +20,7 @@ import pytest
 
 from playlist_fixtures import (
     FIXTURE_MEMBERSHIP_COUNT,
+    FIXTURE_XML,
     FIXTURE_PLAYLISTS,
     FIXTURE_RESOLVED,
     FIXTURE_TRACK_IDS,
@@ -35,9 +36,11 @@ from core.playlist_store import (
     PROVENANCE_FILENAME,
     PROVENANCE_SCHEMA,
     playlist_file_paths,
+    read_playlist_tables,
     read_provenance,
 )
 from services.playlist_import import import_playlists, playlist_tables_exist
+from services.playlist_service import PlaylistService
 
 #: The four files this PR must never write. Named here rather than imported so
 #: a rename in the source cannot quietly shrink the check.
@@ -221,7 +224,7 @@ def test_the_provenance_json_is_readable_by_a_human(summary, data_dir):
     """It is the one file in this feature somebody may have to read by hand."""
     raw = json.loads((data_dir / PROVENANCE_FILENAME).read_text(encoding="utf-8"))
 
-    assert raw["schema_version"] == 1
+    assert raw["schema_version"] == 2
     assert set(raw) == {
         "source_xml",
         "source_sha256",
@@ -230,8 +233,160 @@ def test_the_provenance_json_is_readable_by_a_human(summary, data_dir):
         "imported_at",
         "playlist_count",
         "membership_count",
+        "playlists_sha256",
+        "membership_sha256",
         "schema_version",
     }
+
+
+def test_the_manifest_records_the_digests_of_the_tables_beside_it(summary, data_dir):
+    """The commit record names its own two tables.
+
+    Recomputed here with hashlib against the files on disk, not read back out
+    of the writer. This pair is what makes a mixed generation - one table from
+    an interrupted import beside another from the one before it - detectable
+    rather than merely unlikely.
+    """
+    raw = json.loads((data_dir / PROVENANCE_FILENAME).read_text(encoding="utf-8"))
+
+    assert raw["playlists_sha256"] == hashlib.sha256(
+        (data_dir / PLAYLISTS_FILENAME).read_bytes()
+    ).hexdigest()
+    assert raw["membership_sha256"] == hashlib.sha256(
+        (data_dir / MEMBERSHIP_FILENAME).read_bytes()
+    ).hexdigest()
+
+
+def test_a_manifest_without_the_table_digests_reads_as_absent(summary, data_dir):
+    """A schema-2 record that cannot be checked is not a record worth trusting.
+
+    The two digest keys are read with ``raw[...]`` and not ``raw.get(...)`` on
+    purpose: a manifest missing them - hand-edited, or written by something
+    that only knew the older shape - would otherwise compare its empty default
+    against a real digest, fail, and be reported as a mixed generation. Absent
+    is the honest answer, and it is the same one the drawer already renders.
+    """
+    path = data_dir / PROVENANCE_FILENAME
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    del raw["membership_sha256"]
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    assert read_provenance(data_dir) is None
+
+
+def test_read_playlist_tables_refuses_a_table_missing_a_column_it_reads(
+    summary, data_dir
+):
+    """The column check, on its own, at the level it lives at.
+
+    ``PlaylistService.reload`` also has a broad handler around the index build,
+    so a service-level test alone would still pass with this check deleted -
+    the handler would simply catch the AttributeError instead. Testing the
+    guard where it is means both layers have to stay.
+    """
+    frame = pd.read_parquet(data_dir / PLAYLISTS_FILENAME).rename(
+        columns={"playlist_id": "id"}
+    )
+    frame.to_parquet(data_dir / PLAYLISTS_FILENAME, index=False)
+
+    assert read_playlist_tables(data_dir) is None
+
+
+def test_read_playlist_tables_accepts_a_table_that_has_gained_a_column(
+    summary, data_dir
+):
+    """Subset, not equality: an added column is not a reason to refuse."""
+    frame = pd.read_parquet(data_dir / MEMBERSHIP_FILENAME)
+    frame["added_later"] = 1
+    frame.to_parquet(data_dir / MEMBERSHIP_FILENAME, index=False)
+
+    tables = read_playlist_tables(data_dir)
+
+    assert tables is not None
+    assert len(tables[1]) == FIXTURE_MEMBERSHIP_COUNT
+
+
+def test_the_recorded_digest_describes_the_bytes_THAT_WERE_PARSED(tmp_path, monkeypatch):
+    """A re-export landing mid-import cannot make the manifest describe a file
+    the tables were not built from.
+
+    The import used to read the export twice - once to parse it, once to hash
+    it - and Rekordbox rewrites that file every time the user re-exports. A
+    rewrite between the two reads left the tables holding version A and the
+    manifest holding the digest of version B, after which
+    ``PlaylistService.staleness`` reported **fresh** for data that did not
+    match the file. A false "stale" costs a re-import; a false "fresh" is the
+    drawer confidently showing playlists that no longer exist, which is the one
+    failure this manifest exists to rule out.
+
+    The fix is to read once and hash and parse the same buffer, so the wrapper
+    below - which lets the re-export land at the widest point the window could
+    ever be, the instant of the parse - changes nothing about what is recorded.
+    """
+    import processing.playlist_parser as parser
+
+    xml = write_fixture_xml(tmp_path / "export.xml")
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    renamed = FIXTURE_XML.replace('Name="top level"', 'Name="renamed top"')
+    assert renamed != FIXTURE_XML
+
+    original = parser.parse_playlists_bytes
+
+    def parse_then_let_a_re_export_land(data):
+        parsed = original(data)
+        xml.write_text(renamed, encoding="utf-8")
+        return parsed
+
+    monkeypatch.setattr(
+        parser, "parse_playlists_bytes", parse_then_let_a_re_export_land
+    )
+    summary = import_playlists(xml, data_dir=data_dir, now=FIXED_CLOCK)
+
+    # The tables hold the version that was parsed...
+    names = set(pd.read_parquet(data_dir / PLAYLISTS_FILENAME)["name"])
+    assert "top level" in names
+    assert "renamed top" not in names
+
+    # ...and the manifest holds the digest of THAT version, computed here from
+    # the literal rather than read back out of the writer.
+    parsed_digest = hashlib.sha256(FIXTURE_XML.encode("utf-8")).hexdigest()
+    assert summary.provenance.source_sha256 == parsed_digest
+    assert read_provenance(data_dir).source_sha256 == parsed_digest
+
+    # Which is what makes the verdict on the file now on disk the true one.
+    assert parsed_digest != hashlib.sha256(xml.read_bytes()).hexdigest()
+    assert PlaylistService(data_dir).staleness().stale is True
+
+
+def test_the_recorded_size_is_the_length_of_the_buffer_that_was_parsed(
+    tmp_path, monkeypatch
+):
+    """Same window, checked on the byte count rather than the digest.
+
+    ``source_bytes`` used to come from a second ``stat``, so a file that grew
+    after the parse was recorded at its new length beside its old contents.
+    """
+    import processing.playlist_parser as parser
+
+    xml = write_fixture_xml(tmp_path / "export.xml")
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    padded = FIXTURE_XML + "<!-- a much longer file arrives -->\n" * 50
+    original = parser.parse_playlists_bytes
+
+    def parse_then_let_a_bigger_export_land(data):
+        parsed = original(data)
+        xml.write_text(padded, encoding="utf-8")
+        return parsed
+
+    monkeypatch.setattr(
+        parser, "parse_playlists_bytes", parse_then_let_a_bigger_export_land
+    )
+    summary = import_playlists(xml, data_dir=data_dir, now=FIXED_CLOCK)
+
+    assert summary.provenance.source_bytes == len(FIXTURE_XML.encode("utf-8"))
+    assert summary.provenance.source_bytes != xml.stat().st_size
 
 
 def test_a_provenance_record_from_a_future_schema_reads_as_absent(summary, data_dir):

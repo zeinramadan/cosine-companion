@@ -361,3 +361,72 @@ test('the drawer still fetches when the store has no detail yet', async () => {
   assert.equal(fetches.requests.length, before + 1);
   assert.equal(fetches.requests.at(-1).path, '/api/tracks/f77');
 });
+
+/* -- what the drawer ASKS FOR, not what its source says ------------------
+ *
+ * The Python convention test beside this one greps drawer.js for the string
+ * "/api/playlists". That is a source-text check and it says so; it cannot
+ * catch a drawer that builds the path at runtime, and a mutant that appended
+ *
+ *     fetch(new URL('/api/pl' + 'aylists', location.origin))
+ *
+ * after rendering left it, and all eighteen tests here, green. This is the
+ * behavioural half: every request the mounted drawer actually makes, across
+ * every one of the five playlist states, has to be the track-detail request it
+ * already had. The playlist data rides on that payload; no route was added for
+ * it and none may be called.
+ */
+
+/** `/api/tracks/<id>` and nothing else - not `/api/tracks/<id>/playlists`. */
+const TRACK_DETAIL = /^\/api\/tracks\/[^/]+$/;
+
+const EVERY_PLAYLIST_STATE = [
+  { playlists: null, playlist_source: null },
+  { playlists: [], playlist_source: FRESH_SOURCE },
+  { playlists: TWO_WITH_A_SHARED_LEAF, playlist_source: FRESH_SOURCE },
+  {
+    playlists: TWO_WITH_A_SHARED_LEAF,
+    playlist_source: { ...FRESH_SOURCE, stale: true, reason: 'has changed' },
+  },
+  {
+    playlists: TWO_WITH_A_SHARED_LEAF,
+    playlist_source: { ...FRESH_SOURCE, source_missing: true, reason: 'is gone' },
+  },
+];
+
+test('no playlist state makes the drawer call any endpoint but track detail', async () => {
+  const before = fetches.requests.length;
+
+  for (const state of EVERY_PLAYLIST_STATE) {
+    show({ ...BASE_TRACK, ...state });
+    await settle();
+  }
+
+  const made = fetches.requests.slice(before);
+  const offending = made.filter((request) => !TRACK_DETAIL.test(request.path));
+  assert.deepEqual(
+    offending.map((request) => request.path),
+    [],
+    'the drawer requested something other than track detail',
+  );
+});
+
+test('opening a track requests its detail and nothing else', async () => {
+  const before = fetches.requests.length;
+  const store = createStore({ detailTrackId: null, detail: null });
+  mountDrawer({ store });
+
+  store.setState({ detailTrackId: 'f42' });
+  await settle();
+  fetches.deliver('/api/tracks/f42?q=', {
+    track: { ...BASE_TRACK, track_id: 'f42', playlists: TWO_WITH_A_SHARED_LEAF, playlist_source: FRESH_SOURCE },
+  });
+  await settle();
+
+  // Rendered from the payload, and no second request went out for it.
+  assert.equal(rows(drawer).length, 2);
+  assert.deepEqual(
+    fetches.requests.slice(before).map((request) => request.path),
+    ['/api/tracks/f42'],
+  );
+});
