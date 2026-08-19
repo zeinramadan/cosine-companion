@@ -16,6 +16,15 @@ ordered `ids.json` list. A developer's `data/` must match both values before the
 real-library assertions run. This prevents routine library changes from looking
 like engine regressions while keeping re-baselining explicit.
 
+This identifies the ordered **track-ID set, not the library content**. Reindexing
+with added, removed, or reordered IDs is detected. Re-embedding the same IDs with
+a different model, re-running BPM/key analysis, or changing track metadata is
+not: `meta.parquet`, `embeddings.parquet`, and `index.npy` may differ while the
+fingerprint still matches. In that case a real-library golden failure can still
+be a library-analysis change rather than an engine regression. This limitation
+is deliberate because hashing serialized parquet or NumPy bytes would make the
+fingerprint sensitive to writer/library-version details, not just semantic data.
+
 ## How exact is exact
 
 Regenerating on two different NumPy builds of the same version (conda-forge and

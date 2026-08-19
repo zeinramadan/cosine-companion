@@ -79,15 +79,20 @@ def fingerprint_mismatch_reason(data_dir, expected):
     try:
         found = fingerprint_data_dir(data_dir)
     except (OSError, ValueError, json.JSONDecodeError) as error:
-        found_description = f"an unreadable ids.json ({type(error).__name__}: {error})"
-    else:
-        if found == expected:
-            return None
-        found_description = describe_fingerprint(found)
+        return (
+            "the real-library fixture has an unreadable or malformed ids.json "
+            f"({type(error).__name__}: {error}). Restore or repair ids.json before "
+            "running these tests; regenerating goldens cannot repair a corrupt "
+            "library."
+        )
+
+    if found == expected:
+        return None
 
     return (
         "the real library does not match the committed golden fingerprint. "
-        f"Expected {describe_fingerprint(expected)}; found {found_description}. "
+        f"Expected {describe_fingerprint(expected)}; "
+        f"found {describe_fingerprint(found)}. "
         "These tests only characterize the library captured by the real-library "
         "goldens. To deliberately regenerate the real goldens and fingerprint "
         f"for this library, run: {REGENERATE_COMMAND}"
