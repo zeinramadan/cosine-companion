@@ -7,10 +7,10 @@ Two libraries are available:
     including CI, and is what the golden values are pinned against.
 
 ``real_library``
-    The user's actual 1,307-track library in ``data/``. That directory is
-    gitignored, so on CI it does not exist and every test that asks for this
-    fixture is **skipped with a stated reason** rather than erroring. Nothing
-    here ever writes to it.
+    The fingerprinted library captured by the real-library goldens. ``data/``
+    is gitignored, so on CI it does not exist. A missing or changed library is
+    **skipped with a stated reason** rather than producing unrelated golden
+    failures. Nothing here ever writes to it.
 """
 
 import sys
@@ -21,30 +21,40 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fixture_library import write_fixture_library  # noqa: E402
+from real_library_guard import (  # noqa: E402
+    fingerprint_mismatch_reason,
+    load_expected_fingerprint,
+)
 
 REAL_LIBRARY_FILES = ("meta.parquet", "embeddings.parquet", "index.npy", "ids.json")
 
-REAL_LIBRARY_TRACK_COUNT = 1307
 
-
-def real_library_available():
-    from config import DATA
-
-    return all((DATA / name).exists() for name in REAL_LIBRARY_FILES)
+def real_library_available(data_dir):
+    return all((data_dir / name).is_file() for name in REAL_LIBRARY_FILES)
 
 
 @pytest.fixture(scope="session")
-def real_data_dir():
-    """The real data directory, or a skip when it is not checked out."""
+def real_library_fingerprint():
+    """The committed identity of the library used to capture the goldens."""
+    return load_expected_fingerprint()
+
+
+@pytest.fixture(scope="session")
+def real_data_dir(real_library_fingerprint):
+    """The matching real data directory, or an actionable skip."""
     from config import DATA
 
-    if not real_library_available():
+    if not real_library_available(DATA):
         pytest.skip(
-            "the real 1,307-track library is not present: data/ is gitignored, "
-            "so these assertions only run on a developer machine. The golden "
-            "values that guard engine behaviour everywhere live in the "
-            "fixture_library tests."
+            "the real-library fixture is not present: data/ is gitignored, so "
+            "these assertions only run on a developer machine with all four "
+            "index files. The committed fixture_library tests guard engine "
+            "behaviour everywhere, including CI."
         )
+
+    mismatch_reason = fingerprint_mismatch_reason(DATA, real_library_fingerprint)
+    if mismatch_reason:
+        pytest.skip(mismatch_reason)
     return DATA
 
 
