@@ -307,20 +307,31 @@ def test_health_does_not_depend_on_playlist_data(api_without_playlists):
     assert body["ok"] is True
 
 
-def test_the_routes_are_still_the_same_six(api_without_playlists):
-    """No route was added: the field is filled on the detail response the
-    drawer already fetches. Pinned so a later "just one more endpoint" is a
-    deliberate change and not a drift."""
+def test_the_playlist_FEATURE_added_no_route_of_its_own(api_without_playlists):
+    """The field is filled on the detail response the drawer already fetches.
+    Pinned so a later "just one more endpoint" is a deliberate change and not a
+    drift.
+
+    This used to pin "the same six" and count them. The two ``/api/settings``
+    routes have since arrived from the web write surface (#16), merged into
+    this branch, and counting was never the claim: the claim is that nothing
+    HERE added a route. So the whole table is still pinned - drift in it is
+    still a deliberate act - and the claim itself is asserted separately, where
+    a later merge cannot quietly satisfy it by arithmetic.
+    """
     routes = [(verb, pattern.pattern) for verb, pattern, _ in CocoApi.ROUTES]
 
     assert routes == [
         ("GET", r"^/api/health$"),
         ("GET", r"^/api/library$"),
+        ("GET", r"^/api/settings$"),
+        ("POST", r"^/api/settings$"),
         ("GET", r"^/api/tracks$"),
         ("GET", r"^/api/tracks/search$"),
         ("GET", r"^/api/tracks/(?P<track_id>[^/]+)/recommendations$"),
         ("GET", r"^/api/tracks/(?P<track_id>[^/]+)$"),
     ]
+    assert [route for route in routes if "playlist" in route[1]] == []
 
 
 def test_there_is_no_playlists_endpoint(api_with_playlists):
