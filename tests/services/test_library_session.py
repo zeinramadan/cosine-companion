@@ -487,6 +487,34 @@ def test_a_malformed_manifest_never_falls_back_to_stale_flat_files(tmp_library):
         LibrarySession.load(tmp_library)
 
 
+def test_a_filesystem_without_hard_links_gets_current_flat_mirrors(
+    tmp_library, monkeypatch
+):
+    import core.index_store as index_store
+
+    def hard_links_unsupported(*args, **kwargs):
+        raise OSError("hard links unsupported")
+
+    monkeypatch.setattr(index_store.os, "link", hard_links_unsupported)
+    LibrarySession.load(tmp_library).delete_tracks(["t2"])
+
+    committed = read_index_generation(tmp_library)
+    flat_paths = (
+        tmp_library / "meta.parquet",
+        tmp_library / "embeddings.parquet",
+        tmp_library / "index.npy",
+        tmp_library / "ids.json",
+    )
+    assert tuple(path.read_bytes() for path in flat_paths) == tuple(
+        path.read_bytes() for path in committed.as_tuple()
+    )
+    assert json.loads((tmp_library / "ids.json").read_text()) == [
+        "t1",
+        "t3",
+        "t4",
+    ]
+
+
 def test_a_completed_indexing_write_uses_the_same_generation_commit(
     tmp_library, monkeypatch
 ):

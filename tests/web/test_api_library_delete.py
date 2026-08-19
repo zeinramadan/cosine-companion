@@ -70,6 +70,10 @@ def test_committed_generation_stays_row_aligned_and_reloads(api, web_data_dir):
 
     assert len(meta) == len(embeddings) == len(vectors) == len(ids) == 12
     assert embeddings["track_id"].tolist() == ids
+    emb_vectors = embeddings[
+        [column for column in embeddings.columns if column != "track_id"]
+    ].to_numpy()
+    assert np.array_equal(vectors, emb_vectors)
     assert set(meta["track_id"]) == set(ids)
     reloaded = LibrarySession.load(web_data_dir)
     assert reloaded.ids == ids

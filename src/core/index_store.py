@@ -10,7 +10,7 @@ generation-scoped files, then atomically replace one small manifest that names
 them.  A reader sees either the preceding manifest or the new one; it never has
 to guess which four files belong together.  Flat files remain the
 legacy/no-manifest representation for an existing installation and are kept as
-compatibility hard links after the first write.
+compatibility mirrors after the first write, using hard links where supported.
 
 Disk use is bounded to the current generation and its immediate predecessor.
 The manifest records that predecessor, so a commit reaps one exact generation;
@@ -24,6 +24,7 @@ from contextlib import contextmanager
 import hashlib
 import json
 import os
+import shutil
 import stat
 import uuid
 from dataclasses import dataclass
@@ -282,11 +283,19 @@ def write_index_generation(
                 staged_link = data_dir / f".{legacy.name}.{generation}.link"
                 try:
                     os.link(paths[kind], staged_link)
-                    os.replace(staged_link, legacy)
                 except OSError:
-                    # The manifest already committed, so a stale mirror must
-                    # not turn a successful logical commit into an API error.
-                    staged_link.unlink(missing_ok=True)
+                    # exFAT and some network filesystems do not support hard
+                    # links. Keep the legacy mirror current there with a
+                    # staged copy; it must never become a frozen pre-delete
+                    # fallback if the manifest is later lost.
+                    try:
+                        shutil.copyfile(paths[kind], staged_link)
+                    except OSError:
+                        # The manifest already committed, so failure of both
+                        # mirror strategies cannot undo the logical commit.
+                        staged_link.unlink(missing_ok=True)
+                        continue
+                os.replace(staged_link, legacy)
     except BaseException:
         if not commit_attempted:
             discard_scratch()
