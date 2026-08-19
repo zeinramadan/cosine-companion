@@ -1544,7 +1544,7 @@ The line numbers below are §2.4 and §3 coordinates in this document.
 | Full set retained, `topn` rendered | :372-373 | All 200 are fetched once and kept client-side |
 | Current-track header | §3.2 :1211-1218 | The gradient seed card, carrying the same fields |
 | `Copy Selected to Clipboard` | :327 | A `Copy` control on **each recommendation row**, which is the target :423-429 describes. The seed card also carries one; that is an addition rather than this control — see §6.3. The clipboard FORMAT still differs from Tkinter's on purpose, also §6.3 |
-| Sort selection follows the list | :382 | A fresh computation arrives in cosine order and the segmented control returns to `Cosine` to say so, matching `refresh_suggestions` replacing `current_recommendations` without reapplying the last sort |
+| Sort selection follows the list | :380 | A fresh computation arrives in cosine order — :380, "matches the post-refresh default order" — and the segmented control returns to `Cosine` to say so, matching `refresh_suggestions` replacing `current_recommendations` without reapplying the last sort |
 
 ### 6.2 Deferred to PR 3b
 
@@ -1584,9 +1584,9 @@ only one of them.
 at the first of six candidate separators and copies what follows, which yields
 the title alone and truncates differently when a hyphen sits inside an artist
 name. The web `Copy` puts `{artist} – {title}` on the clipboard, and omits the
-separator entirely when either field is empty — which this library really
-contains. Workflow row 11 (:1464) describes the Tkinter behaviour and still
-does.
+separator entirely when either field is empty — this library really does hold
+tracks with a blank artist. Workflow row 11 (:1464) describes the Tkinter
+behaviour and still does.
 
 *What it copies FROM.* :423-429 operates on the selected recommendation, and
 the web control that answers it is the `Copy` on each recommendation row. The
@@ -1606,17 +1606,33 @@ floor by
 
 ### 6.4 What pins the web layer
 
-The web UI has no automated test of the rendered DOM — that is a stated gap,
-and the visual pass was done by hand in WKWebView. Everything below it is
-tested, and none of the web tests depend on `data/`, so every one of them runs
-in CI rather than skipping there. That was re-derived rather than assumed: the
-suite was run in a fresh clone with no `data/` directory and every skip
-enumerated, and all 25 of them are the pre-existing `real_library` and private
-XML cases in `tests/services/` and `tests/test_xml_parser.py`. The fixture the
-web tests use instead is built under `tmp_path` by
+The web UI still has no automated test of the **rendered** DOM: nothing here
+lays out CSS, resolves a cascade or measures a pixel, so whether the result
+looks right is settled by hand in WKWebView and the pass is recorded in the PR
+description. What *is* automated, since the round-2 fixes, is frontend
+**behaviour**: `tests/web/js/` imports the shipped modules and runs them under
+`node --test` against the documented shim in `tests/web/js/dom_shim.mjs`,
+driven from pytest by
+`tests/web/test_frontend_behaviour.py::test_frontend_behaviour`. That
+distinction is the whole of what those tests are worth — they can say what a
+module did, not what a user saw — and it is stated at the top of the shim as
+well as here.
+
+The one environmental dependency in the web suite is `node`, for those five
+suites. When it is absent they skip with a reason naming the file that did not
+run; that was exercised by running the web suite with `node` off `PATH`, which
+gives 307 passed and 5 skipped. Beyond that, no web test reads `data/`: the
+library each one sees is built under `tmp_path` by
 `tests/web/webtest_support.py`, and it is what
 `tests/web/test_api_library.py::test_library_reports_the_real_track_count`
 counts.
+
+That was re-derived for this round rather than carried forward. A fresh clone
+of the branch with no `data/` directory, in a 3.10 venv holding only numpy,
+pandas, pyarrow, lxml, pytest and pywebview, gives **602 passed, 25 skipped**,
+and all 25 skips are the same pre-existing cases as before: 24 `real_library`
+cases across `tests/services/` and one private-XML case in
+`tests/test_xml_parser.py`. No skip in that run comes from the web suite.
 
 | Area | Pinned by |
 |---|---|
@@ -1627,3 +1643,13 @@ counts.
 | The API layer staying free of a GUI toolkit | `tests/web/test_no_heavy_imports.py::test_only_host_may_import_webview` |
 | The host not reaching Tkinter | `tests/web/test_host_importable.py::test_importing_the_host_does_not_load_tkinter` |
 | Design tokens, focus rings, reduced motion, contrast | `tests/web/test_frontend_conventions.py::test_body_text_clears_the_contrast_floor` |
+| Every HTTP method, defined or not, meeting the token check | `tests/web/test_server_auth.py::test_no_method_whatsoever_reaches_the_api_without_a_token` |
+| There being one auth entry point rather than one per verb | `…::test_no_verb_gets_its_own_handler_method` |
+| The token check reaching `compare_digest` for wrong-length candidates | `…::test_every_wrong_token_is_decided_by_compare_digest` |
+| Requests addressed to another host name | `…::test_a_request_addressed_to_another_name_is_refused` |
+| The printed URL not carrying the token | `tests/web/test_host_importable.py::test_the_url_the_host_prints_does_not_carry_the_token` |
+| `← Back` restoring the stored order under the current Top-N | `tests/web/test_frontend_behaviour.py::test_frontend_behaviour` (`explore_history.test.mjs`) |
+| Copy acting on a recommendation without re-seeding | `…::test_frontend_behaviour` (`explore_copy.test.mjs`) |
+| The palette never rendering a superseded query | `…::test_frontend_behaviour` (`palette_sequencing.test.mjs`) |
+| `aria-modal` being backed by an inert shell and a Tab trap | `…::test_frontend_behaviour` (`palette_modality.test.mjs`) |
+| Browse, search and recommendation caps actually binding | `tests/web/test_api_library.py::test_tracks_clamps_an_absurd_limit_rather_than_serialising_the_library` |

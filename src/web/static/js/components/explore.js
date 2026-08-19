@@ -76,7 +76,7 @@ export const SORTS = {
 };
 
 /* Cosine, because that is the order the API returns and therefore the order a
- * freshly computed list is already in (§3.3, and inventory :382 - "matches the
+ * freshly computed list is already in (§3.3, and inventory :380 - "matches the
  * post-refresh default order"). */
 export const DEFAULT_SORT = 'cosine';
 
