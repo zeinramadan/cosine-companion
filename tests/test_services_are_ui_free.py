@@ -93,6 +93,7 @@ def test_importing_services_never_loads_tkinter():
         cwd=str(src),
         capture_output=True,
         text=True,
+        timeout=120,
     )
 
     assert result.returncode == 0, result.stderr

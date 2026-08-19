@@ -19,10 +19,19 @@ from services.indexing_service import (
     ProgressEvent,
 )
 from services.library_session import LibrarySession, LibrarySnapshot
+from services.playlist_import import PlaylistImportSummary, import_playlists
+from services.playlist_service import (
+    IMPORT_COMMAND,
+    PlaylistLookup,
+    PlaylistRef,
+    PlaylistService,
+    StalenessVerdict,
+)
 from services.set_builder import SetBuilder
 from services.settings_store import SettingsStore
 
 __all__ = [
+    'IMPORT_COMMAND',
     'STATUS_INDEXED',
     'STATUS_NO_EMBEDDINGS',
     'STATUS_UP_TO_DATE',
@@ -33,8 +42,14 @@ __all__ = [
     'IndexingService',
     'LibrarySession',
     'LibrarySnapshot',
+    'PlaylistImportSummary',
+    'PlaylistLookup',
+    'PlaylistRef',
+    'PlaylistService',
     'ProgressEvent',
     'Recommendation',
     'SetBuilder',
     'SettingsStore',
+    'StalenessVerdict',
+    'import_playlists',
 ]

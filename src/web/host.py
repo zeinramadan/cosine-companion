@@ -24,6 +24,7 @@ import webview
 from config import DATA
 from services.explore_session import ExploreSession
 from services.library_session import LibrarySession
+from services.playlist_service import PlaylistService
 from services.settings_store import SettingsStore
 
 from web import assets
@@ -69,7 +70,15 @@ def build_api(data_dir: Optional[Path] = None) -> Tuple[CocoApi, LibrarySession]
     resolved = Path(data_dir) if data_dir is not None else DATA
     library = _load_library(resolved)
     settings = SettingsStore(resolved / SETTINGS_FILENAME)
-    return CocoApi(library, settings, explore=ExploreSession(library)), library
+    # Passed explicitly rather than left to CocoApi's default so the wiring is
+    # visible here with the rest of it. Constructing it reads nothing; the
+    # tables are opened on the first drawer that asks for them, and their
+    # absence is a state the drawer renders rather than an error.
+    playlists = PlaylistService(resolved)
+    api = CocoApi(
+        library, settings, explore=ExploreSession(library), playlists=playlists
+    )
+    return api, library
 
 
 def build_server(api: CocoApi) -> CocoServer:

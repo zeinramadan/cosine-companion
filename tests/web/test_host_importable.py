@@ -29,7 +29,11 @@ from web import host  # noqa: E402
 
 def _subprocess_modules(program):
     result = subprocess.run(
-        [sys.executable, "-c", program], cwd=str(SRC), capture_output=True, text=True
+        [sys.executable, "-c", program],
+        cwd=str(SRC),
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
     assert result.returncode == 0, result.stderr
     return result.stdout.strip()

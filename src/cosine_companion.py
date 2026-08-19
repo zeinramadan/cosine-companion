@@ -80,6 +80,65 @@ def ui_web(
     run_web_ui(data_dir=Path(data_dir) if data_dir else None, debug=debug)
 
 
+@cli.command("import-playlists")
+def import_playlists_command(
+    xml: str = typer.Argument(None, help="Path to Rekordbox XML export (default: the configured one)"),
+    data_dir: str = typer.Option(None, "--data-dir", help="Index directory to write to (default: the configured one)")
+):
+    """Import Rekordbox playlists WITHOUT re-running the embedding pipeline.
+
+    A full reindex already refreshes the playlist tables, but it costs ~12
+    minutes of audio embedding. Seeing which playlists a track is in should not
+    cost that, so this command exists and does only the parse and the two
+    parquet writes - a second or so on a 1.5 MB export.
+
+    With no argument it reads ``xml_path`` out of the same ``settings.json``
+    the Tkinter app and the web UI use (``ui/app.py:185``), so the three agree
+    about which export is current.
+
+    ``--data-dir`` names the index directory to write into, matching
+    ``ui-web --data-dir`` - including where ``settings.json`` is looked up, so
+    "import into that directory" means the same thing to both commands. It is
+    also what lets the concurrency tests run the real command against a
+    scratch directory instead of the developer's library.
+    """
+    # Lazy imports throughout, matching the other subcommands: `ui` must keep
+    # launching on a machine where these are not needed.
+    from pathlib import Path
+
+    from config import DATA
+    from services.playlist_import import import_playlists
+    from services.settings_store import SettingsStore
+
+    target = Path(data_dir) if data_dir else DATA
+
+    if xml is None:
+        xml = SettingsStore(target / "settings.json").xml_path
+        if not xml:
+            typer.echo(
+                "No Rekordbox XML is configured. Pass one:\n"
+                "  python src/cosine_companion.py import-playlists <rekordbox.xml>",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+    source = Path(xml)
+    if not source.is_file():
+        typer.echo(f"No such Rekordbox XML: {source}", err=True)
+        raise typer.Exit(code=1)
+
+    print("🗂  Cosine Companion - Playlist Import")
+    print("=" * 50)
+    print(f"📖 Reading {source.name}...")
+
+    summary = import_playlists(source, data_dir=target)
+
+    for line in summary.lines():
+        print(line)
+    print("=" * 50)
+    print(f"✅ Playlists imported to: {target}/")
+
+
 @cli.command()
 def clean_duplicates(
     xml: str = typer.Argument(..., help="Path to Rekordbox XML export")

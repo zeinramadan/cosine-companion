@@ -81,6 +81,64 @@ def _load_embedder():
     return DiscogsEffnetEmbedder
 
 
+def refresh_playlists(rb_xml, report):
+    """Re-import the playlist tables from ``rb_xml`` beside the index files.
+
+    Called at every terminal outcome of ``index_library`` so a normal reindex
+    keeps playlists current. The standalone
+    ``cosine_companion.py import-playlists`` command exists because the reverse
+    is not acceptable: the user has just spent 11m33s embedding audio, and
+    making them do it again to see a playlist would be an unforced insult. Both
+    paths call ``services.playlist_import.import_playlists``; there is one
+    implementation.
+
+    SILENT ON SUCCESS - A DELIBERATE, DECLARED DEVIATION
+    ----------------------------------------------------
+    The plan (§5) asks the pipeline to report the import summary the way the
+    CLI does. It cannot, and the reason is a hard constraint of the same plan
+    (§2.2: pre-existing tests must not be edited to accommodate this work).
+    Three tests in tests/services/test_indexing_service.py assert the COMPLETE,
+    ORDERED event list of an indexing run - a first run, an up-to-date run and
+    a run where nothing could be embedded - and a fourth
+    (test_the_exact_output_of_the_cli_index_command) pins the CLI's stdout
+    verbatim. Any line added here changes all four. Those tests exist precisely
+    to catch a change to the indexing transcript, so satisfying them by editing
+    them would be defeating the guard rather than passing it.
+
+    So the reindex path keeps playlists CURRENT and says nothing about it,
+    which is what the plan's own §5 sentence "so a normal reindex keeps
+    playlists current" actually requires. The reporting requirement in the same
+    section attaches to the import SUMMARY, which the standalone command prints
+    in full - and the standalone command is also what the staleness banner
+    names. A failure IS reported: silence is the success case only.
+
+    THE DATA DIRECTORY IS DERIVED, NOT ASSUMED
+    ------------------------------------------
+    From ``core.persistence.META_PQ``, which is where ``save_index_data`` just
+    wrote ``meta.parquet``. In production that is ``config.DATA``. In the
+    indexing tests it is a ``tmp_path``, because those tests isolate themselves
+    by monkeypatching that module attribute rather than ``config.DATA`` - so
+    reading ``config.DATA`` here would have the test suite parse a fixture XML
+    and write three files into the maintainer's real library.
+    """
+    # Both imported lazily, for the same reason the embedder is: nothing that
+    # merely imports this module should pull the service layer in behind it.
+    from pathlib import Path as _Path
+
+    from core import persistence
+    from services.playlist_import import import_playlists
+
+    try:
+        return import_playlists(rb_xml, data_dir=_Path(persistence.META_PQ).parent)
+    except Exception as error:  # noqa: BLE001 - see below
+        # Never fails the run. In the success path the four index files are
+        # already written by the time this is reached, and a malformed
+        # <PLAYLISTS> element is not a reason to tell the user an 11-minute
+        # embed did not happen.
+        report("playlists", f"⚠️  Could not import playlists: {error}")
+        return None
+
+
 def make_reporter(progress=None):
     """Return a ``report(phase, message, current=0, total=0)`` function.
 
@@ -167,6 +225,7 @@ def index_library(rb_xml: str, force_full: bool = False, sample_size: int | None
         new_tracks = new_tracks.head(sample_size)
     
     if len(new_tracks) == 0:
+        refresh_playlists(rb_xml, report)
         report("complete", "✅ No new tracks to process! Your index is up to date.")
         return {"status": STATUS_UP_TO_DATE, "new_tracks_found": 0}
     
@@ -217,6 +276,7 @@ def index_library(rb_xml: str, force_full: bool = False, sample_size: int | None
             sys.stdout.flush()
     
     if not new_vectors:
+        refresh_playlists(rb_xml, report)
         report("complete", "❌ No new embeddings generated. Check audio paths/codecs.")
         return {"status": STATUS_NO_EMBEDDINGS, "new_tracks_found": total}
     
@@ -275,6 +335,11 @@ def index_library(rb_xml: str, force_full: bool = False, sample_size: int | None
     
     # Save all data
     save_index_data(combined_meta, combined_emb, combined_vectors, combined_track_ids)
+
+    # AFTER the index is saved, not before: the summary counts unresolvable
+    # entries against meta.parquet, and counting them against the pre-reindex
+    # file would report a shortfall this very run just fixed.
+    refresh_playlists(rb_xml, report)
     
     report("complete", "=" * 50)
     report("complete", f"✅ Indexing complete!")
