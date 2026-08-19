@@ -20,7 +20,14 @@ from webtest_support import (
     WEB_LIBRARY_TRACK_COUNT,
 )
 
-from web.api import CocoApi
+from web.api import (
+    DEFAULT_BROWSE_LIMIT,
+    DEFAULT_SEARCH_LIMIT,
+    MAX_BROWSE_LIMIT,
+    MAX_SEARCH_LIMIT,
+    CocoApi,
+    _int_param,
+)
 
 
 @pytest.fixture
@@ -31,6 +38,57 @@ def api(web_library, settings):
 @pytest.fixture
 def empty_api(empty_library, settings):
     return CocoApi(empty_library, settings)
+
+
+class OversizedLibrary:
+    """A library with more rows than any cap in the API, built in memory.
+
+    It exists because a cap cannot be pinned by a fixture smaller than the cap.
+    Nothing is written to disk and nothing under ``data/`` is read: ``_browse``
+    only reads ``meta_ix`` and ``track_count``, and ``_search`` only calls
+    ``search_tracks``, so those four members are the whole surface the two
+    endpoints under test touch.
+
+    ``search_tracks`` records the limit it was handed, which is the resolved
+    value the API decided - the thing the clamp actually controls.
+    """
+
+    def __init__(self, rows):
+        import pandas as pd
+
+        self.meta_ix = pd.DataFrame(
+            {
+                "artist": [f"Artist {index:04d}" for index in range(rows)],
+                "title": [f"Title {index:04d}" for index in range(rows)],
+            },
+            index=pd.Index([f"t{index:04d}" for index in range(rows)], name="track_id"),
+        )
+        self.track_count = rows
+        self.is_empty = False
+        self.data_dir = "/nonexistent"
+        self.search_calls = []
+
+    def search_tracks(self, query, limit):
+        self.search_calls.append({"query": query, "limit": limit})
+        return [
+            {
+                "track_id": f"t{index:04d}",
+                "artist": f"Artist {index:04d}",
+                "title": f"Title {index:04d}",
+                "display_name": f"Artist {index:04d} – Title {index:04d}",
+            }
+            for index in range(limit)
+        ]
+
+
+#: Comfortably past MAX_BROWSE_LIMIT (500), the largest cap in the API.
+OVERSIZED_ROWS = 600
+
+
+@pytest.fixture
+def big_api(settings):
+    library = OversizedLibrary(OVERSIZED_ROWS)
+    return CocoApi(library, settings), library
 
 
 def call(api, path, **params):
@@ -124,10 +182,40 @@ def test_tracks_defaults_to_fifty(api):
     assert len(body["tracks"]) == min(50, WEB_LIBRARY_TRACK_COUNT)
 
 
-def test_tracks_clamps_an_absurd_limit_rather_than_serialising_the_library(api):
+def test_tracks_clamps_an_absurd_limit_rather_than_serialising_the_library(big_api):
+    """The cap has to BITE, which the fourteen-track fixture cannot make it do.
+
+    This asserted ``len(tracks) == min(500, WEB_LIBRARY_TRACK_COUNT)``, i.e.
+    ``== 14``. Raising MAX_BROWSE_LIMIT to 9999 left that green, because with
+    fourteen rows in the library ``min(9999, 14)`` and ``min(500, 14)`` are the
+    same number - the assertion was about the fixture, not about the cap. A
+    library larger than the cap is what makes it an assertion about the cap.
+    """
+    api, library = big_api
+
     _, body = call(api, "/api/tracks", limit=9999)
 
-    assert len(body["tracks"]) == min(500, WEB_LIBRARY_TRACK_COUNT)
+    # The literal as well as the constant. Comparing the result only against
+    # the constant is circular: raising the constant raises both sides of the
+    # comparison. These numbers are contract values the frontend is written
+    # against, so pinning them is the point rather than a duplication.
+    assert MAX_BROWSE_LIMIT == 500
+    assert library.track_count > MAX_BROWSE_LIMIT, "the fixture cannot bind the cap"
+    assert len(body["tracks"]) == 500
+    assert body["total"] == library.track_count
+
+
+def test_the_browse_cap_is_the_documented_number(big_api):
+    """One row below and one row above, so an off-by-one in the clamp shows."""
+    api, _ = big_api
+
+    _, under = call(api, "/api/tracks", limit=MAX_BROWSE_LIMIT - 1)
+    _, at = call(api, "/api/tracks", limit=MAX_BROWSE_LIMIT)
+    _, over = call(api, "/api/tracks", limit=MAX_BROWSE_LIMIT + 1)
+
+    assert len(under["tracks"]) == MAX_BROWSE_LIMIT - 1
+    assert len(at["tracks"]) == MAX_BROWSE_LIMIT
+    assert len(over["tracks"]) == MAX_BROWSE_LIMIT
 
 
 def test_tracks_come_back_in_meta_ix_order(api, web_library):
@@ -235,10 +323,57 @@ def test_search_honours_its_limit(api):
     assert len(body["results"]) == 2
 
 
-def test_search_clamps_its_limit_to_a_hundred(api):
+def test_search_clamps_its_limit_to_a_hundred(big_api):
+    """The RESOLVED limit is asserted, not the length of what came back.
+
+    ``len(results) <= 100`` was true of the fourteen-track fixture whatever the
+    cap was, so raising MAX_SEARCH_LIMIT to 9999 left it green. What the API
+    actually decides is the number it hands to ``search_tracks``, so that is
+    what is recorded and asserted here.
+    """
+    api, library = big_api
+
     _, body = call(api, "/api/tracks/search", q="a", limit=9999)
 
-    assert len(body["results"]) <= 100
+    # The literal, not the constant: `limit=9999` resolving to MAX_SEARCH_LIMIT
+    # is trivially true when MAX_SEARCH_LIMIT is itself 9999.
+    assert MAX_SEARCH_LIMIT == 100
+    assert library.search_calls == [{"query": "a", "limit": 100}]
+    assert len(body["results"]) == 100
+
+
+def test_search_passes_a_limit_under_the_cap_through_unchanged(big_api):
+    api, library = big_api
+
+    call(api, "/api/tracks/search", q="a", limit=7)
+
+    assert library.search_calls == [{"query": "a", "limit": 7}]
+
+
+def test_the_search_default_is_the_documented_number(big_api):
+    api, library = big_api
+
+    call(api, "/api/tracks/search", q="a")
+
+    assert DEFAULT_SEARCH_LIMIT == 20
+    assert library.search_calls == [{"query": "a", "limit": 20}]
+
+
+@pytest.mark.parametrize(
+    "default, maximum",
+    [
+        (DEFAULT_BROWSE_LIMIT, MAX_BROWSE_LIMIT),
+        (DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT),
+    ],
+)
+def test_the_clamp_itself_clamps(default, maximum):
+    """The parser under the endpoints, on its own, at the boundary."""
+    assert _int_param({}, "limit", default, maximum) == default
+    assert _int_param({"limit": ["0"]}, "limit", default, maximum) == 0
+    assert _int_param({"limit": [str(maximum - 1)]}, "limit", default, maximum) == maximum - 1
+    assert _int_param({"limit": [str(maximum)]}, "limit", default, maximum) == maximum
+    assert _int_param({"limit": [str(maximum + 1)]}, "limit", default, maximum) == maximum
+    assert _int_param({"limit": ["999999"]}, "limit", default, maximum) == maximum
 
 
 def test_search_with_no_matches_is_an_empty_list_not_a_404(api):

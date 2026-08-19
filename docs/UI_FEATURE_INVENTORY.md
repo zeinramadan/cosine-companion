@@ -1531,7 +1531,7 @@ The line numbers below are §2.4 and §3 coordinates in this document.
 |---|---|---|
 | `Set Current Track` | :326 | The ⌘K palette. Unlike `pick_current` it lists the first 50 tracks for a blank query rather than an empty list — see §6.3 |
 | `← Back` | :325 | A button on the seed card, disabled until the history is non-empty, per §3.10 :1397 |
-| History behaviour | :414-421 | Pushed only when a seed and a list both exist; capacity 20 (§3.9 :1387); going back restores the stored list with its sort order and no recomputation |
+| History behaviour | :414-421 | Pushed only when a seed and a list both exist; capacity 20 (§3.9 :1387). Going back restores the stored list **in the order it was stored in**, with no recomputation, and re-renders honouring the **current** Top-N — the asymmetry :420-421 states. Pinned by `tests/web/test_frontend_behaviour.py::test_frontend_behaviour`, which runs `tests/web/js/explore_history.test.mjs` against the shipped module |
 | `Set Selected as Current` | :328 | Clicking a recommendation row re-seeds |
 | `<Double-Button-1>` re-seed | :347 | Folded into the single click above — the web list is a set of buttons, not a `tk.Listbox` |
 | Sort buttons | :335, :377-387 | A segmented control with the same five keys and directions, including the ascending lexicographic Camelot sort at :381 |
@@ -1543,7 +1543,8 @@ The line numbers below are §2.4 and §3 coordinates in this document.
 | Computation parameters | :370, §3.9 :1378 | `topk=500, final_top=200`, passed explicitly rather than left to a default. Pinned by `tests/web/test_api_recommendations.py::test_the_explore_tab_configuration_is_used_by_default` |
 | Full set retained, `topn` rendered | :372-373 | All 200 are fetched once and kept client-side |
 | Current-track header | §3.2 :1211-1218 | The gradient seed card, carrying the same fields |
-| `Copy Selected to Clipboard` | :327 | A `Copy` button on the seed card — see §6.3 for how it differs |
+| `Copy Selected to Clipboard` | :327 | A `Copy` control on **each recommendation row**, which is the target :423-429 describes. The seed card also carries one; that is an addition rather than this control — see §6.3. The clipboard FORMAT still differs from Tkinter's on purpose, also §6.3 |
+| Sort selection follows the list | :382 | A fresh computation arrives in cosine order and the segmented control returns to `Cosine` to say so, matching `refresh_suggestions` replacing `current_recommendations` without reapplying the last sort |
 
 ### 6.2 Deferred to PR 3b
 
@@ -1552,7 +1553,7 @@ omission is on the record rather than left for a reviewer to notice.
 
 | Control | §2.4 line | Note |
 |---|---|---|
-| Right-click context menu | :348-354 | Both of its items (`Set as Current Track`, `Copy to Clipboard`) exist as controls; the menu itself, and the `listbox.nearest` selection it performs first, are outstanding |
+| Right-click context menu | :348-354 | Both of its items exist as controls on the row itself — `Set as Current Track` is the row click, `Copy to Clipboard` is the row's `Copy` control (both pinned by `tests/web/js/explore_copy.test.mjs`). The **menu** itself, and the `listbox.nearest` selection it performs before opening, are outstanding |
 | Status-bar message strings | :389-403 | The web UI shows a row count and a history count, not the catalogued strings, colours or the 3-second revert |
 | `SimplePicker` and search implementation B | :405-412, §3.4 | The palette calls the service `search_tracks` (implementation A) over the API. The regex `.head(50)` variant and the modal picker are outstanding |
 | `No match` dialog | :409 | The palette shows an inline empty state instead of a modal |
@@ -1576,11 +1577,24 @@ still holds; this is a second surface answering the same question, pinned by
 `tests/web/test_api_library.py::test_search_with_no_query_is_a_bad_request` and
 its browse counterparts.
 
-**Copy.** The Tkinter implementation (:423-429) splits the rendered row at the
-first of six candidate separators and copies what follows, which yields the
-title alone and truncates differently when a hyphen sits inside an artist name.
-The web `Copy` puts `{artist} – {title}` on the clipboard. Workflow row 11
-(:1464) describes the Tkinter behaviour and still does.
+**Copy.** Two things differ, and an earlier version of this section recorded
+only one of them.
+
+*What it copies.* The Tkinter implementation (:423-429) splits the rendered row
+at the first of six candidate separators and copies what follows, which yields
+the title alone and truncates differently when a hyphen sits inside an artist
+name. The web `Copy` puts `{artist} – {title}` on the clipboard, and omits the
+separator entirely when either field is empty — which this library really
+contains. Workflow row 11 (:1464) describes the Tkinter behaviour and still
+does.
+
+*What it copies FROM.* :423-429 operates on the selected recommendation, and
+the web control that answers it is the `Copy` on each recommendation row. The
+seed card carries a second `Copy` that puts the **current track** on the
+clipboard. That one is an ADDITION with no counterpart in §2.4, not a
+reimplementation of :327, and it is recorded here rather than counted in §6.1
+for that reason. Re-seeding to a row in order to copy it would not be
+equivalent to either: it pushes to history and recomputes the list.
 
 **Camelot keys are coloured.** §3.1 :1209 records that the key is displayed as
 stored, with no conversion. That still holds — the pill's text is the stored

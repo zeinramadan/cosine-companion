@@ -159,3 +159,39 @@ def test_the_server_the_host_builds_is_loopback_and_tokened(web_data_dir):
         assert server.authorises(server.token)
     finally:
         server.stop()
+
+
+# -- the token is not printed ----------------------------------------------
+
+
+def test_the_url_the_host_prints_does_not_carry_the_token(stub_api, static_dir):
+    """``server.url`` has to carry ``?key=<token>`` - it is what bootstraps the
+    page. Printing it to stdout writes a live credential into terminal
+    scrollback and any log the launcher is piped into, where it outlives the
+    process that could still use it."""
+    from web.server import CocoServer
+
+    running = CocoServer(stub_api, static_dir)
+    running.start()
+    try:
+        assert running.token in running.url
+        assert running.token not in running.display_url
+        assert running.display_url == f"http://127.0.0.1:{running.port}"
+    finally:
+        running.stop()
+
+
+def test_the_host_prints_the_redacted_url_and_not_the_other_one():
+    """A source check: the printing happens inside ``webview.start()``'s
+    caller, which cannot run without a display."""
+    import inspect
+
+    from web import host
+
+    source = inspect.getsource(host.run_web_ui)
+    printed = [line for line in source.splitlines() if "print(" in line]
+
+    assert any("server.display_url" in line for line in printed)
+    assert not any(
+        "server.url" in line for line in printed
+    ), f"the token-carrying URL is printed:\n{chr(10).join(printed)}"

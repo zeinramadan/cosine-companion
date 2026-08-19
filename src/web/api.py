@@ -126,6 +126,28 @@ def _jsonable(value: Any) -> Any:
     if value is pd.NaT or value is pd.NA:
         return None
 
+    # numpy's temporal scalars, and they have to be tested BEFORE the numeric
+    # branches below. Neither is covered by the identity test above, because
+    # ``pd.NaT is np.datetime64("NaT")`` is False - they are different objects
+    # that mean the same thing. Reading a row out of a datetime64 column is how
+    # they get here, and each failed differently:
+    #
+    #   np.datetime64("NaT")  reached the final str() fallback and serialised
+    #                         as the four-character string "NaT", which the
+    #                         frontend renders as if it were a date;
+    #   np.timedelta64(...)   is a SUBCLASS of np.signedinteger, so the integer
+    #                         branch below caught every one of them - and
+    #                         ``int()`` on a timedelta64 returns a
+    #                         datetime.timedelta, raising TypeError. That took
+    #                         the endpoint down with a 500 for a real value,
+    #                         not only for a missing one.
+    #
+    # Text rather than a number for the non-missing case: a timedelta64 carries
+    # its unit, and an integer would drop it silently. datetime64's str() is
+    # already ISO 8601, which is what the pd.Timestamp branch produces too.
+    if isinstance(value, (np.datetime64, np.timedelta64)):
+        return None if np.isnat(value) else str(value)
+
     if isinstance(value, (bool, np.bool_)):
         return bool(value)
 

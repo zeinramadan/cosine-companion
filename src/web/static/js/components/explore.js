@@ -18,7 +18,9 @@
  *   :385  sorts apply to all 200       -> sorting happens before truncation
  *   :387  sorts are stable             -> Array.prototype.sort is stable
  *   :1211 the current-track header     -> the seed card
- *   :327  Copy Selected to Clipboard   -> Copy, see the note on it below
+ *   :327  Copy Selected to Clipboard   -> the per-row Copy control; the seed
+ *                                          card's Copy is an addition (§6.3)
+ *   :348-354 context menu Copy to Clipboard -> the same per-row control
  *
  * Anything from §2.4 not in that list is named in the PR description under
  * "Deferred to PR 3b" with its line number. Silent omission is the one thing
@@ -45,6 +47,12 @@ export const DEFAULT_TOP_N = 50;
 /* Inventory :1387. The oldest entry is dropped on overflow. */
 export const HISTORY_CAPACITY = 20;
 
+/* How long a Copy button shows whether it worked before going back to being a
+ * button. The Tkinter status bar uses 3 s for its own confirmations
+ * (inventory :401); this sits on the control itself rather than in a status
+ * bar, so it is shorter. */
+const COPY_FEEDBACK_MS = 1500;
+
 /* The full computed set is fetched once and kept, so Top-N and every sort are
  * pure re-renders. Inventory :372 - "The full 200 are retained in
  * current_recommendations; only the first topn are rendered." */
@@ -67,8 +75,27 @@ export const SORTS = {
   artist: { label: 'Artist', key: (r) => String(r.artist || '').toLowerCase(), direction: 1 },
 };
 
+/* Cosine, because that is the order the API returns and therefore the order a
+ * freshly computed list is already in (§3.3, and inventory :382 - "matches the
+ * post-refresh default order"). */
 export const DEFAULT_SORT = 'cosine';
 
+/**
+ * THE ORDER IS STATE, NOT A RENDERING DECISION.
+ *
+ * `state.recommendations` is always the list in the order it is displayed in.
+ * Sorting is an action that stores a reordered list; rendering only truncates
+ * to Top-N. That mirrors the Tkinter tab this reimplements, where
+ * `sort_suggestions` calls `self.current_recommendations.sort(...)` in place
+ * (recommendations_tab.py:270) and `update_listbox` never sorts anything.
+ *
+ * It is also what makes ← Back correct. This function used to be called from
+ * `renderList` with the CURRENT sort, so a history entry - which stores an
+ * array, and an array has an order - was re-sorted on the way back out and the
+ * stored order was discarded. Inventory :420-421 requires the stored order to
+ * survive and the Top-N NOT to. Sorting here and truncating there is what
+ * gives you that asymmetry without having to special-case the restore.
+ */
 export function sortRecommendations(recommendations, sortName) {
   const sort = SORTS[sortName] || SORTS[DEFAULT_SORT];
   // A copy: Array.prototype.sort mutates, and the history holds these arrays.
@@ -110,6 +137,35 @@ async function copyToClipboard(text) {
   return copied;
 }
 
+/**
+ * A button that copies ``text`` and says whether it managed to.
+ *
+ * The label reverts after a moment, so the control is a control again rather
+ * than a permanent status line. `resting` is what it says the rest of the
+ * time, which differs between the seed card (a word) and a row (a glyph, next
+ * to as many siblings as Top-N is showing).
+ */
+function copyControl({ className, resting, restingLabel, text }) {
+  const button = element('button', className, resting);
+  button.type = 'button';
+  button.setAttribute('aria-label', restingLabel);
+  button.title = restingLabel;
+
+  button.addEventListener('click', async (event) => {
+    // The row's own click handler re-seeds. Copying must not.
+    if (event && typeof event.stopPropagation === 'function') {
+      event.stopPropagation();
+    }
+    const copied = await copyToClipboard(text);
+    button.textContent = copied ? '✓' : '✕';
+    window.setTimeout(() => {
+      button.textContent = resting;
+    }, COPY_FEEDBACK_MS);
+  });
+
+  return button;
+}
+
 export function mountExplore({ store, onPickSeed, onShowDetail }) {
   const root = document.getElementById('view-explore');
   let inFlight = 0;
@@ -127,7 +183,13 @@ export function mountExplore({ store, onPickSeed, onShowDetail }) {
       }
       store.setState({
         seed: body.seed,
+        // In the order the API returned, which is cosine descending. The sort
+        // selection is reset to say so rather than being silently reapplied:
+        // refresh_suggestions replaces the list and does not re-sort it
+        // (recommendations_tab.py:236-243), and a segmented control claiming
+        // "Artist" over a cosine-ordered list would be a lie on screen.
         recommendations: body.recommendations,
+        sort: DEFAULT_SORT,
         exploreStatus: 'ready',
         exploreError: null,
       });
@@ -154,7 +216,15 @@ export function mountExplore({ store, onPickSeed, onShowDetail }) {
     const history = [...state.history];
 
     if (state.seed && state.recommendations && state.recommendations.length) {
-      history.push({ seed: state.seed, recommendations: state.recommendations });
+      // `sort` as well as the array: the array carries the ORDER, and `sort`
+      // is what lets the segmented control still say which order that is.
+      // ui/app.py:62 records the Tkinter entry shape as
+      // {track_id, recommendations, sort_state} for the same reason.
+      history.push({
+        seed: state.seed,
+        recommendations: state.recommendations,
+        sort: state.sort,
+      });
       while (history.length > HISTORY_CAPACITY) {
         history.shift();
       }
@@ -178,7 +248,11 @@ export function mountExplore({ store, onPickSeed, onShowDetail }) {
     store.setState({
       history,
       seed: previous.seed,
+      // Verbatim, in the order it was stored in, with no recomputation. Top-N
+      // is deliberately NOT restored: it is read from the current state at
+      // render time, which is the asymmetry inventory :420-421 asks for.
       recommendations: previous.recommendations,
+      sort: previous.sort || DEFAULT_SORT,
       exploreStatus: 'ready',
       exploreError: null,
     });
@@ -223,14 +297,16 @@ export function mountExplore({ store, onPickSeed, onShowDetail }) {
     change.type = 'button';
     change.addEventListener('click', onPickSeed);
 
-    const copy = element('button', 'button', 'Copy');
-    copy.type = 'button';
-    copy.addEventListener('click', async () => {
-      const copied = await copyToClipboard(displayName(track));
-      copy.textContent = copied ? 'Copied' : 'Copy failed';
-      window.setTimeout(() => {
-        copy.textContent = 'Copy';
-      }, 1500);
+    /* An ADDITION, not inventory :327 - see §6.3. :327 copies the selected
+     * RECOMMENDATION, which is the per-row control in renderRow. Copying the
+     * track you are currently exploring from is useful and costs nothing, so
+     * it stays; it is recorded as an addition rather than counted as the
+     * catalogued control. */
+    const copy = copyControl({
+      className: 'button seed__copy',
+      resting: 'Copy',
+      restingLabel: `Copy ${displayName(track)}`,
+      text: displayName(track),
     });
 
     const details = element('button', 'button button--quiet', 'Details');
@@ -255,7 +331,15 @@ export function mountExplore({ store, onPickSeed, onShowDetail }) {
       const option = element('button', 'segmented__option', sort.label);
       option.type = 'button';
       option.setAttribute('aria-pressed', String(state.sort === name));
-      option.addEventListener('click', () => store.setState({ sort: name }));
+      // Inventory :385-386 - the sort applies to ALL computed recommendations.
+      // It runs over the whole stored list and stores the result, so the
+      // order becomes state; truncation to Top-N happens at render.
+      option.addEventListener('click', () =>
+        store.setState((current) => ({
+          sort: name,
+          recommendations: sortRecommendations(current.recommendations, name),
+        })),
+      );
       segmented.append(option);
     }
     sortGroup.append(segmented);
@@ -310,22 +394,36 @@ export function mountExplore({ store, onPickSeed, onShowDetail }) {
 
     main.addEventListener('click', () => seed(recommendation.track_id));
 
+    /* Inventory :327 and the context menu's `Copy to Clipboard` (:348-354).
+     * Both act on the selected RECOMMENDATION, so this is the control that
+     * answers them - a sibling of the row button, not a child of it, so a
+     * click here cannot also re-seed. The FORMATTING still differs from
+     * Tkinter's on purpose ({artist} – {title} rather than the title alone);
+     * that divergence is §6.3. */
+    const copy = copyControl({
+      className: 'rec__copy',
+      resting: '⧉',
+      restingLabel: `Copy ${displayName(recommendation)}`,
+      text: displayName(recommendation),
+    });
+
     const info = element('button', 'rec__info', 'ⓘ');
     info.type = 'button';
     info.setAttribute('aria-label', `Details for ${displayName(recommendation)}`);
     info.addEventListener('click', () => onShowDetail(recommendation.track_id));
 
-    row.append(main, info);
+    row.append(main, copy, info);
     return row;
   }
 
   function renderList(state) {
     const wrapper = element('div', 'recs');
 
-    // Inventory :385-386 - the sort applies to ALL computed recommendations,
-    // then the list is re-rendered truncated to topN. Sorting after truncating
-    // would show the best of the first fifty rather than the best fifty.
-    const sorted = sortRecommendations(state.recommendations, state.sort);
+    // No sorting here. `state.recommendations` is already in display order -
+    // see sortRecommendations - and re-sorting on the way out is exactly what
+    // threw away the order a history entry had been stored in. Rendering
+    // truncates to the CURRENT Top-N and does nothing else.
+    const sorted = state.recommendations;
     const shown = sorted.slice(0, state.topN);
 
     const caption =

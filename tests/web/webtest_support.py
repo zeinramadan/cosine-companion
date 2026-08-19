@@ -54,10 +54,25 @@ class Client:
         self.host = host
         self.port = port
 
-    def request(self, method, path, headers=None):
+    def request(self, method, path, headers=None, host_header=True):
+        """Send one request.
+
+        ``host_header=False`` sends no Host header at all, which
+        ``connection.request`` will not do - it fills one in when the caller
+        supplies none. The server's Host check has to be testable against an
+        absent header, not only against a wrong one.
+        """
         connection = http.client.HTTPConnection(self.host, self.port, timeout=10)
         try:
-            connection.request(method, path, headers=headers or {})
+            if host_header:
+                connection.request(method, path, headers=headers or {})
+            else:
+                connection.putrequest(
+                    method, path, skip_host=True, skip_accept_encoding=True
+                )
+                for name, value in (headers or {}).items():
+                    connection.putheader(name, value)
+                connection.endheaders()
             raw = connection.getresponse()
             return Response(raw.status, dict(raw.getheaders()), raw.read())
         finally:
