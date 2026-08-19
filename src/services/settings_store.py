@@ -24,6 +24,7 @@ tests/test_services_are_ui_free.py, which enforces that with an AST walk.
 
 import json
 import os
+import stat
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, Union
@@ -77,6 +78,12 @@ class SettingsStore:
         return self.get(XML_PATH_KEY)
 
     def _write(self, settings: Dict[str, Any]) -> None:
+        try:
+            existing_mode = stat.S_IMODE(self.path.stat().st_mode)
+        except FileNotFoundError:
+            # A new settings file keeps NamedTemporaryFile's restrictive mode.
+            existing_mode = None
+
         temporary_path = None
         try:
             with tempfile.NamedTemporaryFile(
@@ -88,6 +95,10 @@ class SettingsStore:
             ) as temporary:
                 temporary_path = Path(temporary.name)
                 json.dump(settings, temporary, indent=2)
+                if existing_mode is not None:
+                    os.chmod(temporary_path, existing_mode)
+                temporary.flush()
+                os.fsync(temporary.fileno())
             os.replace(temporary_path, self.path)
             temporary_path = None
         finally:

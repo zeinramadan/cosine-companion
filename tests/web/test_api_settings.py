@@ -7,6 +7,7 @@ onboarding, so the Settings destination may neither read nor write it.
 
 import json
 import socket
+import threading
 
 import pytest
 
@@ -104,6 +105,91 @@ def test_post_settings_persists_immediately_and_preserves_onboarding(settings_pa
     assert json.loads(settings_path.read_text(encoding="utf-8")) == {
         "xml_path": "/new/collection.xml",
         "first_run_complete": True,
+    }
+
+
+def test_failed_serialisation_preserves_the_previous_settings_document(settings_path):
+    previous = b'{"first_run_complete":true,"xml_path":"/old/collection.xml"}\n'
+    settings_path.write_bytes(previous)
+
+    with pytest.raises(TypeError):
+        SettingsStore(settings_path).set("xml_path", {"not-json-serialisable"})
+
+    assert settings_path.read_bytes() == previous
+    assert list(settings_path.parent.glob("*.tmp")) == []
+
+
+def test_settings_writers_lock_the_full_read_modify_write(settings_path):
+    first_read_started = threading.Event()
+    release_first_writer = threading.Event()
+    second_lock_attempted = threading.Event()
+    second_writer_done = threading.Event()
+
+    class PausingStore(SettingsStore):
+        pause_next_read = True
+
+        def all(self):
+            settings = super().all()
+            if self.pause_next_read:
+                self.pause_next_read = False
+                first_read_started.set()
+                if not release_first_writer.wait(timeout=10):
+                    raise AssertionError("the first writer was never released")
+            return settings
+
+    class ObservedLock:
+        def __init__(self):
+            self._lock = threading.Lock()
+            self._attempts_lock = threading.Lock()
+            self._attempts = 0
+
+        def __enter__(self):
+            with self._attempts_lock:
+                self._attempts += 1
+                if self._attempts == 2:
+                    second_lock_attempted.set()
+            self._lock.acquire()
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            self._lock.release()
+
+    settings_path.write_text(
+        json.dumps({"first_run_complete": True}), encoding="utf-8"
+    )
+    api = CocoApi(EmptyLibrary(), PausingStore(settings_path))
+    api._settings_write_lock = ObservedLock()
+    outcomes = []
+
+    def write(xml_path, done=None):
+        outcomes.append(
+            api.handle("POST", "/api/settings", {}, {"xml_path": xml_path})
+        )
+        if done is not None:
+            done.set()
+
+    first_writer = threading.Thread(target=write, args=("/first.xml",))
+    second_writer = threading.Thread(
+        target=write, args=("/second.xml", second_writer_done)
+    )
+
+    first_writer.start()
+    assert first_read_started.wait(timeout=5), "the first writer never reached its read"
+    second_writer.start()
+    try:
+        assert second_lock_attempted.wait(timeout=5), "the second writer missed the lock"
+        assert not second_writer_done.is_set()
+    finally:
+        release_first_writer.set()
+        first_writer.join(timeout=5)
+        second_writer.join(timeout=5)
+
+    assert not first_writer.is_alive()
+    assert not second_writer.is_alive()
+    assert sorted(status for status, _body in outcomes) == [200, 200]
+    assert json.loads(settings_path.read_text(encoding="utf-8")) == {
+        "first_run_complete": True,
+        "xml_path": "/second.xml",
     }
 
 
