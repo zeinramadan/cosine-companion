@@ -1573,19 +1573,19 @@ changing `xml_path`.
 
 | Control | §2.7 line | How it appears in the web UI |
 |---|---|---|
-| `Search:` / `Clear` / `Refresh` | :669-670 | A native search field filtering on every `input`, plus the two named buttons |
-| `Delete Selected` / `Set as Current` / stats | :672-674 | The two named controls and a right-aligned live count |
-| Extended-selection track list and scrollbar | :676-679 | A scrollable ARIA multi-select list; plain click selects one, Command/Ctrl-click toggles and Shift-click selects a range |
-| Double-click to set current | :704 | Double-click and the named button both seed Explore |
-| Row format and artist/title order | :709-715 | Preserved exactly, including optional key and BPM suffixes and lowercase sort keys |
-| Filter fields, case and whitespace | :719-723 | Preserved exactly: plain substring over artist, title, album and key; the query is lowercased and never stripped |
-| Stats strings | :716 | `{n} tracks` and `{shown} of {total} tracks` |
-| No-selection warnings | :728, :737 | The exact body strings are shown through the browser's modal alert |
-| Set-current history behaviour | :725-731 | Library calls Explore's direct-load path, switches destination, and does not push history |
-| Delete confirmations | :739-745 | The singular and plural body strings are byte-for-byte the same |
-| Deleted-track record, rebuilt data and statuses | :747-776 | `LibrarySession.delete_tracks` remains the single mutation; the success, no-op, load-error and delete-error statuses are preserved |
-| Scroll restoration | :765-768 | The first visible row is restored after subtracting deleted rows above it |
-| Deleting the current Explore seed | :769-772 | The seed and recommendation list clear; history is deliberately retained |
+| `Search:` / `Clear` / `Refresh` | :671-672 | A native search field filtering on every `input`, plus the two named buttons |
+| `Delete Selected` / `Set as Current` / stats | :674-675 | The two named controls and a right-aligned live count |
+| Extended-selection track list and scrollbar | :677-701 | A scrollable ARIA multi-select list; plain click selects one, Command/Ctrl-click toggles and Shift-click selects a range |
+| Double-click to set current | :707 | Double-click and the named button both seed Explore |
+| Row format and artist/title order | :711-716 | Preserved exactly, including optional key and BPM suffixes and lowercase sort keys |
+| Filter fields, case and whitespace | :722-724 | Preserved exactly: plain substring over artist, title, album and key; the query is lowercased and never stripped |
+| Stats strings | :718 | `{n} tracks` and `{shown} of {total} tracks` |
+| No-selection warnings | :731, :738 | The exact body strings are shown through the browser's modal alert |
+| Set-current history behaviour | :731-734 | Library calls Explore's direct-load path, switches destination, and does not push history |
+| Delete confirmations | :740-745 | The singular and plural body strings are byte-for-byte the same |
+| Deleted-track record, rebuilt data and statuses | :747-768 | `LibrarySession.delete_tracks` remains the single mutation; the success, no-op, load-error and delete-error statuses are preserved |
+| Scroll restoration | :763-768 | The first visible row is restored after subtracting deleted rows above it |
+| Deleting the current Explore seed | :765-771 | The seed and recommendation list clear; history is deliberately retained |
 
 `DeletedTracksDialog` (§2.10) is not part of this destination. It remains
 deferred with the rest of Settings' deleted-track management: Library records
@@ -1604,6 +1604,16 @@ The same plain/Command-or-Ctrl/Shift selection operations are implemented.
 Warnings and confirmations use the browser's modal `alert`/`confirm`, which
 preserves every catalogued body string but does not let the application set the
 Tk dialog titles `No Selection`, `Confirm Deletion` or `Deletion Error`.
+
+**Library presentation.** The search field and track list are responsive rather
+than fixed at Tk's width 30 and height 20 (:671, :677). Typography, grey text
+and the destructive button use the web design-system tokens rather than the Tk
+font declarations and literal `lightcoral` (:671, :674-675). Status text lives
+inside the Library destination rather than the Tk window's shared status bar
+(:726-727, :763-768). When deletion clears the current seed, Explore returns to
+its existing `Pick a seed track` empty state rather than rendering the literal
+Tk header `Current track: —` (:765-766); the seed, recommendations and history
+semantics are unchanged.
 
 **Library deletion repairs the characterised defects.** Defects #2, #3 and #14
 are fixed rather than reproduced. The four aligned files are immutable
