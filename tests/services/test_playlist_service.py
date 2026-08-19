@@ -29,10 +29,12 @@ from playlist_fixtures import (
 
 from core.playlist_store import (
     PROVENANCE_FILENAME,
+    REAP_GRACE_SECONDS,
     STAGING_SUFFIX,
     committed_table_paths,
     playlist_manifest_path,
     read_provenance,
+    reap_superseded_generations,
 )
 from services.playlist_import import import_playlists
 from services.playlist_service import (
@@ -505,20 +507,52 @@ def test_an_import_killed_before_it_commits_leaves_THE_PREVIOUS_ONE_INTACT(
     assert playlists_pq(data_dir).read_bytes() == before
 
 
-def test_a_killed_import_leaves_no_files_of_its_own_behind(imported, monkeypatch):
-    """Scratch files are the writer's business, not the data directory's.
+def test_an_import_interrupted_AT_ITS_COMMIT_leaves_only_inert_debris(
+    imported, monkeypatch
+):
+    """The deliberate cost of never undoing a commit that may have happened.
 
-    Covers both halves of the cleanup: the staged manifest, and the two table
-    files the import claimed before it wrote a byte to either. A generation
-    that never committed leaves the directory exactly as it found it.
+    Cleanup used to cover the ``os.replace`` itself, and an exception surfacing
+    there deleted the two tables the manifest had just started naming. It could
+    not do otherwise: it had no way to know whether the rename had landed, and
+    it guessed "no". This guesses the other way, and only ``OSError`` - which
+    ``rename`` raises only when it changed nothing - is treated as proof.
+
+    So an interrupt at the commit is no longer tidy, and it is no longer
+    destructive either. What it leaves is exactly what a ``SIGKILL`` at the
+    same instant leaves, because a ``SIGKILL`` runs no handler at all: two
+    table files and a staged manifest that no pointer names. Nothing reads
+    them, and the reaper takes them.
     """
     data_dir, xml = imported
-    before = sorted(path.name for path in data_dir.iterdir())
+    before = {path.name for path in data_dir.iterdir()}
 
     _import_generation_b(data_dir, xml, monkeypatch, allow=0)
 
-    assert sorted(path.name for path in data_dir.iterdir()) == before
+    # The import that was already there is untouched and still the one on disk.
+    service = PlaylistService(data_dir)
+    assert service.provenance.source_name == "export.xml"
+    assert full_paths(service.playlists_for("t1")) == (
+        ("top level",),
+        ("Alpha", "shared name"),
+    )
+
+    # What is left over is named by nothing.
+    debris = {path.name for path in data_dir.iterdir()} - before
+    assert debris, "the interrupted import did claim its names, or nothing is proved"
+    assert debris.isdisjoint(
+        {service.provenance.playlists_file, service.provenance.membership_file}
+    )
+
+    # ...and it is the reaper's, once it is nobody's in-flight work.
+    for path in data_dir.iterdir():
+        stamp = os.stat(path).st_mtime - (REAP_GRACE_SECONDS + 60)
+        os.utime(path, (stamp, stamp))
+    reap_superseded_generations(data_dir)
+
+    assert {path.name for path in data_dir.iterdir()} == before
     assert sorted(p.name for p in data_dir.glob("*" + STAGING_SUFFIX)) == []
+    assert PlaylistService(data_dir).provenance.source_name == "export.xml"
 
 
 def test_a_write_that_fails_partway_still_cleans_up_after_itself(

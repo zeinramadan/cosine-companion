@@ -34,6 +34,22 @@ than an error:
   "nothing imported". Not one of them raises; ``reload`` is a funnel of guards
   and every one of them returns.
 
+THE WRITER IS ANOTHER PROCESS, SO THE CACHE IS INVALIDATED FROM DISK
+--------------------------------------------------------------------
+``web/host.py:77`` builds one of these inside ``build_api`` and the window
+holds it until it closes, while ``import-playlists`` - the command this service
+tells the user to run - is a different process entirely. Nothing inside this
+process is notified when that command commits, so an index cached behind a
+"have I loaded yet" flag is an index that never changes again: the drawer shows
+its import call-to-action, the user runs the command, it succeeds, and the
+drawer keeps showing it until the app is restarted. The staleness prompt has
+the same shape and is worse - it detects the re-export and then names a command
+whose effect it cannot see.
+
+So the cache is keyed on the pointer itself. Every accessor re-reads
+``playlist_import.json`` and rebuilds only when those bytes differ from the
+ones the current index was built from; see ``_ensure_loaded``.
+
 NO MODULE-LEVEL HEAVY IMPORTS
 -----------------------------
 pandas and pyarrow only. Nothing from ``processing`` is imported at any level,
@@ -53,6 +69,7 @@ from typing import Dict, List, Optional, Tuple
 from core.playlist_store import (
     PlaylistProvenance,
     digest_file,
+    playlist_manifest_path,
     read_playlist_tables,
     read_provenance,
 )
@@ -135,6 +152,10 @@ class PlaylistService:
             data_dir = DATA
         self.data_dir = Path(data_dir)
         self._loaded = False
+        #: The manifest bytes ``_by_track`` was built from - the cache key, and
+        #: ``None`` both before the first load and while there is no readable
+        #: manifest. See ``_ensure_loaded``.
+        self._manifest: Optional[bytes] = None
         self._by_track: Dict[str, Tuple[PlaylistRef, ...]] = {}
         self._provenance: Optional[PlaylistProvenance] = None
 
@@ -166,7 +187,20 @@ class PlaylistService:
            layout removes.
         3. **the rows will not build an index** - a column of the right name
            holding something unusable.
+
+        THE POINTER IS READ FIRST, AND KEPT
+        -----------------------------------
+        The manifest's bytes are captured BEFORE anything is parsed out of
+        them, and become the key this index is cached against. Before, and not
+        after, because the two orders fail differently: a writer committing
+        between the two reads leaves this service holding the NEW tables under
+        the OLD key, so the next accessor reloads once more and converges,
+        which costs one wasted rebuild. Capturing the key afterwards would file
+        the new pointer beside the old rows and serve them for the life of the
+        process - the failure this is here to remove, reintroduced one line
+        further down.
         """
+        self._manifest = self._manifest_bytes()
         self._loaded = True
         self._by_track = {}
         self._provenance = None
@@ -249,9 +283,53 @@ class PlaylistService:
             for track_id, entries in collected.items()
         }
 
+    def _manifest_bytes(self) -> Optional[bytes]:
+        """The pointer's raw bytes, or ``None`` when there is no reading it.
+
+        ``os.replace`` is atomic per file, so this returns one whole manifest
+        or another - never a torn one - and never blocks a writer.
+        """
+        try:
+            return playlist_manifest_path(self.data_dir).read_bytes()
+        except OSError:
+            return None
+
     def _ensure_loaded(self) -> None:
-        if not self._loaded:
-            self.reload()
+        """Rebuild if the pointer on disk is not the one we built from.
+
+        WHY THE BYTES, AND NOT mtime-AND-SIZE
+        -------------------------------------
+        The same argument ``PlaylistProvenance`` makes about the export, and
+        here it is not even a judgement call: re-importing an unchanged export
+        writes a manifest of *identical length*, because every field that
+        differs is fixed-width - a 32-hex generation in each of the two
+        filenames, two 64-hex digests, unchanged counts, and an ISO timestamp
+        that is the same length whatever it says. Size can therefore never
+        notice a re-import, and on a filesystem whose mtime granularity is a
+        second, two imports inside the same second are indistinguishable as
+        well. That is a false "fresh", which is the one answer this service is
+        not allowed to give.
+
+        WHY EVERY ACCESS, AND NOT A POLL OR AN EXPLICIT REFRESH
+        -------------------------------------------------------
+        A poll needs a clock and a thread and still answers late; an explicit
+        refresh needs something in THIS process to know that a command in
+        ANOTHER process has finished, which is exactly what nothing here knows.
+        Checking on access is the only one of the three that cannot be wrong,
+        and it is affordable. Measured against the real library: **14.5 us** to
+        read the 757-byte manifest, against the **0.54 ms** SHA-256 of the
+        1.5 MB export that ``staleness()`` already spends on the same call
+        path. Under 3% of a cost the drawer is paying anyway, and ~0.1% of the
+        ~15 ms request it is part of. ``lookup`` - which is what the drawer's
+        request actually calls - checks once, not once per field.
+
+        A rebuild is not free (two parquet files, ~66 KB on the real export),
+        but it happens only when the pointer actually changed, which is once
+        per import.
+        """
+        if self._loaded and self._manifest_bytes() == self._manifest:
+            return
+        self.reload()
 
     # -- read accessors ----------------------------------------------------
 
@@ -280,7 +358,16 @@ class PlaylistService:
         reintroduce the false "fresh" the digest exists to rule out. 0.53 ms on
         the real 1.5 MB export.
         """
-        provenance = self.provenance
+        return self._staleness_of(self.provenance)
+
+    @staticmethod
+    def _staleness_of(provenance) -> StalenessVerdict:
+        """The verdict for a provenance the caller has already settled on.
+
+        Split out so ``lookup`` can ask about the record it is already holding
+        instead of going back through ``self.provenance``, which would re-check
+        the pointer and could answer about a different generation.
+        """
         if provenance is None:
             return StalenessVerdict()
 
@@ -321,11 +408,35 @@ class PlaylistService:
         return self._by_track.get(str(track_id), ())
 
     def lookup(self, track_id: str) -> PlaylistLookup:
-        """Everything the drawer needs for one track, in one typed result."""
-        playlists = self.playlists_for(track_id)
+        """Everything the drawer needs for one track, in one typed result.
+
+        ONE POINTER CHECK, AND EVERY FIELD FROM THE GENERATION IT FOUND
+        ---------------------------------------------------------------
+        The accessors above each re-check the manifest, which is what lets a
+        long-lived service follow an import committed by another process. Built
+        out of four of those calls, this result would be free to straddle a
+        commit: the rows from generation A because that is what was loaded when
+        ``playlists_for`` ran, and the provenance from B because the importer
+        landed a microsecond later. A manifest naming one export beside rows
+        that came from another is precisely the corruption
+        ``core.playlist_store`` is built to make impossible, and assembling it
+        here out of four individually-correct answers would put it back at the
+        only layer that matters - the one the drawer renders.
+
+        So the check happens once, at the top, and every field below is read
+        out of the state that check settled on. The drawer's request is one
+        question and gets one generation's answer. A commit landing while this
+        runs is picked up by the next request, which is the next thing the user
+        does.
+        """
+        self._ensure_loaded()
+        provenance = self._provenance
+        playlists = (
+            None if provenance is None else self._by_track.get(str(track_id), ())
+        )
         return PlaylistLookup(
-            imported=playlists is not None,
+            imported=provenance is not None,
             playlists=playlists,
-            provenance=self.provenance,
-            staleness=self.staleness(),
+            provenance=provenance,
+            staleness=self._staleness_of(provenance),
         )

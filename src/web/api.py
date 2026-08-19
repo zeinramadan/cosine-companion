@@ -431,18 +431,28 @@ class CocoApi:
         # Still explicitly null when nothing has been imported - the drawer
         # tells "no playlist data" from "this track is in no playlists", and
         # the two are different screens. An empty LIST is the second one.
-        detail["playlists"] = self._playlists(track_id)
-        detail["playlist_source"] = self._playlist_source()
+        #
+        # ONE call, not three. ``PlaylistService`` re-reads the manifest on
+        # every access so that the app follows an import run in a terminal, so
+        # separate calls for the rows, the provenance and the staleness verdict
+        # are separate chances to be told about different generations - and the
+        # drawer would render the mixture as one import. ``lookup`` checks the
+        # pointer once and answers every part of the question from what it
+        # found.
+        answer = self.playlists.lookup(track_id)
+        detail["playlists"] = self._playlists(answer)
+        detail["playlist_source"] = self._playlist_source(answer)
         return detail
 
-    def _playlists(self, track_id: str) -> Optional[List[Dict[str, Any]]]:
+    @staticmethod
+    def _playlists(answer) -> Optional[List[Dict[str, Any]]]:
         """This track's playlists, or ``None`` when none have been imported.
 
         ``folder_path`` goes over the wire as a LIST OF SEGMENTS and is joined
         by the drawer. Two folder names in the real export contain a forward
         slash, so joining here would hand the UI a string it cannot take apart.
         """
-        found = self.playlists.playlists_for(track_id)
+        found = answer.playlists
         if found is None:
             return None
         return [
@@ -455,7 +465,8 @@ class CocoApi:
             for playlist in found
         ]
 
-    def _playlist_source(self) -> Optional[Dict[str, Any]]:
+    @staticmethod
+    def _playlist_source(answer) -> Optional[Dict[str, Any]]:
         """Provenance and the staleness verdict, or ``None`` before any import.
 
         The absolute ``source_xml`` is deliberately NOT sent. Spec §6.4's own
@@ -466,11 +477,11 @@ class CocoApi:
         command the service does, rather than the frontend keeping its own copy
         of a string that can drift.
         """
-        provenance = self.playlists.provenance
+        provenance = answer.provenance
         if provenance is None:
             return None
 
-        verdict = self.playlists.staleness()
+        verdict = answer.staleness
         return _jsonable(
             {
                 "source_name": provenance.source_name,

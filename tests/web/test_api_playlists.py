@@ -128,6 +128,15 @@ def test_a_schema_2_install_shows_the_import_call_to_action_not_an_error(
 
     So: a 200, with the same two nulls the never-imported state produces. One
     re-import - the command that screen is already showing - restores them.
+
+    ONE API, ACROSS THE IMPORT
+    --------------------------
+    The repaired request is made against the SAME ``CocoApi`` as the broken
+    one, because that is the only version of this that means anything:
+    ``web/host.py:78`` builds one and the window holds it until it closes. An
+    earlier version of this test built a second API afterwards, which is a
+    restarted app - and a restarted app was exactly what the user was being
+    made to do.
     """
     write_schema_2_layout(web_data_dir, export)
     api = CocoApi(web_library, settings, playlists=PlaylistService(web_data_dir))
@@ -140,12 +149,50 @@ def test_a_schema_2_install_shows_the_import_call_to_action_not_an_error(
 
     import_playlists(export, data_dir=web_data_dir, now=FIXED_CLOCK)
 
-    _, repaired = call(
-        CocoApi(web_library, settings, playlists=PlaylistService(web_data_dir)),
-        f"/api/tracks/{MEMBER_ONE}",
-    )
+    _, repaired = call(api, f"/api/tracks/{MEMBER_ONE}")
     assert [entry["name"] for entry in repaired["track"]["playlists"]] == [
         "top level",
+        "hard 1hr",
+    ]
+    assert repaired["track"]["playlist_source"]["source_name"] == export.name
+
+
+def test_the_drawer_follows_a_RE_import_without_the_app_being_restarted(
+    web_library, settings, web_data_dir, export
+):
+    """The staleness prompt's whole point, at the endpoint the drawer calls.
+
+    ``playlist_source.stale`` goes true when the export changes, and the block
+    it drives names ``import-playlists``. Running that command has to change
+    what the NEXT request returns from the API already running - otherwise the
+    drawer is telling the user to do something it cannot observe, and the
+    prompt stays up over data that is no longer stale.
+    """
+    import_playlists(export, data_dir=web_data_dir, now=FIXED_CLOCK)
+    api = CocoApi(web_library, settings, playlists=PlaylistService(web_data_dir))
+
+    _, before = call(api, f"/api/tracks/{MEMBER_ONE}")
+    assert before["track"]["playlist_source"]["stale"] is False
+    assert [entry["name"] for entry in before["track"]["playlists"]] == [
+        "top level",
+        "hard 1hr",
+    ]
+
+    export.write_text(
+        PLAYLIST_XML.replace('Name="top level"', 'Name="renamed top"'),
+        encoding="utf-8",
+    )
+
+    _, stale = call(api, f"/api/tracks/{MEMBER_ONE}")
+    assert stale["track"]["playlist_source"]["stale"] is True
+    assert IMPORT_COMMAND in stale["track"]["playlist_source"]["reason"]
+
+    import_playlists(export, data_dir=web_data_dir, now=FIXED_CLOCK)
+
+    _, after = call(api, f"/api/tracks/{MEMBER_ONE}")
+    assert after["track"]["playlist_source"]["stale"] is False
+    assert [entry["name"] for entry in after["track"]["playlists"]] == [
+        "renamed top",
         "hard 1hr",
     ]
 

@@ -26,9 +26,13 @@ A race proved by timing is a test that flakes in CI and gets deleted, which is
 worse than not having it. Every interleaving below is *injected*: the reader is
 paused at a named seam, or the two writers are stepped through each other with
 ``threading.Event``. Every ``wait`` carries a timeout so a deadlock fails the
-test instead of hanging the suite. The only unsynchronised test is the soak
-loop at the bottom, and it asserts an invariant that can be violated but never
-"passed by luck".
+test instead of hanging the suite.
+
+The reader loop over real import processes is the one test whose reader is
+free-running, and even there nothing is left to a scheduler: it does not start
+an import until the reader has been *seen* to observe the previous one. Its
+invariant can be violated but never "passed by luck", and its ordering
+assertion can no longer be FAILED by luck either.
 
 THE SEAM THE READER IS PAUSED AT
 --------------------------------
@@ -47,6 +51,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -74,7 +79,7 @@ from core.playlist_store import (
     reap_superseded_generations,
 )
 from services.playlist_import import import_playlists
-from services.playlist_service import PlaylistService
+from services.playlist_service import IMPORT_COMMAND, PlaylistService
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -144,21 +149,31 @@ def assert_committed_state_is_coherent(data_dir):
     reader may see either generation; what it may never see is a manifest
     naming one export beside table rows that came from the other, or a pair of
     tables that disagree with each other.
+
+    ONE ``lookup``, NOT TWO ACCESSORS
+    ---------------------------------
+    ``PlaylistService`` re-reads the manifest on every access, because the
+    writer is another process and an index cached for the life of the window is
+    an index that never changes. That makes ``service.provenance`` and
+    ``service.playlists_for(...)`` two separate observations, and asking for
+    the provenance of one generation and the rows of the next is a way to build
+    a blend out of two correct answers rather than to detect one. ``lookup``
+    checks the pointer once and answers from what it found, which is also what
+    the drawer's request does.
     """
-    service = PlaylistService(data_dir)
-    provenance = service.provenance
-    if provenance is None:
+    answer = PlaylistService(data_dir).lookup("t1")
+    if answer.provenance is None:
         return None
 
-    assert provenance.source_name in BY_SOURCE, (
+    assert answer.provenance.source_name in BY_SOURCE, (
         f"manifest names an export no generation here wrote: "
-        f"{provenance.source_name!r}"
+        f"{answer.provenance.source_name!r}"
     )
-    assert full_paths(service.playlists_for("t1")) == BY_SOURCE[provenance.source_name], (
-        f"the manifest says the tables came from {provenance.source_name}, but "
-        f"their rows say otherwise - a blended generation reported as imported"
+    assert full_paths(answer.playlists) == BY_SOURCE[answer.provenance.source_name], (
+        f"the manifest says the tables came from {answer.provenance.source_name}, "
+        f"but their rows say otherwise - a blended generation reported as imported"
     )
-    return provenance.source_name
+    return answer.provenance.source_name
 
 
 # ---------------------------------------------------------------------------
@@ -277,6 +292,11 @@ def test_a_writer_landing_while_the_reader_is_open_cannot_blend_two_generations(
     A reader that verifies the bytes it actually parsed cannot do that, and a
     writer that never chooses a name an existing generation is using cannot
     make it try.
+
+    The reader is one ``lookup`` - the drawer's request - because that is the
+    unit inside which the answer has to hold together. By the time it returns,
+    the pointer on disk may well name B; what this asserts is that the answer
+    built from A's manifest is built from A's rows, whole.
     """
     data_dir, _, b_xml = two_generations
 
@@ -284,15 +304,14 @@ def test_a_writer_landing_while_the_reader_is_open_cannot_blend_two_generations(
         data_dir, lambda: land_generation_b(data_dir, b_xml, writer_got_this_far)
     ).install(monkeypatch)
 
-    service = PlaylistService(data_dir)
-    service.reload()
+    answer = PlaylistService(data_dir).lookup("t1")
 
-    assert service.imported is True, (
+    assert answer.imported is True, (
         "generation A's committed files were readable when the read began and "
         "nothing may take them away mid-read"
     )
-    assert service.provenance.source_name == "a.xml"
-    assert full_paths(service.playlists_for("t1")) == T1_IN_A
+    assert answer.provenance.source_name == "a.xml"
+    assert full_paths(answer.playlists) == T1_IN_A
 
 
 def test_a_committed_table_edited_in_place_is_refused(two_generations):
@@ -318,6 +337,67 @@ def test_a_committed_table_edited_in_place_is_refused(two_generations):
     assert service.lookup("t1").playlists is None
 
 
+class _SwapsTheFileBeforeTheSECONDReadOfIt:
+    """Counts the reads of one file, and changes it under the second one.
+
+    A reader that takes its digest from one read and its rows from another is
+    exposed at exactly one instant - between the two - and WHICH two depends on
+    how it happens to be written:
+
+    * ``digest_file(path)`` then ``read_parquet(path)``;
+    * ``digest_file(path)`` then ``read_bytes()`` then a parse of the buffer;
+    * ``read_bytes()`` then ``read_parquet(path)``.
+
+    An earlier version of this fired on the first ``read_parquet`` and so only
+    covered the first and third of those. The second slipped through, because
+    by the time a parse was reached the damage was being done to a file whose
+    bytes had already been taken. So this counts instead of naming a seam:
+    every route to a file's bytes is hooked, and the file changes just before
+    the SECOND of them, whichever two they turn out to be.
+
+    A reader that reads once never reaches a second read and never sees a
+    swapped byte. That is exactly the property under test, and it is why the
+    guard at the end of the test is "the file was read at all" rather than "the
+    swap fired".
+    """
+
+    def __init__(self, path, replacement):
+        self.path = Path(path)
+        self.replacement = replacement
+        self.reads = 0
+        self.swapped = False
+
+    def _count(self, path):
+        if path is None or Path(path) != self.path:
+            return
+        self.reads += 1
+        if self.reads >= 2 and not self.swapped:
+            self.swapped = True
+            self.path.write_bytes(self.replacement)
+
+    def install(self, monkeypatch):
+        real_digest = store.digest_file
+        real_read_bytes = Path.read_bytes
+        real_read_parquet = store.pd.read_parquet
+
+        def digest_file(path):
+            self._count(path)
+            return real_digest(path)
+
+        def read_bytes(inner_self):
+            self._count(inner_self)
+            return real_read_bytes(inner_self)
+
+        def read_parquet(source, *args, **kwargs):
+            self._count(source if isinstance(source, (str, Path)) else None)
+            return real_read_parquet(source, *args, **kwargs)
+
+        monkeypatch.setattr(store, "digest_file", digest_file)
+        monkeypatch.setattr(Path, "read_bytes", read_bytes)
+        monkeypatch.setattr(store.pd, "read_parquet", read_parquet)
+        return self
+
+
 def test_the_digest_describes_the_bytes_THAT_WERE_PARSED(two_generations, monkeypatch):
     """Round 2's blocker, restated at the level of one function.
 
@@ -325,12 +405,12 @@ def test_the_digest_describes_the_bytes_THAT_WERE_PARSED(two_generations, monkey
     table under a reader, and they are load-bearing: with them in place, a
     reader that hashed the path and then re-opened it would pass every other
     test in this file. So the rule "the digest describes the bytes that were
-    parsed" is asserted here directly, by damaging the file in the one instant
-    a hash-twice reader is exposed - after its digest and before its parse.
+    parsed" is asserted here directly - the file changes between any two reads
+    of it, so a reader that needs two gets bytes its digest never described.
 
-    That instant does not exist in a reader that reads the bytes once, which is
-    the whole point; the test is what stops it being reintroduced by somebody
-    who reasonably observes that immutable names make it unnecessary.
+    A reader that reads once has no such instant, which is the whole point; the
+    test is what stops one being reintroduced by somebody who reasonably
+    observes that immutable names make the second read harmless.
     """
     data_dir, _, b_xml = two_generations
     playlists_pq, _ = committed_table_paths(data_dir)
@@ -341,23 +421,15 @@ def test_the_digest_describes_the_bytes_THAT_WERE_PARSED(two_generations, monkey
     import_playlists(b_xml, data_dir=elsewhere, now=FIXED_CLOCK)
     other_generation = committed_table_paths(elsewhere)[0].read_bytes()
 
-    real_read_parquet = store.pd.read_parquet
-    swapped = []
+    watcher = _SwapsTheFileBeforeTheSECONDReadOfIt(
+        playlists_pq, other_generation
+    ).install(monkeypatch)
 
-    def read_parquet(source, *args, **kwargs):
-        if not swapped:
-            swapped.append(True)
-            playlists_pq.write_bytes(other_generation)
-        return real_read_parquet(source, *args, **kwargs)
+    answer = PlaylistService(data_dir).lookup("t1")
 
-    monkeypatch.setattr(store.pd, "read_parquet", read_parquet)
-
-    service = PlaylistService(data_dir)
-    service.reload()
-
-    assert swapped, "the reader never reached a parse, so nothing was proved"
-    assert service.imported is True
-    assert full_paths(service.playlists_for("t1")) == T1_IN_A
+    assert watcher.reads, "the reader never opened the playlist table at all"
+    assert answer.imported is True
+    assert full_paths(answer.playlists) == T1_IN_A
 
 
 # ---------------------------------------------------------------------------
@@ -506,6 +578,92 @@ def test_two_concurrent_writers_both_succeed_and_each_commits_its_own(
     assert summaries["a"].provenance.source_name == "a.xml"
 
 
+class _InterruptsTheInstantTheCommitLands:
+    """The real ``os``, except that ``replace`` returns and then Ctrl-C lands.
+
+    The ambiguous instant, and the only one that matters: the rename has TAKEN
+    EFFECT and an asynchronous exception surfaces before the caller can record
+    that it did. CPython delivers a pending signal at a bytecode boundary, so
+    there is no line of Python that reliably runs between the syscall
+    returning and the ``KeyboardInterrupt`` being raised - which is why "set a
+    flag on the next line" is not a fix and this double raises from inside the
+    call rather than after it.
+
+    A SIGKILL is not this case: it runs no handler at all, so it cannot undo
+    anything. Only a CAUGHT exception can.
+    """
+
+    def __getattr__(self, name):
+        return getattr(os, name)
+
+    def replace(self, src, dst):
+        os.replace(src, dst)
+        raise KeyboardInterrupt("the user pressed Ctrl-C")
+
+
+def test_a_commit_that_took_effect_is_never_undone_by_its_own_cleanup(
+    two_generations
+):
+    """THE BLOCKER. Cleanup may not reach a file the manifest now names.
+
+    ``import-playlists`` is the command the drawer tells the user to run in a
+    terminal, so Ctrl-C is an ordinary thing to press at an arbitrary point in
+    it - and the point that matters is the one where the pointer has already
+    moved. Deleting the new tables there leaves the manifest naming two files
+    that are gone, which every reader reports as "nothing imported": the user
+    has interrupted an import and lost the import they already had.
+    """
+    data_dir, _, b_xml = two_generations
+    previous = committed_table_paths(data_dir)
+
+    real_os = store.os
+    store.os = _InterruptsTheInstantTheCommitLands()
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            import_playlists(b_xml, data_dir=data_dir, now=FIXED_CLOCK)
+    finally:
+        store.os = real_os
+
+    committed = committed_table_paths(data_dir)
+    assert committed is not None
+    assert committed != previous, "the interrupted import did commit, or nothing is proved"
+    assert all(path.is_file() for path in committed), (
+        "the manifest names these and the interrupt handler deleted them"
+    )
+    assert assert_committed_state_is_coherent(data_dir) == "b.xml"
+
+
+def test_a_commit_that_did_NOT_take_effect_still_cleans_up_after_itself(
+    two_generations
+):
+    """The other side of the same rule, so the fix cannot be "never clean up".
+
+    ``rename`` changes nothing when it fails, so an ``OSError`` out of the
+    commit is proof the pointer did not move - and the two tables this import
+    claimed are still nobody's but its own. They go, as they always did.
+    """
+    data_dir, _, b_xml = two_generations
+    before = sorted(path.name for path in data_dir.iterdir())
+
+    class _CommitFails:
+        def __getattr__(self, name):
+            return getattr(os, name)
+
+        def replace(self, src, dst):
+            raise OSError("no space left on device")
+
+    real_os = store.os
+    store.os = _CommitFails()
+    try:
+        with pytest.raises(OSError):
+            import_playlists(b_xml, data_dir=data_dir, now=FIXED_CLOCK)
+    finally:
+        store.os = real_os
+
+    assert sorted(path.name for path in data_dir.iterdir()) == before
+    assert assert_committed_state_is_coherent(data_dir) == "a.xml"
+
+
 # ---------------------------------------------------------------------------
 # The real case: a separate PROCESS, running the shipped command
 # ---------------------------------------------------------------------------
@@ -586,13 +744,12 @@ def test_a_real_import_process_landing_mid_read_cannot_blend_two_generations(
 
     _PausesBeforeReadingATable(data_dir, import_in_another_process).install(monkeypatch)
 
-    service = PlaylistService(data_dir)
-    service.reload()
+    answer = PlaylistService(data_dir).lookup("t1")
 
     assert results and results[0].returncode == 0, results and results[0].stderr
-    assert service.imported is True
-    assert service.provenance.source_name == "a.xml"
-    assert full_paths(service.playlists_for("t1")) == T1_IN_A
+    assert answer.imported is True
+    assert answer.provenance.source_name == "a.xml"
+    assert full_paths(answer.playlists) == T1_IN_A
 
     # And the next reader sees the new generation, whole.
     assert assert_committed_state_is_coherent(data_dir) == "b.xml"
@@ -600,16 +757,42 @@ def test_a_real_import_process_landing_mid_read_cannot_blend_two_generations(
 
 @needs_the_cli
 def test_a_reader_looping_across_real_imports_never_observes_a_blend(tmp_path):
-    """Unsynchronised, and the only test here that is: a reader loop against a
-    sequence of real import processes.
+    """A free-running reader against a sequence of real import processes.
 
-    Nothing is injected and nothing is timed - the loop simply reads as fast as
-    it can for as long as the writers run, and every single observation has to
-    satisfy the one invariant: either nothing is imported, or the generation on
-    disk is the one its own manifest describes. An observation that violates it
-    fails the test; an observation that does not cannot make the test pass for
-    the wrong reason, because passing also requires having SEEN both
-    generations, which only happens by reading across the commits.
+    Nothing is injected into the store and the reader is never paused: it reads
+    as fast as it can while a genuine ``import-playlists`` subprocess commits
+    underneath it, and every single observation has to satisfy the one
+    invariant - either nothing is imported, or the generation on disk is the
+    one its own manifest describes.
+
+    THE BARRIER IS ON THE WRITER, AND IT IS WHAT MAKES THIS CI-SAFE
+    ---------------------------------------------------------------
+    The ordering assertion at the bottom is the half of this test that says the
+    reader really did read ACROSS the commits rather than only before and
+    after them. Left to the scheduler it is a coin toss: a reader thread that
+    does not happen to run during the moments b.xml is current produces
+    ``["a.xml"]`` from a store that behaved perfectly, and the test fails for
+    something that is not a defect. That is not a hypothetical - descheduling
+    the reader across the middle commit reproduces it exactly, and a test that
+    can fail on correct code is a test that gets deleted.
+
+    It is a RARE failure rather than a common one, which is worse and not
+    better. The b.xml generation stays current for as long as the next import
+    takes to start a Python interpreter, so the reader has hundreds of
+    milliseconds to sample a loop that takes a few - 15 runs of the unbarriered
+    shape on a machine with every core saturated did not produce it once. A
+    test that fails twice a year is a test nobody trusts and everybody re-runs
+    until it goes green.
+
+    So the next import does not START until the reader has been seen to observe
+    the previous one. That is a barrier on the WRITER, not on the reader: the
+    reader is never held still, the import still lands underneath a running
+    read loop, and the interleaving under test is untouched. All it removes is
+    the possibility of a generation coming and going unlooked-at, which is the
+    only thing the assertion was ever sensitive to.
+
+    An import that the reader never observes now fails as a timeout naming the
+    commit it stopped at, rather than as a mismatched list at the end.
     """
     a_xml = tmp_path / "a.xml"
     a_xml.write_text(FIXTURE_XML, encoding="utf-8")
@@ -621,6 +804,7 @@ def test_a_reader_looping_across_real_imports_never_observes_a_blend(tmp_path):
     reads = [0]
     stop = threading.Event()
     problems = []
+    progress = threading.Condition()
 
     def read_until_stopped():
         while not stop.is_set():
@@ -628,16 +812,29 @@ def test_a_reader_looping_across_real_imports_never_observes_a_blend(tmp_path):
             try:
                 seen = assert_committed_state_is_coherent(data_dir)
             except AssertionError as error:
-                problems.append(error)
+                with progress:
+                    problems.append(error)
+                    progress.notify_all()
                 return
             if seen is not None and (not observed or observed[-1] != seen):
-                observed.append(seen)
+                with progress:
+                    observed.append(seen)
+                    progress.notify_all()
 
     reader = threading.Thread(target=read_until_stopped, name="reader")
     reader.start()
     try:
-        for xml in (a_xml, b_xml, a_xml):
+        for index, xml in enumerate((a_xml, b_xml, a_xml)):
             assert run_import_cli(xml, data_dir).returncode == 0
+            with progress:
+                landed = progress.wait_for(
+                    lambda: problems or len(observed) > index, DEADLOCK_TIMEOUT
+                )
+            assert not problems, problems[0]
+            assert landed, (
+                f"the reader never observed commit #{index + 1} ({xml.name}); "
+                f"it is still on {observed}"
+            )
     finally:
         stop.set()
         reader.join(DEADLOCK_TIMEOUT)
@@ -647,6 +844,104 @@ def test_a_reader_looping_across_real_imports_never_observes_a_blend(tmp_path):
     assert observed == ["a.xml", "b.xml", "a.xml"], (
         f"the reader did not straddle all three commits: {observed}"
     )
+
+
+# ---------------------------------------------------------------------------
+# THE LONG-LIVED READER - one service, held for the life of the window
+# ---------------------------------------------------------------------------
+#
+# ``web/host.py:77`` builds ONE ``PlaylistService`` inside ``build_api`` and the
+# window holds it until it closes, so every test above that builds a fresh
+# service after an import is measuring a process that has just started. The
+# workflow this feature is for does the opposite: the drawer names the command,
+# the user runs it in a terminal, and the app they run it for is still open.
+
+
+@needs_the_cli
+def test_a_long_lived_service_sees_an_import_committed_by_another_process(tmp_path):
+    """The feature's core loop, with the reader that the app actually has.
+
+    Nothing imported, so the drawer shows the call-to-action; the user runs the
+    command it names; the SAME service must answer with the playlists. A
+    service that latches "nothing imported" on its first miss shows that screen
+    until the app is restarted, which is the one thing the call-to-action
+    promises will not happen.
+    """
+    a_xml = tmp_path / "a.xml"
+    a_xml.write_text(FIXTURE_XML, encoding="utf-8")
+    data_dir = write_library(tmp_path / "data")
+
+    service = PlaylistService(data_dir)
+    assert service.imported is False, "nothing has been imported yet"
+
+    assert run_import_cli(a_xml, data_dir).returncode == 0
+
+    assert service.imported is True, (
+        "the import succeeded in another process and this service is the one "
+        "the window is holding - it has to notice"
+    )
+    assert service.provenance.source_name == "a.xml"
+    assert full_paths(service.playlists_for("t1")) == T1_IN_A
+
+
+@needs_the_cli
+def test_a_long_lived_service_follows_a_RE_import_from_another_process(
+    two_generations
+):
+    """Not only the first import: every one after it, too.
+
+    The service already holds generation A's reverse index. A second import in
+    another process commits B, and the same instance must answer from B - both
+    the provenance the drawer prints and the rows it lists.
+    """
+    data_dir, _, b_xml = two_generations
+
+    service = PlaylistService(data_dir)
+    assert service.provenance.source_name == "a.xml"
+    assert full_paths(service.playlists_for("t1")) == T1_IN_A
+
+    assert run_import_cli(b_xml, data_dir).returncode == 0
+
+    assert service.provenance.source_name == "b.xml"
+    assert full_paths(service.playlists_for("t1")) == T1_IN_B
+
+
+@needs_the_cli
+def test_the_staleness_prompt_clears_when_the_user_runs_the_command_it_names(
+    tmp_path
+):
+    """The staleness prompt, end to end, against one long-lived service.
+
+    ``staleness()`` re-hashes the export on every call, so it notices the
+    re-export immediately - and then names a command whose effect the same
+    service could not see. Detecting a change it cannot act on is worse than
+    not detecting it: the drawer tells the user to run something, they run it,
+    and the prompt stays up.
+
+    One path, rewritten in place, because that is what re-exporting from
+    Rekordbox does.
+    """
+    xml = tmp_path / "library_export.xml"
+    xml.write_text(FIXTURE_XML, encoding="utf-8")
+    data_dir = write_library(tmp_path / "data")
+    assert run_import_cli(xml, data_dir).returncode == 0
+
+    service = PlaylistService(data_dir)
+    assert service.staleness().stale is False
+
+    xml.write_text(GENERATION_B_XML, encoding="utf-8")
+
+    verdict = service.staleness()
+    assert verdict.stale is True
+    assert IMPORT_COMMAND in verdict.reason
+
+    assert run_import_cli(xml, data_dir).returncode == 0
+
+    assert service.staleness().stale is False, (
+        "the prompt named a command, the user ran it, and it worked - the "
+        "service that raised the prompt has to stand down"
+    )
+    assert full_paths(service.playlists_for("t1")) == T1_IN_B
 
 
 # ---------------------------------------------------------------------------
@@ -768,6 +1063,101 @@ def test_the_generation_the_manifest_names_is_never_reaped(two_generations):
     assert PlaylistService(data_dir).imported is True
 
 
+def test_a_generation_COMMITTED_WHILE_THE_REAPER_RUNS_is_not_deleted(
+    two_generations, monkeypatch
+):
+    """THE BLOCKER. Protection read once, up front, is protection of the past.
+
+    The reaper decides what is protected, and only then starts unlinking. A
+    writer that commits inside that gap has published a generation the reaper
+    has never heard of - and the reaper is holding a list that says those two
+    files belong to nobody.
+
+    The interleaving is injected at the seam where the protected set is read:
+    the real set is captured (naming generation A, which is the manifest at
+    that instant), a REAL import of B runs to completion, and the stale set is
+    then handed back to the loop that does the unlinking. Ageing stands in for
+    B having stalled long enough to be past the grace, which is the other half
+    of the reviewer's interleaving and the only part a clock would otherwise
+    decide.
+
+    The result on an unfixed reaper is the worst state this module has: a
+    manifest naming a generation whose files are gone, with the PREVIOUS
+    generation's files still on disk and referenced by nothing.
+    """
+    data_dir, _, b_xml = two_generations
+    age_everything(data_dir)
+
+    real_protected = store._protected_table_names
+    landed = []
+
+    def snapshot_then_let_b_commit(directory):
+        protected = real_protected(directory)
+        if not landed:
+            landed.append(True)
+            import_playlists(b_xml, data_dir=data_dir, now=FIXED_CLOCK)
+            age_everything(data_dir)
+        return protected
+
+    monkeypatch.setattr(store, "_protected_table_names", snapshot_then_let_b_commit)
+
+    reap_superseded_generations(data_dir)
+
+    assert landed, "the reaper never read the protected set, so nothing was proved"
+    live = committed_table_paths(data_dir)
+    assert live is not None
+    assert all(path.is_file() for path in live), (
+        "the manifest names these two files and the reaper deleted them"
+    )
+    assert assert_committed_state_is_coherent(data_dir) == "b.xml"
+
+
+def test_a_manifest_that_cannot_be_READ_protects_everything(two_generations):
+    """Fail closed. An unreadable pointer is not a pointer that names nothing.
+
+    ``_protected_table_names`` parses the manifest loosely on purpose, so that
+    a record from a schema this build cannot interpret still protects its own
+    files. A record it cannot even PARSE has to protect more, not less: the
+    reaper knows it has no idea what is live, and the only safe answer to that
+    is to delete nothing. Reaping is tidiness; the files are the user's data.
+    """
+    data_dir, _, _ = two_generations
+    live = committed_table_paths(data_dir)
+    age_everything(data_dir, REAP_GRACE_SECONDS * 10)
+    playlist_manifest_path(data_dir).write_text("{ truncated", encoding="utf-8")
+
+    removed = reap_superseded_generations(data_dir)
+
+    assert removed == [], f"an unreadable manifest is not a licence to delete: {removed}"
+    assert all(path.is_file() for path in live)
+
+
+def test_a_manifest_that_disappears_mid_reap_protects_everything(two_generations):
+    """The same rule at the other seam: unreadable when the unlink is decided.
+
+    Re-reading the manifest before each unlink is what makes the reaper safe,
+    and it introduces a read that can itself fail. It must fail the same way -
+    closed - rather than falling back to "nothing is protected".
+    """
+    data_dir, _, _ = two_generations
+    live = committed_table_paths(data_dir)
+    age_everything(data_dir, REAP_GRACE_SECONDS * 10)
+
+    real_read_text = Path.read_text
+
+    def read_text(inner_self, *args, **kwargs):
+        if inner_self.name == PROVENANCE_FILENAME:
+            raise OSError("too many open files")
+        return real_read_text(inner_self, *args, **kwargs)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(Path, "read_text", read_text)
+        removed = reap_superseded_generations(data_dir)
+
+    assert removed == []
+    assert all(path.is_file() for path in live)
+
+
 def test_another_writers_in_flight_generation_is_protected_by_the_grace(
     two_generations
 ):
@@ -814,17 +1204,29 @@ def test_the_reaper_never_touches_a_file_this_scheme_did_not_write(two_generatio
     assert all(path.read_bytes() == raw for path, raw in bystanders.items())
 
 
-def test_the_flat_schema_2_tables_are_cleared_once(schema_2_install):
+def test_the_flat_schema_2_tables_are_cleared_by_the_FIRST_import(schema_2_install):
     """Migration leaves two files this build can no longer read.
 
     They are derived, re-importable, and named by nothing, so they are cleared
     by the first import after the upgrade rather than left looking current
     forever. Nothing is lost that the import about to run does not replace.
+
+    NOTHING IS BACKDATED HERE, AND THAT IS THE POINT
+    ------------------------------------------------
+    An earlier version of this test aged the directory past the grace first,
+    which quietly conceded that "the first import clears them" was false: on a
+    real upgrade those two files are minutes old, so the grace kept them and
+    the user's data directory held two stale tables that looked current until
+    the next import. The grace exists to protect an in-flight writer's claim,
+    and no writer in this build can ever be in flight on a name it does not
+    write - so these two are exempt from it by name.
     """
     data_dir, xml = schema_2_install
     flat = [data_dir / name for name in LEGACY_TABLE_FILENAMES]
     assert all(path.is_file() for path in flat)
-    age_everything(data_dir)
+    assert all(
+        path.stat().st_mtime > time.time() - REAP_GRACE_SECONDS for path in flat
+    ), "these must be INSIDE the grace, or the test has aged them after all"
 
     import_playlists(xml, data_dir=data_dir, now=FIXED_CLOCK)
 
