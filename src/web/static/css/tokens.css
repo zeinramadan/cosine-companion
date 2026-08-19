@@ -140,17 +140,30 @@
   --drawer-width: 23rem;
   --content-max: 60rem;
 
-  /* -- Camelot pills -------------------------------------------------------
-   * The wheel is 12 positions, so hue = (n - 1) * 30 degrees puts harmonic
-   * neighbours (n +/- 1) next to each other in colour as well as in number.
-   * `--camelot-hue` is set per element by the component; these two tokens are
-   * resolved lazily against whatever it is, which is why 24 hard-coded pairs
-   * are not needed.
-   *
-   * Colour is never the ONLY signal - the pill always renders its own text
-   * ("8A"), so the wheel position is readable without perceiving hue at all.
-   * A/B differ in lightness as well as in that text.
-   */
+}
+
+/* -- Camelot pills ---------------------------------------------------------
+ * The wheel is 12 positions, so hue = (n - 1) * 30 degrees puts harmonic
+ * neighbours (n ± 1) next to each other in colour as well as in number.
+ * `--camelot-hue` is set per element by format.js, which is why 24 hard-coded
+ * pairs are not needed.
+ *
+ * THESE MUST BE DECLARED ON `.pill`, NOT ON `:root`. Custom-property
+ * substitution happens where a property is DECLARED, not where it is used: an
+ * hsl() built on var(--camelot-hue) and declared at :root is substituted
+ * against :root's value - the fallback - and the already-resolved colour then
+ * inherits down. Declared here, substitution happens on the element that
+ * actually carries the hue. This was shipped the wrong way round first and
+ * caught by sampling pixels out of a screenshot: every pill in the list
+ * rendered at 222°, the fallback, while the A/B lightness difference worked
+ * and made it look deliberate. tests/web/test_frontend_conventions.py now
+ * pins the declaration site.
+ *
+ * Colour is never the ONLY signal - the pill always renders its own text
+ * ("8A"), so the wheel position is readable without perceiving hue at all.
+ * A/B differ in lightness as well as in that text.
+ */
+.pill {
   --camelot-bg: hsl(var(--camelot-hue, 220deg) 42% 20%);
   --camelot-fg: hsl(var(--camelot-hue, 220deg) 82% 80%);
   --camelot-edge: hsl(var(--camelot-hue, 220deg) 45% 34%);

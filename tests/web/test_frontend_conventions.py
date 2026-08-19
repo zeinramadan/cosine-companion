@@ -365,3 +365,28 @@ def test_every_script_file_is_reachable_from_the_entry_module():
 def test_the_entry_module_is_loaded_as_a_module():
     """`type="module"` is what makes the import graph above work at all."""
     assert '<script type="module" src="/js/main.js"></script>' in read(INDEX_HTML)
+
+
+def test_the_camelot_colours_are_declared_on_the_pill_not_on_the_root():
+    """The bug this pins was invisible in every static check and looked fine.
+
+    Custom-property substitution happens where a property is DECLARED, not
+    where it is used. `--camelot-bg: hsl(var(--camelot-hue, 220deg) …)`
+    declared inside `:root` is substituted against :root's `--camelot-hue` -
+    which is never set, so the fallback wins - and the already-resolved colour
+    inherits down to every pill. The per-element hue format.js sets is simply
+    ignored. Every pill in the list rendered at the same 222°, while the A/B
+    lightness difference still worked and made the result look intentional. It
+    was caught by sampling pixels out of a screenshot, not by any assertion.
+    """
+    body = read(TOKENS_CSS)
+    root_block = body[body.index(":root {") : body.index("\n}", body.index(":root {"))]
+
+    leaked = [name for name in ("--camelot-bg", "--camelot-fg", "--camelot-edge")
+              if f"{name}:" in root_block]
+
+    assert leaked == [], (
+        f"{leaked} are declared inside :root, so var(--camelot-hue) resolves "
+        "against :root and every pill gets the fallback hue"
+    )
+    assert ".pill {" in body, "the camelot properties must be declared on .pill"

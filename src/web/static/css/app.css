@@ -58,7 +58,6 @@ button {
 :focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
-  border-radius: var(--radius-sm);
 }
 
 .visually-hidden {
@@ -339,7 +338,6 @@ button {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  min-width: 8.5rem;
 }
 
 .score__track {
@@ -701,4 +699,250 @@ button {
   background: var(--surface-2);
   color: var(--ink-secondary);
   font-size: var(--text-sm);
+}
+
+/* ==========================================================================
+   Explore
+   ========================================================================== */
+
+.explore {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* ---- seed card ----------------------------------------------------------
+   The one deliberately decorative surface in the app. It answers "what am I
+   mixing out of", which is the question the whole destination exists for, and
+   it should not look like another row. */
+
+.seed {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-6);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xl);
+  background: var(--gradient-seed);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+
+.seed__eyebrow {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.seed__title {
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-bold);
+  line-height: var(--leading-tight);
+  letter-spacing: -0.025em;
+  overflow-wrap: anywhere;
+}
+
+.seed__artist {
+  font-size: var(--text-lg);
+  color: var(--ink-secondary);
+  overflow-wrap: anywhere;
+}
+
+.seed__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.seed__fact {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  font-size: var(--text-sm);
+  color: var(--ink-secondary);
+}
+
+.seed__fact b {
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-primary);
+}
+
+.seed__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+}
+
+/* ---- toolbar ------------------------------------------------------------ */
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.toolbar__group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.toolbar__spacer {
+  flex: 1;
+}
+
+.segmented {
+  display: inline-flex;
+  padding: var(--space-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  gap: var(--space-1);
+}
+
+.segmented__option {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--ink-secondary);
+  font-size: var(--text-sm);
+  transition: background var(--motion-fast) var(--ease-out),
+              color var(--motion-fast) var(--ease-out);
+}
+
+.segmented__option:hover {
+  background: var(--surface-2);
+  color: var(--ink-primary);
+}
+
+.segmented__option[aria-pressed="true"] {
+  background: var(--surface-4);
+  color: var(--ink-primary);
+  font-weight: var(--weight-medium);
+}
+
+.select {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--ink-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+}
+
+/* ---- recommendation rows ------------------------------------------------ */
+
+.recs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.recs__caption {
+  padding-bottom: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--ink-tertiary);
+}
+
+.rec {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-2);
+  border-radius: var(--radius-md);
+  transition: background var(--motion-fast) var(--ease-out);
+}
+
+.rec:hover {
+  background: var(--surface-2);
+}
+
+.rec__main {
+  /* Six tracks for six children: rank, text, key, bpm, score, cosine. Five
+     here left the cosine cell wrapping onto an implicit second row, which
+     doubled the row height and threw the ⓘ button off centre.
+
+     The title track has a real minimum rather than minmax(0, 1fr): opening the
+     drawer takes ~370 px out of the content column, and with a zero minimum
+     the fixed tracks ate everything and every title rendered as "B…". */
+  display: grid;
+  grid-template-columns:
+    2.5rem minmax(8rem, 1fr) auto 4rem minmax(5.5rem, 10rem) 5rem;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  text-align: left;
+}
+
+.rec__rank {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-tertiary);
+}
+
+.rec__text {
+  min-width: 0;
+}
+
+.rec__title {
+  font-size: var(--text-md);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rec__artist {
+  font-size: var(--text-sm);
+  color: var(--ink-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rec__bpm {
+  text-align: right;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-secondary);
+}
+
+.rec__info {
+  align-self: center;
+  width: 2rem;
+  height: 2rem;
+  margin-right: var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--ink-tertiary);
+  transition: background var(--motion-fast) var(--ease-out),
+              color var(--motion-fast) var(--ease-out);
+}
+
+.rec__info:hover {
+  background: var(--surface-3);
+  color: var(--ink-primary);
+}
+
+.rec__cosine {
+  text-align: right;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-tertiary);
 }

@@ -6,73 +6,49 @@
 
 import { api } from './api.js';
 import { createStore } from './store.js';
-import { element, stateBlock } from './format.js';
 import { mountSidebar } from './components/sidebar.js';
 import { mountPalette } from './components/palette.js';
 import { mountDrawer } from './components/drawer.js';
+import { mountExplore, DEFAULT_SORT, DEFAULT_TOP_N } from './components/explore.js';
 
 const store = createStore({
   destination: 'explore',
   library: null,
   libraryError: null,
+
+  // Explore
+  seed: null,
+  recommendations: [],
+  history: [],
+  sort: DEFAULT_SORT,
+  topN: DEFAULT_TOP_N,
+  exploreStatus: 'idle',
+  exploreError: null,
+
+  // Drawer
   detailTrackId: null,
   detail: null,
 });
-
-const explore = document.getElementById('view-explore');
-
-function renderExplorePrompt(state) {
-  if (state.destination !== 'explore') {
-    return;
-  }
-
-  if (state.libraryError) {
-    explore.replaceChildren(
-      stateBlock({
-        variant: 'error',
-        title: 'The library could not be read',
-        body: state.libraryError,
-      }),
-    );
-    return;
-  }
-
-  if (state.library && state.library.is_empty) {
-    explore.replaceChildren(
-      stateBlock({
-        title: 'No index yet',
-        body:
-          'Index a Rekordbox collection first — the Tkinter app’s Settings ▸ ' +
-          'Update Library does this today.',
-      }),
-    );
-    return;
-  }
-
-  const open = element('button', 'button button--primary', 'Search tracks  ⌘K');
-  open.type = 'button';
-  open.addEventListener('click', () => palette.open());
-
-  explore.replaceChildren(
-    stateBlock({
-      title: 'Pick a seed track',
-      body: 'Everything starts from one track. Press ⌘K to find it.',
-      action: open,
-    }),
-  );
-}
 
 mountSidebar({ store });
 mountDrawer({ store });
 
 const palette = mountPalette({
-  onSelect: (track) => {
-    store.setState({ detailTrackId: track.track_id, detail: null });
+  onSelect: (track, { details }) => {
+    if (details) {
+      store.setState({ detailTrackId: track.track_id, detail: null });
+      return;
+    }
+    store.setState({ destination: 'explore' });
+    explore.seed(track.track_id);
   },
 });
 
-store.subscribe(renderExplorePrompt);
-renderExplorePrompt(store.getState());
+const explore = mountExplore({
+  store,
+  onPickSeed: () => palette.open(),
+  onShowDetail: (trackId) => store.setState({ detailTrackId: trackId, detail: null }),
+});
 
 api
   .library()
