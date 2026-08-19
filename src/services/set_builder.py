@@ -45,12 +45,34 @@ class SetBuilder:
         Raises ValueError when there are no anchors, or when an anchor position
         exceeds ``total_tracks`` - both propagate to the Set Creator tab's
         "Generation Error" dialog exactly as before.
+
+        ONE SNAPSHOT PER BUILD, not three property reads.
+        ``self.library.meta_ix``, ``.emb_ix`` and ``.index`` are three separate
+        reads of three separately rebound attributes. ``delete_tracks`` rebinds
+        all of them in sequence (``library_session.py:203-224``), so a delete
+        landing between two of these reads hands ``generate_set`` a post-delete
+        ``meta_ix`` with a pre-delete ``index`` - a set ranked against vectors
+        for tracks the metadata no longer has. Nothing in the Tkinter app could
+        interleave that way, because the delete and the build are both on the Tk
+        main thread; the web layer serves requests off it, and the sibling PR
+        that adds a Library destination makes DELETE reachable while a set is
+        being built.
+
+        ``LibrarySession.snapshot()`` exists for exactly this, and
+        ``ExportService`` already uses it the same way
+        (``export_service.py:132``). It does not make the build atomic against a
+        concurrent delete - its own docstring says the capture is itself a
+        sequence of reads - it makes the window ONE per build instead of three,
+        which is the guarantee the Tkinter caller had when it passed the three
+        objects as arguments.
         """
+        library = self.library.snapshot()
+
         return generate_set(
             anchor_tracks,
             total_tracks,
-            self.library.meta_ix,
-            self.library.emb_ix,
-            self.library.index,
+            library.meta_ix,
+            library.emb_ix,
+            library.index,
             exclude_tracks=exclude_tracks,
         )

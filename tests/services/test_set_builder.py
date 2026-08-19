@@ -264,3 +264,111 @@ def test_rejects_an_anchor_beyond_the_set_length(builder):
 
 def test_reads_the_library_live(fixture_library, builder):
     assert builder.library is fixture_library
+
+
+# --------------------------------------------------------------------------
+# The build/delete race: one snapshot per build
+# --------------------------------------------------------------------------
+
+
+#: In the generated set for ``{1: ANCHOR}, 5`` (position 4), so removing it from
+#: the index mid-build changes the answer rather than being invisible.
+DOOMED = "f05"
+
+
+def _delete_when_meta_ix_is_read(library, monkeypatch, track_id=DOOMED):
+    """Make the FIRST read of the ``meta_ix`` property delete ``track_id``.
+
+    The interleaving this pins is not one a scheduler has to be persuaded to
+    produce. ``build`` used to read ``self.library.meta_ix``,
+    ``.emb_ix`` and ``.index`` as three separate arguments, and
+    ``delete_tracks`` rebinds all three in sequence
+    (``library_session.py:203-224``), so a delete landing after the first read
+    hands ``generate_set`` a PRE-delete ``meta_ix`` with a POST-delete
+    ``index``: a set ranked against vectors the metadata no longer agrees with.
+    Firing the delete from inside the getter puts it exactly there, every run.
+
+    ``snapshot()`` reads the private attributes, so a build that captures one
+    never touches this getter and the delete never fires at all. Returns the
+    list that records whether it did.
+    """
+    fired = []
+    getter = type(library).meta_ix.fget
+
+    def deleting(self):
+        value = getter(self)
+        if not fired:
+            fired.append(track_id)
+            # After the value is captured, so this is the half-applied read and
+            # not simply a pre-emptive delete.
+            self.delete_tracks([track_id])
+        return value
+
+    monkeypatch.setattr(type(library), "meta_ix", property(deleting))
+    return fired
+
+
+def test_the_builder_takes_exactly_one_snapshot_per_build(fixture_library):
+    """The capture point, counted. ``ExportService`` pins the same thing for the
+    same reason (``test_export_service.py:439``)."""
+    real = fixture_library.snapshot
+    calls = []
+    fixture_library.snapshot = lambda: calls.append(1) or real()
+
+    SetBuilder(fixture_library).build({1: ANCHOR}, 5)
+
+    assert len(calls) == 1, (
+        "build reads meta_ix / emb_ix / index as separate properties instead of "
+        "capturing one LibrarySnapshot"
+    )
+
+
+def test_a_delete_between_the_property_reads_cannot_be_observed_half_applied(
+    fixture_library, monkeypatch, isolated_deleted_tracks
+):
+    """DETERMINISTIC INTERLEAVING, not a timing hope.
+
+    Nothing in the Tkinter app could interleave this way - the delete and the
+    build are both on the Tk main thread - but the web layer serves requests off
+    it, and the sibling PR that adds a Library destination makes DELETE
+    reachable while a set is being built.
+    """
+    undisturbed = [t.track_id for t in SetBuilder(fixture_library).build({1: ANCHOR}, 5)]
+    assert DOOMED in undisturbed, "the doomed track is not in the set, so its loss is invisible"
+
+    fired = _delete_when_meta_ix_is_read(fixture_library, monkeypatch)
+    got = [t.track_id for t in SetBuilder(fixture_library).build({1: ANCHOR}, 5)]
+
+    assert fired == [], (
+        "the build read the live meta_ix property, so a concurrent delete landed "
+        "between it and the index read"
+    )
+    assert got == undisturbed
+    assert DOOMED in fixture_library.ids, "the doomed track was deleted after all"
+
+
+def test_the_interleaving_harness_can_actually_change_the_answer(
+    fixture_library, monkeypatch, isolated_deleted_tracks
+):
+    """Guard the guard.
+
+    ``fired == []`` above is only worth something if firing WOULD have produced
+    a different set. Here the three properties are read the way ``build`` used
+    to read them, and the answer moves - so the test above is measuring a real
+    difference and not the absence of one.
+    """
+    from recommendations.set_generator import generate_set
+
+    undisturbed = [t.track_id for t in SetBuilder(fixture_library).build({1: ANCHOR}, 5)]
+    fired = _delete_when_meta_ix_is_read(fixture_library, monkeypatch)
+
+    # The three separate reads, in the order build() used.
+    half_applied = generate_set(
+        {1: ANCHOR}, 5, fixture_library.meta_ix, fixture_library.emb_ix, fixture_library.index
+    )
+
+    assert fired == [DOOMED], "the harness never fired"
+    assert [t.track_id for t in half_applied] != undisturbed, (
+        "reading the three properties around a delete produced the same set, so "
+        "the snapshot test above cannot distinguish anything"
+    )
