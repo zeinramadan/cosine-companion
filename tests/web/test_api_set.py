@@ -234,8 +234,14 @@ def test_an_anchor_the_library_does_not_have_is_left_to_the_service(api):
     filled by a generated pick instead. The endpoint does not add a 404 of its
     own: this module is an adapter, and inventing a rule here would mean two
     different answers to "what is an unknown anchor" depending on which caller
-    asked. It cannot be reached from the web UI, where anchors come from search
-    results.
+    asked.
+
+    This used to add "and it cannot be reached from the web UI, where anchors
+    come from search results". That was true when there was only one
+    destination. The sibling Library destination adds a reachable DELETE, so an
+    anchor chosen from a search result can be gone by the time Generate Set is
+    pressed - see the next test, which reaches this same path through a real
+    delete rather than an id nothing ever had.
     """
     status, body = generate(api, {"1": "no-such-track"}, 3)
 
@@ -243,6 +249,60 @@ def test_an_anchor_the_library_does_not_have_is_left_to_the_service(api):
     assert len(body["tracks"]) == 3
     assert body["tracks"][0]["track_id"] != "no-such-track"
     assert body["tracks"][0]["is_anchor"] is False
+
+
+@pytest.fixture
+def isolated_deleted_tracks(tmp_path, monkeypatch):
+    """Point ``deleted_tracks.json`` at ``tmp_path`` so ``data/`` is untouched.
+
+    Same patch as ``tests/services/conftest.py:83``, kept local: this is the
+    only test in this file that mutates a library, and a shared fixture in
+    ``tests/web/conftest.py`` would be a hunk in a file the sibling
+    destination's PR is also editing.
+    """
+    import core.deleted_tracks as deleted_tracks_module
+
+    target = tmp_path / "deleted_tracks.json"
+    monkeypatch.setattr(deleted_tracks_module, "DELETED_TRACKS_JSON", target)
+    return target
+
+
+def test_an_anchor_deleted_after_it_was_chosen_takes_the_same_path(
+    api, fixture_library, isolated_deleted_tracks
+):
+    """The cross-destination case, reached the way a user reaches it.
+
+    The Set Creator caches an anchor's artist and title when the anchor is
+    chosen, so its row outlives a delete on the Library destination - inventory
+    §6.6 declares that, and the row is the visible half. This is the invisible
+    half: what the ENDPOINT then does with an anchor whose track the library no
+    longer has. The answer is the one above, and it is asserted here against a
+    track that genuinely existed and genuinely went away, because "an id nothing
+    ever had" and "an id that was deleted" are the same path only as long as
+    ``delete_tracks`` really does remove the row from ``meta_ix``.
+    """
+    anchored = "f01"
+    assert anchored in fixture_library.meta_ix.index
+
+    removed = fixture_library.delete_tracks([anchored])
+
+    assert removed == 1
+    assert anchored not in fixture_library.meta_ix.index
+    assert anchored not in fixture_library.ids
+
+    status, body = generate(api, {"1": anchored}, 3)
+
+    # No error, no 404, and the slot is filled by an ordinary generated pick.
+    assert status == 200
+    assert len(body["tracks"]) == 3
+    assert body["tracks"][0]["track_id"] != anchored
+    assert body["tracks"][0]["is_anchor"] is False
+    assert anchored not in [track["track_id"] for track in body["tracks"]], (
+        "the deleted track came back in the generated set"
+    )
+    assert [track["is_anchor"] for track in body["tracks"]] == [False, False, False], (
+        "the set claims an anchor the request's only anchor could not supply"
+    )
 
 
 def test_an_empty_library_is_a_409_before_anything_else_is_looked_at(tmp_path):

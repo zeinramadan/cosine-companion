@@ -1909,6 +1909,41 @@ stays in the listbox behind the `Generation Error` dialog. The web destination
 now leaves `generatedSet` alone on the failure path for the same reason — a
 regenerate that fails should not cost the user the set they already had.
 
+*An anchored track that is deleted from the library keeps its row here, and Tk
+drops it.* :473 says an anchor is "skipped entirely if its `track_id` is no
+longer in `meta_ix`", and that is what `update_anchor_listbox` does: it holds a
+bare `Dict[int, str]` and looks the artist and title up at render time
+(`ui/set_creator_tab.py:88-90`), so a row it cannot look up is not drawn. This
+destination captures the artist and title from the search result the anchor was
+chosen from, so its row survives a delete and reads exactly as it did before it.
+
+This PR shipped saying the case was unreachable, which is not true any more. The
+sibling Library destination adds a reachable DELETE, and `delete_tracks`
+(`services/library_session.py:183`) takes the row out of `meta_ix` for good; a
+delete and a set build are two requests served off the Tk main thread rather
+than two turns of one event loop, so a track can be anchored on this tab and
+deleted on that one.
+
+What GENERATION does is the same either way, and it is the part that matters:
+the anchor is dropped. `generate_set` places one only `if track_id in
+meta_ix.index` (`recommendations/set_generator.py:55`), so the slot is filled by
+an ordinary generated pick and the set comes back one anchor short, with no
+error and no message. The only thing the two implementations disagree about is
+whether the anchor LIST still shows the row, and showing it is the more useful
+of the two answers: a row on screen is a row that can be selected and `Remove`d,
+where Tk's vanishes without a word and leaves the dead id in `self.anchors` to
+be dropped again on every subsequent build.
+
+Not done, and deliberately. The response is NOT made to report which anchors
+were dropped, and the rows are not self-healed from it, because the drop cannot
+be inferred from what comes back: :967's duplicate anchor produces the identical
+shape — a requested position with no anchor on it, for a track the library still
+has — so a frontend rule keyed on that shape would remove the wrong row. Telling
+the two apart means new response surface on an endpoint this PR is not otherwise
+changing. Pinned as it stands by `tests/web/test_api_set.py`, through a real
+`delete_tracks` rather than an invented id, and by
+`tests/web/js/set_creator.test.mjs` for the row that stays.
+
 **Found along the way.** Two things the code does that §2.5 and §2.12 do not
 say, reported rather than changed.
 

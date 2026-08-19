@@ -527,6 +527,67 @@ test('the destination stops claiming it is building once the abandoned response 
   assert.equal(view.state().building, null);
 });
 
+/* What `POST /api/set` returns once the anchored track has been deleted on
+ * another destination: three tracks, none of them the anchor, and NO anchor on
+ * the position that asked for one. `generate_set` places an anchor only
+ * `if track_id in meta_ix.index` (recommendations/set_generator.py:55), so the
+ * slot is filled by an ordinary generated pick.
+ * Pinned on the Python side by
+ * `tests/web/test_api_set.py::test_an_anchor_deleted_after_it_was_chosen_takes_the_same_path`,
+ * which reaches this response through a real `delete_tracks`. */
+const SET_WITHOUT_THE_DELETED_ANCHOR = SET.map((track) =>
+  track.is_anchor
+    ? {
+        ...track,
+        track_id: 'g2',
+        is_anchor: false,
+        score: 0.8412,
+        icon: '🤖',
+        artist: 'Function',
+        title: 'Voiceprint',
+        display_name: 'Function – Voiceprint',
+      }
+    : track,
+);
+
+test('an anchor deleted on another destination keeps its row, and the set is where the loss shows', async () => {
+  /* §6.6. The anchor row is a capture taken when the anchor was CHOSEN - the
+   * artist and title ride along in `anchors` rather than being looked up in
+   * `meta_ix` at render time the way set_creator_tab.py:88-90 looks them up -
+   * so a DELETE on the Library destination cannot reach it. Tk's row vanishes
+   * (:473, "skipped entirely if its track_id is no longer in meta_ix") and this
+   * one does not. Declared, not fixed: the drop cannot be inferred from the
+   * response, because :967's duplicate anchor produces the identical shape.
+   */
+  const { view } = mount();
+  await addAnchor(ALPHA, 1);
+
+  await pressGenerate();
+  fetches.deliver(SET_KEY, { tracks: SET_WITHOUT_THE_DELETED_ANCHOR });
+  await settle();
+
+  // The row stays, unchanged, and stays selectable - which is what makes it
+  // removable, and is the reason this is the better of the two behaviours.
+  assert.deepEqual(anchorTexts(), ['1. Blawan – Why They Hide']);
+  assert.deepEqual(Object.keys(view.state().anchors), ['1']);
+
+  // And the set is where the loss is visible: nothing is locked, and the track
+  // that was anchored is not in the set at all.
+  const rows = setRows().map(setRowFields);
+  assert.equal(rows.length, 3);
+  assert.deepEqual(
+    rows.map((row) => row.icon),
+    ['🤖', '🤖', '🤖'],
+    'a set built without the anchor still shows a lock',
+  );
+  assert.ok(
+    !view.state().generatedSet.some((track) => track.track_id === ALPHA.track_id),
+    'the deleted anchor came back in the set',
+  );
+  // Nothing says so, in either implementation.
+  assert.equal(statusLine(), '✅ Generated 3-track set successfully!');
+});
+
 test('a failed regeneration leaves the previous set on screen, as Tk does', async () => {
   // set_creator_tab.py:113 assigns the RESULT of build() to self.generated_set,
   // so a raise never reaches the assignment and never reaches
