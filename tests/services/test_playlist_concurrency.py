@@ -45,13 +45,14 @@ internals change - which is the point of a regression test for a race.
 comes first.
 """
 
+import contextlib
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -70,13 +71,10 @@ from core.playlist_store import (
     MEMBERSHIP_STEM,
     PLAYLISTS_STEM,
     PROVENANCE_FILENAME,
-    REAP_GRACE_SECONDS,
-    STAGING_SUFFIX,
     committed_table_paths,
     playlist_manifest_path,
     read_playlist_tables,
     read_provenance,
-    reap_superseded_generations,
 )
 from services.playlist_import import import_playlists
 from services.playlist_service import IMPORT_COMMAND, PlaylistService
@@ -945,6 +943,226 @@ def test_the_staleness_prompt_clears_when_the_user_runs_the_command_it_names(
 
 
 # ---------------------------------------------------------------------------
+# ONE SERVICE, MANY REQUEST THREADS
+# ---------------------------------------------------------------------------
+#
+# ``web/server.py`` serves on a ``ThreadingHTTPServer`` and ``web/host.py:77``
+# builds ONE ``PlaylistService`` for the life of the window, so every drawer
+# open is a request THREAD calling into the SAME instance. Two of them can be
+# inside ``lookup`` at once, and an import committed by the CLI can land
+# between any two of that method's reads.
+#
+# The invariant is the one the whole file defends, restated for the reader that
+# the app actually has: whatever a request is told, the provenance it prints
+# and the rows it lists have to have come from the SAME generation. A service
+# that assembles its answer out of several separately-correct reads rebuilds,
+# at the only layer the user can see, exactly the blend the store below it
+# exists to make impossible.
+
+
+class _PausesTheReaderAtItsFIRSTLOOKAtTheCachedState:
+    """Holds one nominated thread still the first time it touches cached state.
+
+    WHY IT WATCHES ATTRIBUTE NAMES AND NOT A METHOD
+    -----------------------------------------------
+    The seam under test is not a function call; it is the gap between a
+    reader's first read of the service's cached generation and its last. So
+    the hook fires on the first read of any attribute that CARRIES a
+    generation's contents, whichever of them the implementation happens to
+    reach first. A service that holds its generation in three separate
+    attributes fires on the first of the three and is then free to have the
+    other two changed underneath it; a service that holds one immutable state
+    object fires on that, and what it read is what it keeps.
+
+    Both designs therefore fire - the test asserts they did - and the probe
+    measures the property rather than the layout.
+
+    The pause is an ``Event``, not a sleep: the second request is started only
+    once the first is known to be parked, and the first is released only once
+    the second has finished. Nothing here depends on timing.
+    """
+
+    #: Attributes that hold a generation's CONTENTS. The cache KEY is not
+    #: among them: reading it is how a reader decides whether to rebuild, and
+    #: pausing before that decision would test a different, earlier seam.
+    CARRIES_A_GENERATION = frozenset({"_state", "_provenance", "_by_track"})
+
+    def __init__(self):
+        self.thread = None
+        self.parked = threading.Event()
+        self.resume = threading.Event()
+        self.fired = False
+
+    @contextlib.contextmanager
+    def installed(self):
+        had_own = "__getattribute__" in PlaylistService.__dict__
+        real = PlaylistService.__getattribute__
+        hook = self
+
+        def __getattribute__(service, name):
+            value = real(service, name)
+            if (
+                not hook.fired
+                and name in hook.CARRIES_A_GENERATION
+                and threading.current_thread() is hook.thread
+            ):
+                hook.fired = True
+                hook.parked.set()
+                hook.resume.wait(DEADLOCK_TIMEOUT)
+            return value
+
+        PlaylistService.__getattribute__ = __getattribute__
+        try:
+            yield self
+        finally:
+            # Released here as well as by the second request, so a failed
+            # assertion cannot leave a thread parked for the timeout.
+            self.resume.set()
+            if had_own:
+                PlaylistService.__getattribute__ = real
+            else:
+                del PlaylistService.__getattribute__
+
+
+def test_two_request_threads_on_ONE_service_cannot_blend_two_generations(
+    two_generations
+):
+    """THE BLOCKER. Request 1 must not print A's manifest over B's rows.
+
+    The interleaving is the production one, with nothing simulated about the
+    concurrency: two real threads, one shared ``PlaylistService``, and a real
+    import committed between them. Request 1 is parked at its first look at
+    the cached generation; request 2 then imports B and asks its own question,
+    which reloads the shared instance; request 1 is released and finishes.
+
+    On a service that keeps its generation in three separate attributes,
+    request 1 resumes holding A's provenance and reads B's rows - a manifest
+    naming ``a.xml`` beside the playlists of ``b.xml``. It is the same
+    corruption ``core.playlist_store`` refuses to write to disk, reassembled
+    in memory one layer above it, and the drawer renders it without a mark.
+
+    Either answer is acceptable; a mixture is not. Request 1 may report A
+    (the generation it started in) or B (the one that landed while it ran).
+    What it may not do is report half of each.
+    """
+    data_dir, _, b_xml = two_generations
+    service = PlaylistService(data_dir)
+
+    # The window has been open a while: the service already holds A.
+    assert service.lookup("t1").provenance.source_name == "a.xml"
+
+    hook = _PausesTheReaderAtItsFIRSTLOOKAtTheCachedState()
+    answers = {}
+    failures = []
+
+    def request(label, before=None):
+        def run():
+            try:
+                if before is not None:
+                    before()
+                answers[label] = service.lookup("t1")
+            except BaseException as error:  # noqa: BLE001 - reported below
+                failures.append(error)
+        return run
+
+    def import_generation_b():
+        import_playlists(b_xml, data_dir=data_dir, now=FIXED_CLOCK)
+
+    with hook.installed():
+        first = threading.Thread(target=request("first"), name="request-1")
+        hook.thread = first
+        first.start()
+        assert hook.parked.wait(DEADLOCK_TIMEOUT), (
+            "request 1 never reached the cached state - nothing was proved"
+        )
+
+        second = threading.Thread(
+            target=request("second", before=import_generation_b), name="request-2"
+        )
+        second.start()
+        second.join(DEADLOCK_TIMEOUT)
+        assert not second.is_alive(), "request 2 never finished"
+
+        hook.resume.set()
+        first.join(DEADLOCK_TIMEOUT)
+        assert not first.is_alive(), "request 1 never finished"
+
+    assert not failures, failures[0]
+    assert hook.fired
+    assert set(answers) == {"first", "second"}
+
+    for label, answer in answers.items():
+        assert answer.provenance is not None, f"{label} lost the import entirely"
+        assert full_paths(answer.playlists) == BY_SOURCE[
+            answer.provenance.source_name
+        ], (
+            f"{label} reported the manifest of "
+            f"{answer.provenance.source_name} beside rows that came from the "
+            f"other generation - a blend, assembled in the service"
+        )
+
+
+def test_a_request_thread_never_sees_a_service_MID_REBUILD_as_not_imported(
+    two_generations, monkeypatch
+):
+    """The other half: a rebuild in progress is not an "import me" screen.
+
+    A reload that blanks the service's fields before refilling them has a
+    window in which the cache key on disk has already been accepted and the
+    contents are empty. A second request arriving inside that window is told
+    the cache is current, finds nothing behind it, and reports **nothing has
+    been imported** - the drawer puts up its call-to-action, naming a command
+    the user has just run, over a generation that is committed and readable.
+
+    The rebuild is held open at the store's own seam, the one the tests at the
+    top of this file already use, so the pause is where a slow parquet read
+    really would be.
+    """
+    data_dir, _, b_xml = two_generations
+    service = PlaylistService(data_dir)
+    assert service.lookup("t1").provenance.source_name == "a.xml"
+
+    import_playlists(b_xml, data_dir=data_dir, now=FIXED_CLOCK)
+
+    observed = {}
+    failures = []
+    rebuilding = threading.Event()
+    released = threading.Event()
+
+    def second_request_runs_inside_the_rebuild():
+        rebuilding.set()
+        try:
+            second = threading.Thread(
+                target=lambda: observed.update(answer=service.lookup("t1")),
+                name="request-2",
+            )
+            second.start()
+            second.join(DEADLOCK_TIMEOUT)
+            assert not second.is_alive(), "request 2 never finished"
+        except BaseException as error:  # noqa: BLE001 - reported below
+            failures.append(error)
+        finally:
+            released.set()
+
+    _PausesBeforeReadingATable(
+        data_dir, second_request_runs_inside_the_rebuild
+    ).install(monkeypatch)
+
+    first = service.lookup("t1")
+
+    assert rebuilding.is_set(), "the rebuild never started - nothing was proved"
+    assert released.is_set()
+    assert not failures, failures[0]
+
+    answer = observed["answer"]
+    assert answer.imported is True, (
+        "a request arriving while another thread was rebuilding was told "
+        "nothing had been imported, over a committed generation"
+    )
+    assert full_paths(answer.playlists) == BY_SOURCE[answer.provenance.source_name]
+    assert full_paths(first.playlists) == BY_SOURCE[first.provenance.source_name]
+
+# ---------------------------------------------------------------------------
 # Migration off the flat-file layout
 # ---------------------------------------------------------------------------
 
@@ -985,223 +1203,145 @@ def test_re_importing_a_schema_2_install_restores_the_playlists(schema_2_install
 
 
 # ---------------------------------------------------------------------------
-# Reaping: when a generation nobody points at is allowed to go
+# Superseded generations: kept, and why nothing collects them
 # ---------------------------------------------------------------------------
+#
+# There was a reaper here. It produced a blocking data-destroying defect in two
+# consecutive reviews, and each fix narrowed its window rather than closing it,
+# because the shape - read the pointer, decide, unlink - cannot be made safe by
+# any amount of local patching when the writer is a different PROCESS. It has
+# been deleted. See the module docstring of ``core.playlist_store`` for the
+# argument, including what it would take to bring one back safely and why 66 KB
+# per import is not worth that.
+#
+# What is pinned below is the consequence: superseded generations stay on disk,
+# inert; the flat schema-2 tables are still cleared, because that case never
+# had the race in it; and no import-time code path unlinks a generation file at
+# all, which is what makes the deletion race unreachable rather than unlikely.
+
+#: A generation file, as a name. Written out here rather than imported, because
+#: the module no longer needs a pattern for one - only these tests do.
+GENERATION_FILE = re.compile(
+    r"^(?:playlists|playlist_membership)\.[0-9a-f]{32}\.parquet$"
+    r"|^playlist_import\.json\.[0-9a-f]{32}\.importing$"
+)
 
 
-def age(path, seconds):
-    """Backdate a file's mtime, which is what the reaper reads."""
-    stamp = os.stat(path).st_mtime - seconds
-    os.utime(path, (stamp, stamp))
-    return path
+class _RecordsEveryUnlink:
+    """Every path unlinked while installed, however it was reached."""
+
+    def __init__(self):
+        self.paths = []
+
+    def install(self, monkeypatch):
+        real_path_unlink = Path.unlink
+        real_os_unlink = os.unlink
+        real_os_remove = os.remove
+
+        def path_unlink(inner_self, *args, **kwargs):
+            self.paths.append(Path(inner_self))
+            return real_path_unlink(inner_self, *args, **kwargs)
+
+        def os_unlink(path, *args, **kwargs):
+            self.paths.append(Path(path))
+            return real_os_unlink(path, *args, **kwargs)
+
+        def os_remove(path, *args, **kwargs):
+            self.paths.append(Path(path))
+            return real_os_remove(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", path_unlink)
+        monkeypatch.setattr(os, "unlink", os_unlink)
+        monkeypatch.setattr(os, "remove", os_remove)
+        return self
+
+    @property
+    def generation_files(self):
+        return [path for path in self.paths if GENERATION_FILE.match(path.name)]
 
 
-def age_everything(data_dir, seconds=REAP_GRACE_SECONDS + 60):
-    for path in data_dir.iterdir():
-        age(path, seconds)
-
-
-def test_a_superseded_generation_survives_one_more_import_and_then_goes(
-    two_generations
+def test_a_generation_COMMITTED_BETWEEN_THE_READ_AND_THE_UNLINK_survives(
+    two_generations, monkeypatch
 ):
-    """The reaping cadence, stated as the two steps it actually has.
+    """THE BLOCKER, answered by deleting the code rather than narrowing it.
 
-    Reaping runs at the START of an import, never at the end of the one that
-    supersedes a generation: a reader in another process may have read the
-    previous manifest a microsecond ago and be about to open the files it
-    names, so deleting them there would put the race back with extra steps.
+    THE SETUP IS THE ONE THAT USED TO DESTROY THE LIVE GENERATION
+    -------------------------------------------------------------
+    A writer wrote both of its tables and was then suspended - SIGSTOP, a full
+    disk queue, a laptop lid closed on a running import - so by the time it
+    resumes and commits, its tables are hours old and the pointer still names
+    the previous generation. A reaper that read that pointer, found those
+    tables unprotected, and unlinked them AFTER the writer's ``os.replace``
+    landed left the manifest naming a file that was gone, and every reader
+    from then on reported "nothing imported" over an import that succeeded. No
+    ``uuid4`` collision was needed; one stalled writer was enough. The mtime
+    grace did not help, because it measures when a file was WRITTEN and not
+    when its writer last made progress.
 
-    Because the manifest is still the previous one when the reaper runs, the
-    generation being superseded is protected during that import too, and goes
-    at the one after. That extra cycle is free margin - the steady state is two
-    generations on disk, ~66 KB at the real export's size.
+    WHAT IS ASSERTED IS THAT THE PATH IS GONE
+    -----------------------------------------
+    A race is unreachable when the code that opens the window does not exist.
+    So this reconstructs that disk state exactly, runs the real import over it,
+    and asserts the only thing worth asserting about a deleted code path: not
+    one generation file is unlinked. Not "the right ones survive" - none is
+    unlinked at all, by any route the store can take to a deletion.
     """
     data_dir, a_xml, b_xml = two_generations
-    superseded = committed_table_paths(data_dir)
-    age_everything(data_dir)
+    manifest = playlist_manifest_path(data_dir)
+    superseded = manifest.read_bytes()
+    generation_a = committed_table_paths(data_dir)
 
     import_playlists(b_xml, data_dir=data_dir, now=FIXED_CLOCK)
+    generation_b = committed_table_paths(data_dir)
 
-    assert all(path.is_file() for path in superseded), (
-        "the manifest still named these when the reaper ran"
-    )
-    age_everything(data_dir)
+    # The stalled writer: B's tables on disk, the pointer still naming A...
+    manifest.write_bytes(superseded)
+    # ...and everything old enough that the deleted grace would have expired.
+    for path in data_dir.iterdir():
+        stamp = os.stat(path).st_mtime - 10_000
+        os.utime(path, (stamp, stamp))
+
+    unlinks = _RecordsEveryUnlink().install(monkeypatch)
 
     import_playlists(a_xml, data_dir=data_dir, now=FIXED_CLOCK)
 
-    assert not any(path.exists() for path in superseded)
-    assert all(path.is_file() for path in committed_table_paths(data_dir))
-
-
-def test_the_directory_holds_at_most_two_generations(two_generations):
-    """Six imports, all of them older than the grace by the time the next one
-    runs: the live generation and the one before it, and nothing else."""
-    data_dir, a_xml, b_xml = two_generations
-
-    for xml in (b_xml, a_xml, b_xml, a_xml, b_xml):
-        age_everything(data_dir)
-        import_playlists(xml, data_dir=data_dir, now=FIXED_CLOCK)
-
-    tables = sorted(path.name for path in data_dir.glob("*.parquet"))
-    assert len(tables) == 4 + 1, tables  # two generations, plus meta.parquet
-    assert sorted(path.name for path in data_dir.iterdir()) == sorted(
-        [*tables, PROVENANCE_FILENAME]
+    assert unlinks.generation_files == [], (
+        f"an import unlinked generation files: {unlinks.generation_files}. "
+        f"The reaper is back, and so is the window it opens between reading "
+        f"the pointer and acting on it."
     )
+    assert all(path.is_file() for path in (*generation_a, *generation_b))
+    assert assert_committed_state_is_coherent(data_dir) == "a.xml"
 
 
-def test_the_generation_the_manifest_names_is_never_reaped(two_generations):
-    """However old it is. Age is what makes an UNREFERENCED file safe to
-    delete; it is not on its own a reason to delete anything."""
-    data_dir, _, _ = two_generations
-    live = committed_table_paths(data_dir)
-    age_everything(data_dir, REAP_GRACE_SECONDS * 100)
-
-    removed = reap_superseded_generations(data_dir)
-
-    assert removed == []
-    assert all(path.is_file() for path in live)
-    assert PlaylistService(data_dir).imported is True
-
-
-def test_a_generation_COMMITTED_WHILE_THE_REAPER_RUNS_is_not_deleted(
-    two_generations, monkeypatch
-):
-    """THE BLOCKER. Protection read once, up front, is protection of the past.
-
-    The reaper decides what is protected, and only then starts unlinking. A
-    writer that commits inside that gap has published a generation the reaper
-    has never heard of - and the reaper is holding a list that says those two
-    files belong to nobody.
-
-    The interleaving is injected at the seam where the protected set is read:
-    the real set is captured (naming generation A, which is the manifest at
-    that instant), a REAL import of B runs to completion, and the stale set is
-    then handed back to the loop that does the unlinking. Ageing stands in for
-    B having stalled long enough to be past the grace, which is the other half
-    of the reviewer's interleaving and the only part a clock would otherwise
-    decide.
-
-    The result on an unfixed reaper is the worst state this module has: a
-    manifest naming a generation whose files are gone, with the PREVIOUS
-    generation's files still on disk and referenced by nothing.
-    """
-    data_dir, _, b_xml = two_generations
-    age_everything(data_dir)
-
-    real_protected = store._protected_table_names
-    landed = []
-
-    def snapshot_then_let_b_commit(directory):
-        protected = real_protected(directory)
-        if not landed:
-            landed.append(True)
-            import_playlists(b_xml, data_dir=data_dir, now=FIXED_CLOCK)
-            age_everything(data_dir)
-        return protected
-
-    monkeypatch.setattr(store, "_protected_table_names", snapshot_then_let_b_commit)
-
-    reap_superseded_generations(data_dir)
-
-    assert landed, "the reaper never read the protected set, so nothing was proved"
-    live = committed_table_paths(data_dir)
-    assert live is not None
-    assert all(path.is_file() for path in live), (
-        "the manifest names these two files and the reaper deleted them"
-    )
-    assert assert_committed_state_is_coherent(data_dir) == "b.xml"
-
-
-def test_a_manifest_that_cannot_be_READ_protects_everything(two_generations):
-    """Fail closed. An unreadable pointer is not a pointer that names nothing.
-
-    ``_protected_table_names`` parses the manifest loosely on purpose, so that
-    a record from a schema this build cannot interpret still protects its own
-    files. A record it cannot even PARSE has to protect more, not less: the
-    reaper knows it has no idea what is live, and the only safe answer to that
-    is to delete nothing. Reaping is tidiness; the files are the user's data.
-    """
-    data_dir, _, _ = two_generations
-    live = committed_table_paths(data_dir)
-    age_everything(data_dir, REAP_GRACE_SECONDS * 10)
-    playlist_manifest_path(data_dir).write_text("{ truncated", encoding="utf-8")
-
-    removed = reap_superseded_generations(data_dir)
-
-    assert removed == [], f"an unreadable manifest is not a licence to delete: {removed}"
-    assert all(path.is_file() for path in live)
-
-
-def test_a_manifest_that_disappears_mid_reap_protects_everything(two_generations):
-    """The same rule at the other seam: unreadable when the unlink is decided.
-
-    Re-reading the manifest before each unlink is what makes the reaper safe,
-    and it introduces a read that can itself fail. It must fail the same way -
-    closed - rather than falling back to "nothing is protected".
-    """
-    data_dir, _, _ = two_generations
-    live = committed_table_paths(data_dir)
-    age_everything(data_dir, REAP_GRACE_SECONDS * 10)
-
-    real_read_text = Path.read_text
-
-    def read_text(inner_self, *args, **kwargs):
-        if inner_self.name == PROVENANCE_FILENAME:
-            raise OSError("too many open files")
-        return real_read_text(inner_self, *args, **kwargs)
-
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(Path, "read_text", read_text)
-        removed = reap_superseded_generations(data_dir)
-
-    assert removed == []
-    assert all(path.is_file() for path in live)
-
-
-def test_another_writers_in_flight_generation_is_protected_by_the_grace(
+def test_superseded_generations_ACCUMULATE_and_that_is_the_deliberate_choice(
     two_generations
 ):
-    """The reason the grace period is correctness and not tidiness.
+    """Six imports leave six generations, and the pointer still reads right.
 
-    Writer B's tables exist before B's manifest does, so to a reaper running
-    inside writer A they are files no manifest names - which is the exact
-    description of debris. They are also seconds old, and that is what saves
-    them: without the grace, the two importers this whole design exists to keep
-    out of each other's way would delete each other's work.
+    Pinned as the cost that was accepted, not as an accident: ~33 KB per table
+    on the real export, so ~66 KB per import, and a user re-importing weekly
+    for a year ends up with about 3.4 MB. That is the whole of what deleting
+    the reaper costs, and it bought back a class of bug that could silently
+    destroy the live generation.
+
+    The thing that has to keep working is the pointer, and it does: every one
+    of these imports commits a generation that agrees with its own manifest,
+    with the previous ones sitting inert beside it.
     """
-    data_dir, _, _ = two_generations
-    in_flight = data_dir / f"{PLAYLISTS_STEM}.{'a1' * 16}.parquet"
-    in_flight.write_bytes(b"writer B is still working on this")
+    data_dir, a_xml, b_xml = two_generations
+    tables = set(committed_table_paths(data_dir))
 
-    removed = reap_superseded_generations(data_dir)
+    for index, xml in enumerate((b_xml, a_xml) * 3, start=2):
+        import_playlists(xml, data_dir=data_dir, now=FIXED_CLOCK)
+        tables.update(committed_table_paths(data_dir))
+        assert assert_committed_state_is_coherent(data_dir) == xml.name
+        assert len(tables) == index * 2, "a generation went missing"
 
-    assert removed == []
-    assert in_flight.is_file()
-
-    # ...and once it is old enough to be nobody's, it goes.
-    age(in_flight, REAP_GRACE_SECONDS + 60)
-    assert reap_superseded_generations(data_dir) == [in_flight]
-
-
-def test_the_reaper_never_touches_a_file_this_scheme_did_not_write(two_generations):
-    """It runs inside an import, in the directory holding the user's library.
-
-    ``meta.parquet``, the exports, ``settings.json``, the index files: all aged
-    well past the grace and none of them matching the pattern this scheme
-    writes. A reaper that deleted by age alone would eat the library.
-    """
-    data_dir, _, _ = two_generations
-    bystanders = {}
-    for name in ("meta.parquet", "embeddings.parquet", "index.npy", "ids.json",
-                 "settings.json", "library_export.xml", "playlists.parquet.bak"):
-        path = data_dir / name
-        path.write_bytes(f"the contents of {name}".encode())
-        bystanders[path] = path.read_bytes()
-    age_everything(data_dir, REAP_GRACE_SECONDS * 10)
-
-    reap_superseded_generations(data_dir)
-
-    assert all(path.read_bytes() == raw for path, raw in bystanders.items())
+    assert all(path.is_file() for path in tables), (
+        "superseded generations are supposed to stay - if they are going, "
+        "something is deleting them again"
+    )
 
 
 def test_the_flat_schema_2_tables_are_cleared_by_the_FIRST_import(schema_2_install):
@@ -1211,22 +1351,18 @@ def test_the_flat_schema_2_tables_are_cleared_by_the_FIRST_import(schema_2_insta
     by the first import after the upgrade rather than left looking current
     forever. Nothing is lost that the import about to run does not replace.
 
-    NOTHING IS BACKDATED HERE, AND THAT IS THE POINT
-    ------------------------------------------------
-    An earlier version of this test aged the directory past the grace first,
-    which quietly conceded that "the first import clears them" was false: on a
-    real upgrade those two files are minutes old, so the grace kept them and
-    the user's data directory held two stale tables that looked current until
-    the next import. The grace exists to protect an in-flight writer's claim,
-    and no writer in this build can ever be in flight on a name it does not
-    write - so these two are exempt from it by name.
+    THIS IS THE DELETION THAT HAS NO RACE IN IT
+    -------------------------------------------
+    ``playlists.parquet`` and ``playlist_membership.parquet`` are names no
+    writer in this build ever creates. No import can be in flight on either, no
+    manifest this build writes can name either, and so there is no pointer to
+    check them against and no window in which the answer could change. That is
+    what distinguishes it from reaping generations, which is why one survived
+    and the other did not.
     """
     data_dir, xml = schema_2_install
     flat = [data_dir / name for name in LEGACY_TABLE_FILENAMES]
     assert all(path.is_file() for path in flat)
-    assert all(
-        path.stat().st_mtime > time.time() - REAP_GRACE_SECONDS for path in flat
-    ), "these must be INSIDE the grace, or the test has aged them after all"
 
     import_playlists(xml, data_dir=data_dir, now=FIXED_CLOCK)
 
@@ -1234,61 +1370,52 @@ def test_the_flat_schema_2_tables_are_cleared_by_the_FIRST_import(schema_2_insta
     assert PlaylistService(data_dir).imported is True
 
 
-def test_a_manifest_this_build_cannot_READ_still_protects_its_own_tables(
-    two_generations
-):
-    """Version skew must not turn one build into the other's reaper.
+def test_clearing_the_flat_tables_touches_nothing_else(two_generations, monkeypatch):
+    """The one remaining delete must reach exactly two names and no others.
 
-    A manifest from a newer schema reads as "nothing imported" here - correctly,
-    since this build cannot interpret it - but it still NAMES two files, and
-    those files belong to somebody. The reaper parses the manifest loosely for
-    exactly this reason: its job is to delete debris, not to enforce a version.
+    A data directory holds the user's library. ``meta.parquet``, an export they
+    put there, and every committed generation have to come through an import
+    untouched - and the pin is on the unlinks themselves rather than on what
+    happens to survive, so a future delete cannot creep in behind a test that
+    only checks the files it already knows to look for.
     """
-    data_dir, _, _ = two_generations
-    live = committed_table_paths(data_dir)
-    manifest = playlist_manifest_path(data_dir)
-    raw = json.loads(manifest.read_text(encoding="utf-8"))
-    raw["schema_version"] = 99
-    manifest.write_text(json.dumps(raw), encoding="utf-8")
-    age_everything(data_dir, REAP_GRACE_SECONDS * 10)
+    data_dir, a_xml, _ = two_generations
+    bystanders = [data_dir / "meta.parquet", data_dir / "library_export.xml"]
+    bystanders[1].write_text("<DJ_PLAYLISTS/>", encoding="utf-8")
+    for name in LEGACY_TABLE_FILENAMES:
+        (data_dir / name).write_bytes(b"left by an older build")
 
-    removed = reap_superseded_generations(data_dir)
+    unlinks = _RecordsEveryUnlink().install(monkeypatch)
 
-    assert removed == []
-    assert all(path.is_file() for path in live)
+    import_playlists(a_xml, data_dir=data_dir, now=FIXED_CLOCK)
 
-
-def test_staged_manifest_debris_is_reaped(two_generations):
-    """What a SIGKILL between writing the staged manifest and replacing it
-    leaves. Nothing reads it; it should not accumulate either."""
-    data_dir, _, _ = two_generations
-    debris = data_dir / f"{PROVENANCE_FILENAME}.{'f0' * 16}{STAGING_SUFFIX}"
-    debris.write_text("{}", encoding="utf-8")
-    age(debris, REAP_GRACE_SECONDS + 60)
-
-    assert reap_superseded_generations(data_dir) == [debris]
+    assert sorted(path.name for path in unlinks.paths) == sorted(
+        LEGACY_TABLE_FILENAMES
+    ), f"an import deleted something it should not have: {unlinks.paths}"
+    assert all(path.is_file() for path in bystanders)
 
 
-def test_a_reader_holding_a_reaped_manifest_gets_nothing_rather_than_a_blend(
+def test_a_reader_holding_a_manifest_whose_TABLES_ARE_GONE_gets_nothing(
     two_generations
 ):
-    """The documented cost of reaping, pinned so it stays the documented one.
+    """Files can still go missing - by hand, by a sync client, by a disk error.
 
-    A reader that read a manifest, lost the race with a reap, and only then
-    opened the files it names finds them gone. That is ``FileNotFoundError``
-    inside ``read_playlist_tables``, which is "nothing imported" - the drawer's
-    import call-to-action, repaired by the next ``reload``. It is never half a
+    Nothing in this build deletes a committed generation any more, but a reader
+    that opens a manifest and finds the files it names absent must still
+    degrade rather than blend. That is ``FileNotFoundError`` inside
+    ``read_playlist_tables``, which is "nothing imported" - the drawer's import
+    call-to-action, repaired by the next ``reload``. It is never half a
     generation, because a generation's files are never written twice.
     """
-    data_dir, a_xml, b_xml = two_generations
+    data_dir, _, b_xml = two_generations
     stale_manifest = read_provenance(data_dir)
-    for xml in (b_xml, a_xml):
-        age_everything(data_dir)
-        import_playlists(xml, data_dir=data_dir, now=FIXED_CLOCK)
+    for path in committed_table_paths(data_dir):
+        path.unlink()
+    import_playlists(b_xml, data_dir=data_dir, now=FIXED_CLOCK)
 
     assert read_playlist_tables(data_dir, stale_manifest) is None
     # The reader's NEXT read is simply the generation that is there now.
-    assert assert_committed_state_is_coherent(data_dir) == "a.xml"
+    assert assert_committed_state_is_coherent(data_dir) == "b.xml"
 
 
 # ---------------------------------------------------------------------------

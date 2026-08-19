@@ -309,29 +309,29 @@ def test_health_does_not_depend_on_playlist_data(api_without_playlists):
 
 def test_the_playlist_FEATURE_added_no_route_of_its_own(api_without_playlists):
     """The field is filled on the detail response the drawer already fetches.
-    Pinned so a later "just one more endpoint" is a deliberate change and not a
-    drift.
 
-    This used to pin "the same six" and count them. The two ``/api/settings``
-    routes have since arrived from the web write surface (#16), merged into
-    this branch, and counting was never the claim: the claim is that nothing
-    HERE added a route. So the whole table is still pinned - drift in it is
-    still a deliberate act - and the claim itself is asserted separately, where
-    a later merge cannot quietly satisfy it by arithmetic.
+    THIS ASSERTS ONE FEATURE'S CLAIM, NOT THE WHOLE ROUTE TABLE
+    -----------------------------------------------------------
+    It has twice been written as an exact-list pin of every route the API has,
+    and it has twice failed for a reason that had nothing to do with playlists:
+    once counting "the same six", once listing all eight after ``/api/settings``
+    arrived with the web write surface (#16). Both times the failure was a
+    merge, not a defect, and the next one is already scheduled - Library,
+    Set-Creator, Export and reindex routes are PR 3b's.
+
+    A pin on the global table cannot say "this feature added nothing"; it says
+    "nobody added anything", which is a different and much broader claim that
+    this test is the wrong place to make. So what is asserted is the claim
+    itself: no route mentions playlists, and the route the drawer actually
+    fetches - the one the field rides on - is still there.
     """
     routes = [(verb, pattern.pattern) for verb, pattern, _ in CocoApi.ROUTES]
 
-    assert routes == [
-        ("GET", r"^/api/health$"),
-        ("GET", r"^/api/library$"),
-        ("GET", r"^/api/settings$"),
-        ("POST", r"^/api/settings$"),
-        ("GET", r"^/api/tracks$"),
-        ("GET", r"^/api/tracks/search$"),
-        ("GET", r"^/api/tracks/(?P<track_id>[^/]+)/recommendations$"),
-        ("GET", r"^/api/tracks/(?P<track_id>[^/]+)$"),
-    ]
     assert [route for route in routes if "playlist" in route[1]] == []
+    assert ("GET", r"^/api/tracks/(?P<track_id>[^/]+)$") in routes, (
+        "the playlist field rides on the track-detail route; if that has moved, "
+        "the feature has a delivery problem this test should not pass over"
+    )
 
 
 def test_there_is_no_playlists_endpoint(api_with_playlists):

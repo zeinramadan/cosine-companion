@@ -49,7 +49,45 @@ The commit is therefore a single ``os.replace`` of the manifest, which is
 atomic on one filesystem. That is a real improvement on the previous design's
 honest cost: an interrupted import no longer loses the PREVIOUS import, because
 it never touched the previous import's files. It leaves orphan table files,
-which the next import reaps - see ``reap_superseded_generations``.
+which accumulate. That is deliberate; see below.
+
+SUPERSEDED GENERATIONS ARE NOT DELETED, ON PURPOSE
+--------------------------------------------------
+Nothing here removes a generation the manifest has stopped naming. Do not
+"fix" that by adding it back.
+
+Deleting them safely is not a tidying job, it is a cross-process mutual
+exclusion problem, and this module had two goes at solving it with a
+check-then-delete and got a data-destroying race both times. The shape is
+always the same: the reaper reads the pointer, decides a file is not live, and
+unlinks it - and a writer in ANOTHER PROCESS (the CLI; the reader is the web
+server) commits in between, so the file that was debris when it was checked is
+the live generation by the time it is deleted. An mtime grace period narrows
+that window and does not close it, because the clock runs from when a file was
+WRITTEN, not from when its writer last made progress: a writer suspended
+mid-import - SIGSTOP, a full disk queue, a laptop lid closed on a running
+import - resumes and commits tables that are by then hours old. See
+``test_a_generation_COMMITTED_BETWEEN_THE_READ_AND_THE_UNLINK_survives``, which
+reproduces it with one writer and no ``uuid4`` collision.
+
+Closing it properly needs an ``fcntl.flock`` held by every writer across its
+whole commit, and by the reaper across its whole scan. That is a new
+cross-process primitive, with its own stale-lock question to answer - a
+suspended writer would then block the next import instead of losing a
+generation to it - and it would be bought for this: **~66 KB per import.** A
+user re-importing weekly for a year accumulates about 3.4 MB. Trading a class
+of bug that can silently destroy the live generation against 3.4 MB a year is
+not a trade worth making.
+
+So superseded generations stay. They are inert - no manifest names them, no
+reader opens them - and the same is true of the zero-length debris a crash
+between the two ``O_EXCL`` claims leaves behind. If they ever do need
+collecting, collect them somewhere a writer cannot be running: on startup,
+under a lock, or by the user. Not from inside an import.
+
+The two flat schema-2 tables ARE removed, by ``clear_legacy_flat_tables``, and
+that is not the racy case: they are names this build never writes, so no
+import can be in flight on them.
 
 NOT fsync'd, deliberately. fsync would change WHICH generation survives a power
 cut; it cannot change whether an inconsistent one is trusted, because the check
@@ -78,12 +116,10 @@ import hashlib
 import io
 import json
 import os
-import re
-import time
 import uuid
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import Any, Dict, FrozenSet, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
 
@@ -96,8 +132,9 @@ PLAYLISTS_STEM = "playlists"
 MEMBERSHIP_STEM = "playlist_membership"
 
 #: The two flat names the schema-2 layout wrote. Nothing reads them any more;
-#: they are listed so the reaper can clear them once, on the first import after
-#: an upgrade, rather than leaving two files that look current forever.
+#: they are listed so ``clear_legacy_flat_tables`` can remove them once, on the
+#: first import after an upgrade, rather than leaving two files that look
+#: current forever.
 LEGACY_TABLE_FILENAMES = ("playlists.parquet", "playlist_membership.parquet")
 
 PLAYLIST_COLUMNS = ["playlist_id", "name", "folder_path", "parent_id", "entries"]
@@ -118,38 +155,6 @@ PROVENANCE_SCHEMA = 3
 #: and its staged name carries the generation too, so two concurrent writers do
 #: not share it either.
 STAGING_SUFFIX = ".importing"
-
-#: A generation is 32 lowercase hex digits. Written as a pattern because the
-#: reaper has to recognise this module's own files and nothing else.
-_GENERATION = "[0-9a-f]{32}"
-_GENERATION_FILE = re.compile(
-    r"^(?:"
-    rf"{PLAYLISTS_STEM}\.{_GENERATION}\.parquet"
-    rf"|{MEMBERSHIP_STEM}\.{_GENERATION}\.parquet"
-    rf"|{re.escape(PROVENANCE_FILENAME)}\.{_GENERATION}{re.escape(STAGING_SUFFIX)}"
-    r")$"
-)
-
-#: How long a generation file is protected from the reaper after it was last
-#: written, whether or not the manifest still names it.
-#:
-#: It buys ONE thing, and it is correctness rather than tidiness: **another
-#: writer's in-flight generation.** Its two files are claimed and empty, or
-#: written and not yet committed, and no manifest names them either way - so to
-#: a reaper running inside a second importer they look exactly like debris.
-#: Without the grace the two importers this whole design exists to keep apart
-#: would delete each other's work, and worse, would free a claimed name for
-#: ``to_parquet`` to recreate without an ``O_EXCL`` behind it.
-#:
-#: It does NOT protect a reader, and it was documented as though it did. The
-#: clock is time since the file was WRITTEN, not since it stopped being
-#: current, so a reader holding an older manifest gets nothing from it however
-#: briefly it stalls. What protects a reader is that the loss is harmless - see
-#: ``reap_superseded_generations``.
-#:
-#: Five minutes against an import that takes about a second on the real 1.5 MB
-#: export: three orders of magnitude of headroom, for two files of ~33 KB.
-REAP_GRACE_SECONDS = 300.0
 
 #: Read in blocks rather than whole: the export is 1.5 MB today and there is no
 #: reason for the digest to be the thing that caps how big it may get.
@@ -329,158 +334,32 @@ def _claim_generation(data_dir: Path) -> Tuple[str, Path, Path]:
         return generation, playlists, membership
 
 
-def _protected_table_names(data_dir: Path) -> Optional[FrozenSet[str]]:
-    """The table basenames the manifest on disk names, or ``None``: reap nothing.
+def clear_legacy_flat_tables(data_dir) -> List[Path]:
+    """Delete the two schema-2 flat tables, if an upgrade left them here.
 
-    Deliberately does NOT go through ``read_provenance``: a manifest written by
-    a schema this build cannot read still describes files that belong to
-    somebody, and the reaper's job is to delete debris rather than to enforce a
-    version.
+    The ONE deletion this module does, and the one that has no race in it.
+    ``playlists.parquet`` and ``playlist_membership.parquet`` are names no
+    writer in this build ever creates, so no import can be in flight on either
+    of them and no manifest this build writes can name either of them. There is
+    therefore nothing to check against a pointer and no window to lose: the
+    files are derived, superseded, and re-created under generation names by the
+    import that is about to run.
 
-    THE THREE ANSWERS ARE NOT TWO
-    -----------------------------
-    * **a manifest that parses** - the names it holds, which may be none of
-      them. A schema-2 record names no tables, and that is a real answer: it
-      genuinely points at nothing this build must keep.
-    * **no manifest at all** - ``frozenset()``. Nothing has ever been committed
-      in this directory, so nothing is live. This is the state of a fresh data
-      directory and of the first import ever run in one.
-    * **a manifest that will not read** - ``None``, and the reaper deletes
-      NOTHING. Previously this collapsed into the second answer, and the two
-      are opposites: "the pointer says nothing is live" versus "I cannot tell
-      what is live". Answering the second as though it were the first points
-      the reaper at the live generation with an empty protection set. Reaping
-      is tidiness; the files are the user's imported data, and the cost of
-      being wrong is not symmetric.
-    """
-    try:
-        raw = json.loads((data_dir / PROVENANCE_FILENAME).read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return frozenset()
-    except (OSError, ValueError):
-        return None
-    if not isinstance(raw, dict):
-        return None
-    return frozenset(
-        value
-        for key in ("playlists_file", "membership_file")
-        for value in [raw.get(key)]
-        if isinstance(value, str) and value
-    )
+    They are cleared rather than left because leaving them is visible: a fresh
+    upgrade's data directory otherwise holds two stale tables that look
+    current, sorted right beside the real ones, forever.
 
-
-def reap_superseded_generations(data_dir, now=None) -> List[Path]:
-    """Delete generation files nothing points at any more. Returns what went.
-
-    THIS RUNS AT THE START OF AN IMPORT, NOT AT THE END OF ONE
-    -----------------------------------------------------------
-    Reaping at the end of the import that supersedes a generation is the
-    obvious place and it is wrong, because it recreates the race it is supposed
-    to have removed: a reader in another process may have read the previous
-    manifest a microsecond ago and be about to open the files it names. Waiting
-    until the NEXT import moves that deletion an arbitrary distance into the
-    future - typically the user's next re-export, minutes or weeks - by which
-    time no reader can still be holding a manifest that old.
-
-    And because the manifest is still the previous one when this runs, the
-    generation being superseded RIGHT NOW is protected too. It is collected by
-    the import after next, which is one whole extra cycle of margin nobody has
-    to reason about. The steady state is therefore two generations on disk -
-    the live one and the one before it - which is ~66 KB at the real export's
-    size.
-
-    THE POINTER IS RE-READ BEFORE EVERY UNLINK, NOT ONCE AT THE TOP
-    ----------------------------------------------------------------
-    A protection set read once and then trusted for the length of a scan is a
-    statement about the past, and the whole design turns on another process
-    being able to change the present. The interleaving is short and entirely
-    ordinary: this reaper reads the manifest (naming generation G0), writer B
-    - which claimed G1 some time ago and has been slow - lands its single
-    ``os.replace``, and this loop then unlinks G1 because the list in its hand
-    has never heard of it. The result is the worst state this module can be in:
-    a manifest naming two files that are gone, with G0's files still on disk
-    and referenced by nothing. Every reader reports "nothing imported", and the
-    import the user just ran is what was lost.
-
-    So the manifest is read again immediately before each unlink and anything
-    it names is skipped. That is *less* machinery than the snapshot, not more:
-    it removes a piece of state whose staleness had to be reasoned about, and
-    replaces it with a question asked at the moment the answer is used. It
-    costs one 676-byte read per candidate file, and in the steady state there
-    are two candidates per import.
-
-    What is left is a microsecond between that read and the ``unlink``, and the
-    grace closes it: for a commit to land inside that gap the writer must have
-    been mid-commit as we read, which means its tables were written moments ago
-    and the ``st_mtime`` check above had already skipped them.
-
-    WHAT THE GRACE IS ACTUALLY FOR
-    ------------------------------
-    It protects **an in-flight writer's claimed files**, and for that job
-    "written recently" is exactly the right clock: a claim is created empty by
-    ``_claim_generation`` and committed about a second later, against a grace
-    of five minutes.
-
-    It is NOT what protects a reader, and it cannot be - it measures time since
-    a file was WRITTEN, not since it stopped being current, so a reader holding
-    a manifest from an hour ago is not covered by it however briefly it stalls.
-    What protects a reader is that losing the race is harmless: it gets
-    ``FileNotFoundError`` from a read it has not started, which is "nothing
-    imported" - the drawer's import call-to-action, repaired by its next
-    ``reload``. It cannot get half a generation, because a generation's files
-    are never written twice. That is asserted directly by
-    ``test_a_reader_holding_a_reaped_manifest_gets_nothing_rather_than_a_blend``.
-
-    A claim older than the grace is therefore reaped, and it is indistinguishable
-    from the zero-length debris a crash between the two ``O_EXCL`` creates
-    leaves behind - which must be reapable or it accumulates forever. The
-    residual is a writer stalled for more than five minutes between claiming a
-    name and writing it, whose freed name is then minted a second time by
-    ``uuid4``. Both at once; the second alone is what ``uuid4`` does not do.
-
-    THE RULE
-    --------
-    **Delete the files this scheme wrote that the manifest on disk does not
-    name and that nothing has touched recently.** ``_GENERATION_FILE`` is what
-    "this scheme wrote" means, so a reap can never reach ``meta.parquet``, an
-    export, or anything a user put here.
-
-    The two flat schema-2 tables are included by name and are the one exception
-    to the grace. No writer in this build can ever be in flight on those names
-    - it does not write them - so the only thing the grace could buy them is a
-    delay, and the delay was visible: a fresh upgrade's first import left them
-    sitting there looking current for five minutes. They are derived,
-    re-importable, and replaced by the import about to run.
+    Superseded GENERATIONS are a different question, and this module
+    deliberately does not answer it - see the module docstring.
     """
     data_dir = Path(data_dir)
-    cutoff = (time.time() if now is None else float(now)) - REAP_GRACE_SECONDS
-
     removed: List[Path] = []
-    try:
-        entries = sorted(data_dir.iterdir())
-    except OSError:
-        return removed
-
-    for path in entries:
-        name = path.name
-        legacy = name in LEGACY_TABLE_FILENAMES
-        if not legacy and not _GENERATION_FILE.match(name):
-            continue
+    for name in LEGACY_TABLE_FILENAMES:
+        path = data_dir / name
         try:
-            if not legacy and path.stat().st_mtime > cutoff:
-                continue
-            protected = _protected_table_names(data_dir)
-            if protected is None:
-                # The pointer cannot be read, so nothing here is known to be
-                # debris. Stop rather than continue: the next candidate would
-                # be asking the same unanswerable question.
-                break
-            if name in protected:
-                continue
             path.unlink()
         except OSError:
-            # A file another process removed first, or one we may not delete.
-            # Neither is this import's problem; it has its own generation.
+            # Absent, or not ours to delete. Neither is this import's problem.
             continue
         removed.append(path)
     return removed
@@ -519,7 +398,8 @@ def write_playlist_tables(
 
     * die before the replace - the previous manifest and the previous tables
       are untouched, and the previous import is still fully readable. What is
-      left behind is two orphan table files, which the next import reaps.
+      left behind is two orphan table files, which nothing names and nothing
+      reads. They stay; see the module docstring.
     * die after the replace - there is nothing left to do.
 
     NOTHING THAT RUNS AFTER THE COMMIT MAY DELETE A FILE
@@ -543,7 +423,7 @@ def write_playlist_tables(
     nobody's but this call's. Anything else - a signal, a ``SystemExit``, a
     ``MemoryError`` - leaves the commit standing, because it may have happened
     and a wrong guess in that direction is unrecoverable while the other costs
-    two inert files the next import reaps.
+    two inert files that no manifest names and no reader opens.
 
     A concurrent import is the same statement: it wrote different files and
     replaced the same pointer, so whichever ``os.replace`` lands second is the
@@ -557,9 +437,9 @@ def write_playlist_tables(
     data_dir = Path(data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
 
-    # Before anything of ours exists, so this import's own files are never
-    # candidates and the grace period is measured against the previous run.
-    reap_superseded_generations(data_dir)
+    # Before anything of ours exists. The two flat names are not ones this
+    # build writes, so nothing can be in flight on them.
+    clear_legacy_flat_tables(data_dir)
 
     playlist_frame = pd.DataFrame(
         [
@@ -630,7 +510,7 @@ def write_playlist_tables(
         #
         # A SIGKILL or a power cut runs none of this and leaves the two table
         # files behind. They are inert: no manifest names them, so no reader
-        # will open them, and the next import reaps them.
+        # will open them.
         discard_this_imports_scratch_files()
         raise
 

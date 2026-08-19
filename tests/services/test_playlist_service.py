@@ -29,12 +29,10 @@ from playlist_fixtures import (
 
 from core.playlist_store import (
     PROVENANCE_FILENAME,
-    REAP_GRACE_SECONDS,
     STAGING_SUFFIX,
     committed_table_paths,
     playlist_manifest_path,
     read_provenance,
-    reap_superseded_generations,
 )
 from services.playlist_import import import_playlists
 from services.playlist_service import (
@@ -205,11 +203,36 @@ def test_a_data_directory_that_does_not_exist_is_not_an_error(tmp_path):
     assert service.playlists_for("anything") is None
 
 
-def test_construction_reads_nothing(tmp_path):
-    """Building the API on a machine with no library must be free."""
-    service = PlaylistService(tmp_path / "data")
+def test_construction_reads_nothing(imported, monkeypatch):
+    """Building the API on a machine with no library must be free.
 
-    assert service._loaded is False
+    Stated as what it claims - no file is opened - rather than as the name of
+    whichever attribute currently records "not looked yet". It is pointed at a
+    directory that HAS an import, so a constructor that read eagerly would have
+    something to find and would be caught.
+    """
+    data_dir, _ = imported
+    opened = []
+    real_read_bytes = Path.read_bytes
+    real_read_parquet = pd.read_parquet
+    monkeypatch.setattr(
+        Path, "read_bytes", lambda self: (opened.append(self), real_read_bytes(self))[1]
+    )
+    monkeypatch.setattr(
+        pd,
+        "read_parquet",
+        lambda source, *a, **k: (
+            opened.append(source),
+            real_read_parquet(source, *a, **k),
+        )[1],
+    )
+
+    service = PlaylistService(data_dir)
+
+    assert opened == [], f"construction read {opened}"
+    # ...and the first accessor is what pays for it.
+    assert service.imported is True
+    assert opened
 
 
 def test_a_membership_table_with_no_playlist_table_reads_as_not_imported(imported):
@@ -522,7 +545,9 @@ def test_an_import_interrupted_AT_ITS_COMMIT_leaves_only_inert_debris(
     destructive either. What it leaves is exactly what a ``SIGKILL`` at the
     same instant leaves, because a ``SIGKILL`` runs no handler at all: two
     table files and a staged manifest that no pointer names. Nothing reads
-    them, and the reaper takes them.
+    them, and nothing collects them - see the module docstring of
+    ``core.playlist_store`` for why superseded generations are deliberately
+    left where they are.
     """
     data_dir, xml = imported
     before = {path.name for path in data_dir.iterdir()}
@@ -544,14 +569,11 @@ def test_an_import_interrupted_AT_ITS_COMMIT_leaves_only_inert_debris(
         {service.provenance.playlists_file, service.provenance.membership_file}
     )
 
-    # ...and it is the reaper's, once it is nobody's in-flight work.
-    for path in data_dir.iterdir():
-        stamp = os.stat(path).st_mtime - (REAP_GRACE_SECONDS + 60)
-        os.utime(path, (stamp, stamp))
-    reap_superseded_generations(data_dir)
-
-    assert {path.name for path in data_dir.iterdir()} == before
-    assert sorted(p.name for p in data_dir.glob("*" + STAGING_SUFFIX)) == []
+    # ...and it stays there, harmlessly, including the staged manifest: it is
+    # named by no pointer, so no reader will ever open it.
+    assert sorted(path.name for path in data_dir.glob("*" + STAGING_SUFFIX)) == sorted(
+        name for name in debris if name.endswith(STAGING_SUFFIX)
+    )
     assert PlaylistService(data_dir).provenance.source_name == "export.xml"
 
 

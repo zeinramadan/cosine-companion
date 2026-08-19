@@ -48,7 +48,7 @@ whose effect it cannot see.
 
 So the cache is keyed on the pointer itself. Every accessor re-reads
 ``playlist_import.json`` and rebuilds only when those bytes differ from the
-ones the current index was built from; see ``_ensure_loaded``.
+ones the current index was built from; see ``_current``.
 
 NO MODULE-LEVEL HEAVY IMPORTS
 -----------------------------
@@ -64,7 +64,8 @@ tests/test_services_are_ui_free.py, which enforces that with an AST walk.
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from types import MappingProxyType
+from typing import Dict, List, Mapping, Optional, Tuple
 
 from core.playlist_store import (
     PlaylistProvenance,
@@ -136,6 +137,63 @@ class PlaylistLookup:
         return 0 if self.playlists is None else len(self.playlists)
 
 
+@dataclass(frozen=True)
+class _Generation:
+    """One whole answer, captured together: the pointer, the record, the rows.
+
+    WHY THE THREE OF THEM ARE ONE OBJECT
+    ------------------------------------
+    ``web/server.py`` is a ``ThreadingHTTPServer`` and ``web/host.py:77``
+    builds ONE ``PlaylistService`` for the life of the window, so every drawer
+    open is a request THREAD calling into the same instance. Held as three
+    attributes, a generation can be observed half-swapped: a reader that has
+    taken the provenance and not yet taken the rows gets the next generation's
+    rows when a reload lands in between, and reports a manifest naming one
+    export beside the playlists of another. That is precisely the blend
+    ``core.playlist_store`` refuses to write to disk, reassembled in memory at
+    the only layer the user can see - and a reader arriving while the fields
+    were blanked for a rebuild was told nothing had been imported at all.
+
+    So the three travel together and never change: ``reload`` builds one of
+    these privately and publishes it with a SINGLE rebind of ``_state``. A
+    reader takes ONE reference at the top of its call and reads every field
+    from that reference, so what it read is what it keeps. No lock is needed
+    on either side, because there is no window in which a reader can see a
+    partly-updated generation - there is no partly-updated generation. It is
+    the shape ``LibrarySnapshot`` uses next door, for the same reason.
+
+    ``by_track`` is wrapped in a ``MappingProxyType`` so "never changes" is
+    enforced rather than promised: a future accessor cannot mutate a
+    generation that other threads are still reading from.
+    """
+
+    #: The manifest bytes this generation was built from, and the cache key:
+    #: a reader rebuilds when the pointer on disk is no longer these bytes.
+    #: ``None`` when there was no reading it.
+    manifest: Optional[bytes]
+    #: ``None`` for every "nothing imported" state, of which there are several
+    #: - see ``PlaylistService.reload``. The rows are then empty too.
+    provenance: Optional[PlaylistProvenance]
+    by_track: Mapping[str, Tuple[PlaylistRef, ...]]
+    #: False only for the sentinel below, which is what a service holds before
+    #: it has looked at the disk at all. Distinct from "looked, found nothing":
+    #: that one has a manifest key and must not be rebuilt on every access.
+    loaded: bool = True
+
+    @classmethod
+    def nothing_imported(cls, manifest: Optional[bytes]) -> "_Generation":
+        """The answer for every state in which there are no usable tables."""
+        return cls(manifest=manifest, provenance=None, by_track=MappingProxyType({}))
+
+
+#: What a freshly constructed service holds. Construction touches no disk, so
+#: this cannot be a real generation; ``loaded=False`` is what makes the first
+#: accessor read rather than trust a ``manifest`` of ``None``.
+_UNLOADED = _Generation(
+    manifest=None, provenance=None, by_track=MappingProxyType({}), loaded=False
+)
+
+
 class PlaylistService:
     """Answers "which playlists is this track in?" from the imported tables."""
 
@@ -151,25 +209,34 @@ class PlaylistService:
 
             data_dir = DATA
         self.data_dir = Path(data_dir)
-        self._loaded = False
-        #: The manifest bytes ``_by_track`` was built from - the cache key, and
-        #: ``None`` both before the first load and while there is no readable
-        #: manifest. See ``_ensure_loaded``.
-        self._manifest: Optional[bytes] = None
-        self._by_track: Dict[str, Tuple[PlaylistRef, ...]] = {}
-        self._provenance: Optional[PlaylistProvenance] = None
+        #: The whole cached generation, in ONE attribute so that a rebind
+        #: cannot be observed half-done. Never mutated: ``reload`` replaces it.
+        #: See ``_Generation``, and ``_current`` for how readers take it.
+        self._state: _Generation = _UNLOADED
 
     # -- loading -----------------------------------------------------------
 
     def reload(self) -> None:
-        """Re-read both tables and rebuild the reverse index.
+        """Re-read both tables, rebuild the reverse index, publish the result.
 
-        Every failure below leaves the service in exactly the state it starts
-        this method in - no provenance, no index - which is the "nothing
-        imported" answer the drawer already knows how to render. That is why
-        ``_provenance`` is assigned at the very END and not at the top: a
-        function whose early return has to remember to undo an assignment is a
-        function that will one day forget, and the thing it would leak into is
+        ONE REBIND, AND NOTHING HALF-DONE BEFORE IT
+        -------------------------------------------
+        The whole generation is built into a private ``_Generation`` and
+        published by the single assignment at the end. Until that line runs,
+        this service still answers - completely and correctly - from the
+        generation it already had, and a request thread that arrives mid-
+        rebuild is served the old one rather than an empty one. The previous
+        shape blanked three attributes at the top and refilled them at the
+        bottom, and both edges of that window were visible to the
+        ``ThreadingHTTPServer`` next door: a reader inside it was told nothing
+        had been imported, and a reader that straddled it got one generation's
+        manifest beside another's rows.
+
+        Every failure below is therefore a ``return`` of a COMPLETE state - the
+        "nothing imported" answer the drawer already knows how to render -
+        rather than a return that leaves half an assignment behind. A function
+        whose early exit has to remember to undo something is a function that
+        will one day forget, and the thing it would leak into is
         ``GET /api/tracks/{id}``, the request every drawer open makes.
 
         The order is a funnel, cheapest and most decisive first:
@@ -191,8 +258,8 @@ class PlaylistService:
         THE POINTER IS READ FIRST, AND KEPT
         -----------------------------------
         The manifest's bytes are captured BEFORE anything is parsed out of
-        them, and become the key this index is cached against. Before, and not
-        after, because the two orders fail differently: a writer committing
+        them, and become the key this generation is cached against. Before, and
+        not after, because the two orders fail differently: a writer committing
         between the two reads leaves this service holding the NEW tables under
         the OLD key, so the next accessor reloads once more and converges,
         which costs one wasted rebuild. Capturing the key afterwards would file
@@ -200,21 +267,22 @@ class PlaylistService:
         process - the failure this is here to remove, reintroduced one line
         further down.
         """
-        self._manifest = self._manifest_bytes()
-        self._loaded = True
-        self._by_track = {}
-        self._provenance = None
+        self._state = self._build()
+
+    def _build(self) -> _Generation:
+        """Read the disk and return one whole generation. Publishes nothing."""
+        manifest = self._manifest_bytes()
 
         provenance = read_provenance(self.data_dir)
         if provenance is None:
-            return
+            return _Generation.nothing_imported(manifest)
 
         try:
             tables = read_playlist_tables(self.data_dir, provenance)
         except Exception:  # noqa: BLE001 - a corrupt table is "nothing imported"
-            return
+            return _Generation.nothing_imported(manifest)
         if tables is None:
-            return
+            return _Generation.nothing_imported(manifest)
 
         playlists, membership = tables
         try:
@@ -229,12 +297,13 @@ class PlaylistService:
             # contract of this module is that it degrades, so the handler has
             # to be the whole of what "the tables did not work out" can raise -
             # including whatever a future pandas or pyarrow decides to throw.
-            return
+            return _Generation.nothing_imported(manifest)
 
-        # Committed together, last: until here, this service reports that
-        # nothing has been imported.
-        self._by_track = by_track
-        self._provenance = provenance
+        return _Generation(
+            manifest=manifest,
+            provenance=provenance,
+            by_track=MappingProxyType(by_track),
+        )
 
     @staticmethod
     def _build_refs(playlists) -> Dict[str, Tuple[int, PlaylistRef]]:
@@ -294,8 +363,17 @@ class PlaylistService:
         except OSError:
             return None
 
-    def _ensure_loaded(self) -> None:
-        """Rebuild if the pointer on disk is not the one we built from.
+    def _current(self) -> _Generation:
+        """The generation to answer from, rebuilt first if the pointer moved.
+
+        RETURNS THE STATE, RATHER THAN LEAVING IT ON ``self``
+        ----------------------------------------------------
+        Every caller below reads its fields off THIS return value and
+        never off ``self`` again, which is what makes one call one whole
+        observation. Handing back the object closes the alternative by
+        construction: there is no attribute left for a caller to re-read,
+        so a caller cannot accidentally take its second field from a
+        generation another request thread published in between.
 
         WHY THE BYTES, AND NOT mtime-AND-SIZE
         -------------------------------------
@@ -327,28 +405,32 @@ class PlaylistService:
         but it happens only when the pointer actually changed, which is once
         per import.
         """
-        if self._loaded and self._manifest_bytes() == self._manifest:
-            return
-        self.reload()
+        state = self._state
+        if state.loaded and self._manifest_bytes() == state.manifest:
+            return state
+        state = self._build()
+        # One rebind, of one immutable object. Two request threads racing here
+        # both publish a whole generation, and whichever lands second wins;
+        # neither can be seen half-published, and each answers from the state
+        # it built rather than from whatever ``self`` holds afterwards.
+        self._state = state
+        return state
 
     # -- read accessors ----------------------------------------------------
 
     @property
     def imported(self) -> bool:
         """Whether a usable pair of tables was found."""
-        self._ensure_loaded()
-        return self._provenance is not None
+        return self._current().provenance is not None
 
     @property
     def provenance(self) -> Optional[PlaylistProvenance]:
-        self._ensure_loaded()
-        return self._provenance
+        return self._current().provenance
 
     @property
     def track_count(self) -> int:
         """How many distinct tracks appear in the membership table."""
-        self._ensure_loaded()
-        return len(self._by_track)
+        return len(self._current().by_track)
 
     def staleness(self) -> StalenessVerdict:
         """Whether the XML on disk still matches what was imported.
@@ -402,10 +484,10 @@ class PlaylistService:
         against; collapsing "nothing imported" into an empty list would make
         the drawer show "In 0 playlists" to a user who has never imported.
         """
-        self._ensure_loaded()
-        if self._provenance is None:
+        state = self._current()
+        if state.provenance is None:
             return None
-        return self._by_track.get(str(track_id), ())
+        return state.by_track.get(str(track_id), ())
 
     def lookup(self, track_id: str) -> PlaylistLookup:
         """Everything the drawer needs for one track, in one typed result.
@@ -429,10 +511,10 @@ class PlaylistService:
         runs is picked up by the next request, which is the next thing the user
         does.
         """
-        self._ensure_loaded()
-        provenance = self._provenance
+        state = self._current()
+        provenance = state.provenance
         playlists = (
-            None if provenance is None else self._by_track.get(str(track_id), ())
+            None if provenance is None else state.by_track.get(str(track_id), ())
         )
         return PlaylistLookup(
             imported=provenance is not None,
