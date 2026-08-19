@@ -267,7 +267,14 @@ def test_reads_the_library_live(fixture_library, builder):
 
 
 # --------------------------------------------------------------------------
-# The build/delete race: one snapshot per build
+# How the build CAPTURES the library - which is not the same as the race
+#
+# These three tests pin the capture ROUTE: ``build`` goes through
+# ``snapshot()`` and never touches the public properties. They do NOT pin the
+# build/delete race, and one of them used to be named as though it did. The
+# race is still open inside ``snapshot()`` - see inventory §6.6, which records
+# it with both of its reproduced outcomes - and closing it means atomic publish
+# inside ``LibrarySession``, which is a separate PR.
 # --------------------------------------------------------------------------
 
 
@@ -277,20 +284,20 @@ DOOMED = "f05"
 
 
 def _delete_when_meta_ix_is_read(library, monkeypatch, track_id=DOOMED):
-    """Make the FIRST read of the ``meta_ix`` property delete ``track_id``.
+    """Make the FIRST read of the PUBLIC ``meta_ix`` property delete ``track_id``.
 
-    The interleaving this pins is not one a scheduler has to be persuaded to
-    produce. ``build`` used to read ``self.library.meta_ix``,
-    ``.emb_ix`` and ``.index`` as three separate arguments, and
-    ``delete_tracks`` rebinds all three in sequence
-    (``library_session.py:203-224``), so a delete landing after the first read
-    hands ``generate_set`` a PRE-delete ``meta_ix`` with a POST-delete
-    ``index``: a set ranked against vectors the metadata no longer agrees with.
-    Firing the delete from inside the getter puts it exactly there, every run.
+    WHAT THIS CAN AND CANNOT OBSERVE. It is a probe on the public getter, and
+    ``snapshot()`` reads the private ``self._meta_ix`` - so against a build that
+    captures a snapshot this getter is never called and the delete never fires.
+    That makes the harness a detector of the CAPTURE ROUTE, and nothing more.
 
-    ``snapshot()`` reads the private attributes, so a build that captures one
-    never touches this getter and the delete never fires at all. Returns the
-    list that records whether it did.
+    It is not a race harness. To observe the race you have to inject into the
+    private reads ``snapshot()`` actually performs, or into ``delete_tracks``'
+    own rebind sequence; both were done by hand and both show the window is
+    still open (inventory §6.6). Nothing in this file does that, deliberately:
+    the fix belongs to ``LibrarySession`` and to another PR.
+
+    Returns the list that records whether the getter fired.
     """
     fired = []
     getter = type(library).meta_ix.fget
@@ -323,15 +330,30 @@ def test_the_builder_takes_exactly_one_snapshot_per_build(fixture_library):
     )
 
 
-def test_a_delete_between_the_property_reads_cannot_be_observed_half_applied(
+def test_the_build_never_reads_the_public_meta_ix_property(
     fixture_library, monkeypatch, isolated_deleted_tracks
 ):
-    """DETERMINISTIC INTERLEAVING, not a timing hope.
+    """The capture route, from the other side: ``build`` reaches the library
+    ONLY through ``snapshot()``.
 
-    Nothing in the Tkinter app could interleave this way - the delete and the
-    build are both on the Tk main thread - but the web layer serves requests off
-    it, and the sibling PR that adds a Library destination makes DELETE
-    reachable while a set is being built.
+    ``test_the_builder_takes_exactly_one_snapshot_per_build`` counts the
+    captures; this one shows there is no second route alongside them. A build
+    that called ``snapshot()`` and ALSO read ``self.library.meta_ix`` would pass
+    the counter and fail here.
+
+    WHAT IT DOES NOT PIN, SAID PLAINLY. This test was called
+    ``test_a_delete_between_the_property_reads_cannot_be_observed_half_applied``
+    and its assertion message said a concurrent delete had been prevented.
+    Both were false. The delete is fired from a getter the code under test never
+    calls, so the interleaving never occurs - and a harness that cannot make the
+    bad thing happen cannot show that it was prevented. ``fired == []`` says
+    "the getter was not used", not "the race was won".
+
+    The race is still there, in ``snapshot()``'s own six unlocked reads. Two
+    outcomes were reproduced by hand and are recorded in inventory §6.6:
+    ``KeyError: 'f05'`` for one half-applied capture, and a silently different
+    set for the inverse. Reverting ``build`` to three property reads turns this
+    test red, which is exactly and only the discrimination it has.
     """
     undisturbed = [t.track_id for t in SetBuilder(fixture_library).build({1: ANCHOR}, 5)]
     assert DOOMED in undisturbed, "the doomed track is not in the set, so its loss is invisible"
@@ -340,8 +362,9 @@ def test_a_delete_between_the_property_reads_cannot_be_observed_half_applied(
     got = [t.track_id for t in SetBuilder(fixture_library).build({1: ANCHOR}, 5)]
 
     assert fired == [], (
-        "the build read the live meta_ix property, so a concurrent delete landed "
-        "between it and the index read"
+        "build read the public meta_ix property, so it is not capturing the "
+        "library through snapshot() alone. This says nothing about the "
+        "build/delete race, which snapshot() does not close."
     )
     assert got == undisturbed
     assert DOOMED in fixture_library.ids, "the doomed track was deleted after all"
@@ -350,12 +373,18 @@ def test_a_delete_between_the_property_reads_cannot_be_observed_half_applied(
 def test_the_interleaving_harness_can_actually_change_the_answer(
     fixture_library, monkeypatch, isolated_deleted_tracks
 ):
-    """Guard the guard.
+    """Guard the guard - for the capture-route claim, not for the race.
 
-    ``fired == []`` above is only worth something if firing WOULD have produced
-    a different set. Here the three properties are read the way ``build`` used
-    to read them, and the answer moves - so the test above is measuring a real
-    difference and not the absence of one.
+    ``fired == []`` above is only worth something if the harness is live and if
+    the route it detects actually matters. Here the three properties are read
+    the way ``build`` used to read them, the getter fires, and the answer moves.
+    So the test above distinguishes two REAL capture routes rather than two
+    spellings of the same one.
+
+    Note what this does NOT license. That the property route can produce a
+    different set does not mean the snapshot route cannot; it can, because
+    ``snapshot()`` reads the same objects one after another. This is a contrast
+    between two routes, not evidence that one of them is safe.
     """
     from recommendations.set_generator import generate_set
 
@@ -370,5 +399,5 @@ def test_the_interleaving_harness_can_actually_change_the_answer(
     assert fired == [DOOMED], "the harness never fired"
     assert [t.track_id for t in half_applied] != undisturbed, (
         "reading the three properties around a delete produced the same set, so "
-        "the snapshot test above cannot distinguish anything"
+        "the capture-route test above cannot distinguish anything"
     )
