@@ -200,11 +200,16 @@ Rekordbox XML → parse <PLAYLISTS> → playlists.parquet
 Two tables, **not** columns on `meta.parquet`: membership is many-to-many, and `meta.parquet` is
 rewritten wholesale in two places that would clobber it.
 
-Measured on the 2026-08-19 export: **4,669 membership rows**, mean **3.18** playlists per
-indexed track, **max 21** (`Fireground — Never Sleep`). Still trivially small — well under
-200 KB — but the drawer must handle a 21-item list gracefully rather than assuming a handful.
-Earlier figures in this document (2.05 mean / max 10 / ~2.7k rows) came from the stale 67-playlist
-export and are superseded.
+Measured on the 2026-08-19 export **against the reindexed 1,532-track library**: **4,669
+membership rows**, mean **2.95** playlists per indexed track, **max 21**
+(`Fireground — Never Sleep`). Still trivially small — well under 200 KB — but the drawer must
+handle a 21-item list gracefully rather than assuming a handful.
+
+**Two rounds of figures in this document are superseded.** The 2.05 mean / max 10 / ~2.7k rows
+came from the stale 67-playlist export. The 3.18 mean that replaced it was measured while the
+library still held **1,307** indexed tracks; reindexing to **1,532** added 225 tracks to the
+denominator, so the true mean is **2.95**. Any per-track ratio in this document is a function of
+both the export *and* the index — restate the index size whenever you quote one.
 
 ### 6.3 XML structure
 
@@ -216,7 +221,7 @@ Measured on the 2026-08-19 export — **these supersede the earlier 67-playlist 
 | Property | Value |
 |---|---|
 | Playlists (`Type="1"`) | **141** |
-| Folders (`Type="0"`) | 14 (plus a single root node literally named `ROOT`) |
+| Folders (`Type="0"`) | **13** user folders. There are 14 `Type="0"` nodes in total and one of them **is** the root node literally named `ROOT` — it is not an additional node alongside them |
 | `KeyType` | `"0"` on **all 141** — membership is by TrackID, never by path |
 | Membership entries | 4,669, **100% resolvable** against the export's own collection (zero dangling `Key`s) |
 | Max nesting depth | **4** display segments (5 including `ROOT`) |
@@ -237,9 +242,14 @@ Measured on the 2026-08-19 export — **these supersede the earlier 67-playlist 
    which is Rekordbox's container, not a folder the user made. It carries no information and
    must not be displayed.
 
-Note a folder name contains a forward slash (`Collections/Hauls`), so ` / ` is ambiguous as a
-join separator. Store `folder_path` as a **list of segments** and let the UI join them, rather
-than persisting a pre-joined string.
+Note that forward slashes appear inside names far more often than first measured, so ` / ` is
+ambiguous as a join separator. **Two folder** names contain one — `Collections/Hauls` and
+`08/2026` — and so do **six playlist** names: `arab/percussive breaks`,
+`detroit/chicago house`, `detroity/smooth dub/melodid crate`, `house/jungle/garage`,
+`jazzy /melodic/techno` and `peak tribal/hardgroove crate`. (An earlier revision of this section
+claimed a single folder and no playlists.) Store `folder_path` as a **list of segments** and let
+the UI join them, rather than persisting a pre-joined string — and never split a stored path on
+`/` to recover its segments.
 
 ### 6.4 Staleness
 
@@ -263,9 +273,9 @@ repointed, the app reads a nine-month-old snapshot missing more than half the pl
 
 | Case | Behaviour |
 |---|---|
-| Track in CoCo, in no playlist | Drawer shows "In 0 playlists". Note: on the 2026-08-19 export **every one of the 1,307 indexed tracks is in at least one playlist**, so this state is unreachable with current data and must be covered by a fixture rather than by manual testing. |
-| Track in Rekordbox but not CoCo | Not shown (CoCo's library is the universe). **This is the common case, not an edge case:** the 2026-08-19 export holds 1,610 tracks against CoCo's 1,307 indexed, so **303 tracks** are Rekordbox-only. |
-| Playlist references an unknown TrackID | Ignored; counted in an import summary. Measured: **514 of 4,669 entries (11.01%)** resolve to a Rekordbox track CoCo has not indexed. The import summary must report this as *"514 entries reference tracks not in your library — reindex to include them"*, **not** as an error. Silently dropping 11% of membership would make playlist counts quietly wrong. |
+| Track in CoCo, in no playlist | Drawer shows "In 0 playlists". **Reachable with real data: 8 of the 1,532 indexed tracks are in zero playlists** — e.g. `Missing Channel — Legion Of Hunger`. An earlier revision of this row claimed the state was unreachable and fixture-only; that was measured against the 1,307-track index, and reindexing added tracks that no playlist references. Cover it with a fixture *and* check it by hand. |
+| Track in Rekordbox but not CoCo | Not shown (CoCo's library is the universe). The 2026-08-19 export holds 1,610 tracks against CoCo's **1,532** indexed, so **78 tracks** are Rekordbox-only. (Before the 2026-08-19 reindex this was 303, and this row called it "the common case". Reindexing absorbed 225 of them; the remainder are mostly files no longer on disk.) |
+| Playlist references an unknown TrackID | Ignored; counted in an import summary. Measured against the 1,532-track index: **153 of 4,669 entries (3.28%)** resolve to a Rekordbox track CoCo has not indexed. The import summary must report this as *"N entries reference tracks not in your library — reindex to include them"*, **not** as an error. Silently dropping them would make playlist counts quietly wrong. (An earlier revision said 514 / 11.01%; that was measured at 1,307 indexed tracks, and the reindex resolved 361 of them. The figure moves with every reindex, so the summary must compute it rather than quote this number.) |
 | No XML imported yet | Drawer shows an import call-to-action |
 | XML missing at recorded path | Show provenance + a re-pick action; do not crash |
 
@@ -277,11 +287,28 @@ repointed, the app reads a nine-month-old snapshot missing more than half the pl
 |---|---|---|---|
 | 1 | Exact NumPy search | — | **Merged** (`2058da4`) |
 | 2 | Services layer + characterisation tests + `docs/UI_FEATURE_INVENTORY.md` | PR 1 | Tkinter still on top; behaviour-preserving |
-| 3 | pywebview UI | PR 2 | Against a green suite |
-| 4 | Rekordbox playlist lookup | PR 2, PR 3 | New UI, clean service API |
+| 3a | Web backbone: loopback API, pywebview host, design system, Explore | PR 2 | **Merged** (#12), plus fixes in #14 |
+| 3b-0 | The write surface (`POST` through the auth choke point) + Settings | PR 3a | Split out so the security-relevant part is reviewed alone |
+| 3b | Library, Set Creator, Export, onboarding, reindex | 3b-0 | Split further; see below |
+| 3c | Flip the default, delete Tkinter, packaging | 3b | `--add-data`, onedir, `LSMinimumSystemVersion` |
+| 4 | Rekordbox playlist lookup | PR 2, **PR 3a only** | Read-only; does not need the write surface |
 
 PR 2 must be **behaviour-preserving**: no user-visible change. That is what makes its
 characterisation tests trustworthy as a rewrite baseline.
+
+**Re-sequencing, 2026-08-19.** PR 4 was originally last, on the assumption it needed the whole
+new UI. It does not. PR 3a already carved out its contract — `drawer.js` documents
+`track.playlists` coming back `null` and renders a placeholder — and the feature is **read-only**,
+so it fits the `GET`/`HEAD`-only server exactly as it stands. PR 3b, by contrast, needs an entire
+write surface that did not exist. PR 4 therefore ran in parallel with 3b-0 rather than behind it.
+
+PR 3 was also split. As specced it was 3,296 lines of Tkinter across 11 files replaced wholesale;
+the remaining inventory surface after 3a is ~840 lines against Explore's 126, so a single PR
+would have been roughly six times PR 3a. PR #8 was one large PR and cost six review rounds;
+#9, #13 and #15 were small and passed in one. The split is a deliberate response to that.
+
+The one thing PR 4 cannot ship without the write surface is the **re-import button**: staleness
+detection and the prompt are in PR 4, but the one-click action needs `POST` and lands with 3b.
 
 ---
 
