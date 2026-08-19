@@ -104,7 +104,33 @@ export function mountSetCreator({ store }) {
   let generatedSet = [];
   let status = DEFAULT_HINT;
   let selectedAnchor = null;
-  let generating = false;
+
+  /* The configuration key of the generation in flight, or `null`.
+   *
+   * A generated set is written only if the configuration it was built FROM is
+   * still the configuration on screen. `Clear Set` is what made that a defect
+   * rather than a nicety: it emptied both lists while a generation was in
+   * flight, and the set came back when the response landed - anchors and all,
+   * over the top of "Set cleared.". The same window let an anchor change
+   * produce a set that no longer matched the rows above it.
+   *
+   * Explore and the palette solve this shape with a sequence counter
+   * (explore.js:151, palette.js:47). The oracle here is the CONFIGURATION
+   * ITSELF rather than a counter, because a counter has a bump site and this
+   * project has already paid for getting one wrong: PR #14 fixed a palette bug
+   * where the sequence was bumped when the REQUEST STARTED instead of when the
+   * INPUT CHANGED, leaving a window in which a response for a query the user
+   * had moved past was still considered current. `configurationKey()` reads
+   * the anchors and the length that are on screen at the moment the answer
+   * arrives, so there is no bump site to forget, to place late, or to
+   * reintroduce - including for `Total Tracks`, which is typed into and
+   * deliberately does not re-render.
+   *
+   * Holding the KEY rather than a boolean also means the "a set is being
+   * built" flag and the staleness check cannot disagree about which build is
+   * current: `building === configurationKey()` is one expression, used by both.
+   */
+  let building = null;
 
   /* The rendered anchor rows, so selecting one can update `aria-selected` in
    * place. A full re-render would destroy the node the arrow keys just focused,
@@ -112,6 +138,25 @@ export function mountSetCreator({ store }) {
   let anchorRowNodes = [];
 
   // -- actions ------------------------------------------------------------
+
+  /* Everything a generated set depends on, as one comparable value: the
+   * anchors in position order and the length AS IT PARSES. Not a hash and not
+   * an identity - two configurations that would produce the same set compare
+   * equal, which is what makes remove-then-re-add-the-same-anchor leave an
+   * in-flight generation valid rather than throwing away a correct answer.
+   *
+   * The length goes through `parseIntegerStrictly` rather than in raw, for the
+   * same reason: `30`, `030` and an Arabic-Indic thirty are one configuration,
+   * and touching the field without changing the number it holds should not
+   * discard an answer that is still correct. `null` for a length that does not
+   * parse is a value like any other - a build cannot have been started from
+   * one, so a key holding it can only ever compare unequal. */
+  function configurationKey() {
+    return JSON.stringify([
+      anchorPositions().map((position) => [position, anchors[position].track_id]),
+      parseIntegerStrictly(totalTracks),
+    ]);
+  }
 
   async function addAnchor() {
     const chosen = await openAnchorDialog({ existingAnchors: anchors });
@@ -187,7 +232,10 @@ export function mountSetCreator({ store }) {
       return;
     }
 
-    generating = true;
+    // Captured BEFORE the await, so what comes back can be compared against
+    // what the screen says when it does.
+    const requested = configurationKey();
+    building = requested;
     status = STATUS_GENERATING;
     render();
 
@@ -196,22 +244,42 @@ export function mountSetCreator({ store }) {
       request[position] = anchor.track_id;
     }
 
+    let body;
     try {
-      const body = await api.generateSet(request, total);
-      generatedSet = body.tracks;
-      status = statusGenerated(generatedSet.length);
+      body = await api.generateSet(request, total);
     } catch (error) {
+      building = null;
+      if (requested !== configurationKey()) {
+        render();
+        return;
+      }
       // :507-508 - "Failed to generate set: {error}". The message is the
       // service's own, carried over the wire by `set_generation_failed`.
-      generatedSet = [];
+      //
+      // The previously generated set is LEFT on screen. Tk assigns the result
+      // of `build()` to `self.generated_set` (set_creator_tab.py:113), so a
+      // raise never reaches the assignment and never reaches
+      // `update_set_listbox` either: the last good set stays in the listbox
+      // behind the "Generation Error" dialog. Clearing it here would lose a set
+      // the user still has, because a regenerate they asked for failed.
       status = STATUS_FAILED;
-      generating = false;
       render();
       await showerror('Generation Error', `Failed to generate set: ${messageFor(error)}`);
       return;
     }
 
-    generating = false;
+    building = null;
+    if (requested !== configurationKey()) {
+      // The anchors or the length changed while this was in flight, so this
+      // set answers a question the screen is no longer asking. Nothing is
+      // written and nothing is said - the action that changed the
+      // configuration has already had its say - but the render puts
+      // `Generate Set` back within reach.
+      render();
+      return;
+    }
+    generatedSet = body.tracks;
+    status = statusGenerated(generatedSet.length);
     render();
   }
 
@@ -219,7 +287,11 @@ export function mountSetCreator({ store }) {
     return error instanceof ApiError ? error.message : String(error);
   }
 
-  /* Inventory :518-519. No confirmation, and the status says so. */
+  /* Inventory :518-519. No confirmation, and the status says so.
+   *
+   * Nothing here has to cancel or invalidate a generation in flight. Emptying
+   * the anchors changes `configurationKey()`, and that is the whole of the
+   * check the response is measured against when it lands. */
   function clearSet() {
     anchors = {};
     generatedSet = [];
@@ -273,7 +345,11 @@ export function mountSetCreator({ store }) {
 
     const generateButton = element('button', 'button button--primary', 'Generate Set');
     generateButton.type = 'button';
-    generateButton.disabled = generating;
+    // While a build is in flight, and only then. Not `building ===
+    // configurationKey()`: that would let a second generation start whenever
+    // the configuration had moved on, and two in-flight builds mean two places
+    // that clear `building`.
+    generateButton.disabled = building !== null;
     generateButton.addEventListener('click', generate);
 
     const clearButton = element('button', 'button', 'Clear Set');
@@ -387,7 +463,11 @@ export function mountSetCreator({ store }) {
         element(
           'p',
           'setc__empty',
-          generating
+          // The build in flight, if there is one, has to be a build of what is
+          // on screen for this to be true. After `Clear Set` there is still a
+          // request outstanding and it is no longer about anything the user
+          // can see, so this reads as the resting text.
+          building === configurationKey()
             ? 'Building the set…'
             : 'Nothing generated yet. Set a length, add an anchor, then Generate Set.',
         ),
@@ -496,6 +576,8 @@ export function mountSetCreator({ store }) {
       generatedSet: [...generatedSet],
       status,
       selectedAnchor,
+      // The configuration the in-flight generation was started from, or null.
+      building,
     }),
   };
 }

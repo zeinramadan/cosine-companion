@@ -1882,6 +1882,33 @@ restating in its assertions, and whose Tk column
 | | `Skee Mask - Reviver` | ` – Skee Mask - Reviver` | `Skee Mask - Reviver` |
 | `Skee Mask` | | `Skee Mask – ` | `Skee Mask` |
 
+*A generation in flight is abandoned when the configuration it was built from
+stops being the one on screen.* The Tkinter tab cannot reach this: generation
+runs on the Tk main thread behind `self.update()` (`ui/set_creator_tab.py:111`),
+so the window takes no input for the duration and there is nothing to change
+mid-build. The web destination stays live, which means `Clear Set`, `+ Add
+Anchor`, `Remove` and `Total Tracks` are all operable while a set is being
+built. A set is written only if `configurationKey()` — the anchors in position
+order plus the length as it PARSES — still reads the same when the response
+lands;
+otherwise the response is dropped without a message, because the action that
+changed the configuration has already had its say. `Generate Set` is disabled
+for the duration of a build either way, so at most one is ever outstanding.
+Pinned by the five ordering cases in `tests/web/js/set_creator.test.mjs` that
+press before they answer, including the two that change the configuration and
+change it back — one by removing and re-adding the anchor, one by retyping the
+same length as `030` and then in Arabic-Indic digits — where the response is
+still valid and IS written.
+
+*A failed regeneration keeps the set that is already on screen.* This is
+Tkinter's behaviour and an earlier version of this destination diverged from it
+silently. `generate_set_ui` assigns the RESULT of `build()` to
+`self.generated_set` (`ui/set_creator_tab.py:113`), so a raise never reaches the
+assignment and never reaches `update_set_listbox` either: the last good set
+stays in the listbox behind the `Generation Error` dialog. The web destination
+now leaves `generatedSet` alone on the failure path for the same reason — a
+regenerate that fails should not cost the user the set they already had.
+
 **Found along the way.** Two things the code does that §2.5 and §2.12 do not
 say, reported rather than changed.
 

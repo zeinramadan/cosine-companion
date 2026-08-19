@@ -119,6 +119,16 @@ function setRows() {
   return byClass(dom.root, 'setlist__row');
 }
 
+/* The text `renderAnchors` puts up when there are no anchors, named here so
+ * `setPlaceholder` can exclude it. Both sections render `setc__empty`, and
+ * after `Clear Set` both of them do at once. */
+const NO_ANCHORS_TEXT = 'No anchors yet. Add one to fix a track at a position in the set.';
+
+/** The `Generated Set:` section's empty-state line, or undefined. */
+function setPlaceholder() {
+  return textsByClass(dom.root, 'setc__empty').find((text) => text !== NO_ANCHORS_TEXT);
+}
+
 /** One rendered set row as the fields inventory :479 names. */
 function setRowFields(row) {
   return {
@@ -402,6 +412,147 @@ test('Clear Set empties both lists and says so, with no confirmation', async () 
   assert.equal(statusLine(), '🧹 Set cleared.');
   assert.deepEqual(view.state().anchors, {});
   assert.deepEqual(view.state().generatedSet, []);
+});
+
+// ---------------------------------------------------------------------------
+// A generation in flight versus the configuration on screen
+//
+// Every test above answers the /api/set request BEFORE it presses anything
+// else, which is the one ordering in which this class of defect cannot appear.
+// These press first and answer afterwards.
+// ---------------------------------------------------------------------------
+
+test('Clear Set is not undone by the generation that was already in flight', async () => {
+  const { view } = mount();
+  await addAnchor(ALPHA, 1);
+
+  await pressGenerate();
+  assert.ok(fetches.outstanding(SET_KEY), 'the generation has not been answered yet');
+
+  control('Clear Set').dispatch('click');
+  await settle();
+  assert.deepEqual(view.state().anchors, {});
+  assert.equal(statusLine(), '🧹 Set cleared.');
+
+  // The response the user never waited for.
+  fetches.deliver(SET_KEY, { tracks: SET });
+  await settle();
+
+  assert.deepEqual(view.state().generatedSet, [], 'the cleared set came back');
+  assert.equal(setRows().length, 0);
+  assert.deepEqual(view.state().anchors, {});
+  assert.equal(statusLine(), '🧹 Set cleared.', 'the cleared status was overwritten');
+});
+
+test('a set built for anchors that have since changed is not rendered over the new ones', async () => {
+  const { view } = mount();
+  await addAnchor(ALPHA, 1);
+
+  await pressGenerate();
+  // The anchor the set was requested for is taken out while it is being built.
+  anchorRows()[0].dispatch('click');
+  control('Remove').dispatch('click');
+  await settle();
+  await addAnchor(BETA, 3, 1);
+
+  fetches.deliver(SET_KEY, { tracks: SET });
+  await settle();
+
+  assert.deepEqual(view.state().generatedSet, [], 'a set for the old anchors was rendered');
+  assert.deepEqual(Object.keys(view.state().anchors), ['3']);
+  assert.notEqual(statusLine(), '✅ Generated 3-track set successfully!');
+});
+
+test('a configuration that changes and changes back leaves the generation valid', async () => {
+  // The positive control for the two tests above. A check that discarded every
+  // late response would pass both of them and be useless, because the answer
+  // that arrives here really is an answer to what is on screen.
+  const { view } = mount();
+  await addAnchor(ALPHA, 1);
+
+  await pressGenerate();
+  anchorRows()[0].dispatch('click');
+  control('Remove').dispatch('click');
+  await settle();
+  await addAnchor(ALPHA, 1);
+
+  fetches.deliver(SET_KEY, { tracks: SET });
+  await settle();
+
+  assert.equal(view.state().generatedSet.length, 3);
+  assert.equal(statusLine(), '✅ Generated 3-track set successfully!');
+});
+
+test('the length retyped as the same number leaves the generation valid', async () => {
+  // The other half of the positive control, for the one input that is typed
+  // into rather than clicked. The key holds the length AS IT PARSES, so
+  // touching the field without changing the number it holds is not a
+  // configuration change: `030` is the same thirty, and so is an Arabic-Indic
+  // thirty - which is a length this library's owner can type, and which the
+  // frontend used to refuse outright.
+  const { view } = mount();
+  await addAnchor(ALPHA, 1);
+  await typeTotal('30');
+
+  await pressGenerate();
+  await typeTotal('030');
+  await typeTotal('\u0663\u0660');
+
+  fetches.deliver(SET_KEY, { tracks: SET });
+  await settle();
+
+  assert.equal(view.state().generatedSet.length, 3, 'a still-valid answer was discarded');
+  assert.equal(statusLine(), '✅ Generated 3-track set successfully!');
+});
+
+test('the destination stops claiming it is building once the abandoned response lands', async () => {
+  const { view } = mount();
+  await addAnchor(ALPHA, 1);
+
+  await pressGenerate();
+  assert.equal(control('Generate Set').disabled, true, 'a build is in flight');
+
+  control('Clear Set').dispatch('click');
+  await settle();
+  assert.equal(
+    setPlaceholder(),
+    'Nothing generated yet. Set a length, add an anchor, then Generate Set.',
+    'the cleared destination still said it was building a set',
+  );
+
+  fetches.deliver(SET_KEY, { tracks: SET });
+  await settle();
+
+  assert.equal(control('Generate Set').disabled, false, 'Generate Set stayed disabled');
+  assert.equal(view.state().building, null);
+});
+
+test('a failed regeneration leaves the previous set on screen, as Tk does', async () => {
+  // set_creator_tab.py:113 assigns the RESULT of build() to self.generated_set,
+  // so a raise never reaches the assignment and never reaches
+  // update_set_listbox either: the last good set stays in the listbox behind
+  // the "Generation Error" dialog.
+  const { view } = mount();
+  await addAnchor(ALPHA, 1);
+  await pressGenerate();
+  fetches.deliver(SET_KEY, { tracks: SET });
+  await settle();
+  assert.equal(setRows().length, 3);
+
+  await typeTotal('2');
+  await pressGenerate();
+  fetches.deliverError(
+    SET_KEY,
+    400,
+    'set_generation_failed',
+    'Anchor track position exceeds total tracks',
+  );
+  await settle();
+  await answer('OK');
+
+  assert.equal(view.state().generatedSet.length, 3, 'the previous set was thrown away');
+  assert.equal(setRows().length, 3);
+  assert.equal(statusLine(), '❌ Set generation failed.');
 });
 
 // ---------------------------------------------------------------------------
