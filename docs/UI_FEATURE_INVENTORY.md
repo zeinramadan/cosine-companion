@@ -1507,3 +1507,109 @@ Every row is a user-reachable workflow catalogued above. Task 9 records pass/fai
 | 40 | Settings ▸ open with an unreadable `meta.parquet` ▸ `Total Tracks: Loading...` **and** `Deleted Tracks: Loading...` remain on screen, and `Error loading statistics: …` is printed to stdout | §2.8, §4 |
 | 41 | Set Creator ▸ generate a set larger than the candidates available ▸ unfillable rows read exactly `[ n] 🤖 No suitable track found – (Unknown Title)` | §2.5 |
 | 42 | Playlist Export ▸ combined mode ▸ the progress bar stays at 0 % for the whole run and no completion dialog appears | §2.6, §4 #10, #11 |
+
+---
+
+## 6. PR 3a coverage — the web UI
+
+PR 3a adds a second front end (`src/web/`, launched with
+`python src/cosine_companion.py ui-web`) alongside the Tkinter app. Tkinter is
+untouched, is still the default, and is what the packaged `.app` launches;
+nothing in §1–§5 above describes behaviour that changed.
+
+This section records **which catalogued Explore controls the web UI
+reimplements**, so the rewrite can be reviewed against the contract rather than
+against a demo. It adds no claim about the Tkinter app. Only the Explore
+destination is in scope for PR 3a — Set Creator, Library and Export render a
+labelled placeholder, so §2.5, §2.6 and §2.7 are entirely outstanding.
+
+The line numbers below are §2.4 and §3 coordinates in this document.
+
+### 6.1 Explore controls reimplemented
+
+| Control | §2.4 line | How it appears in the web UI |
+|---|---|---|
+| `Set Current Track` | :326 | The ⌘K palette. Unlike `pick_current` it lists the first 50 tracks for a blank query rather than an empty list — see §6.3 |
+| `← Back` | :325 | A button on the seed card, disabled until the history is non-empty, per §3.10 :1397 |
+| History behaviour | :414-421 | Pushed only when a seed and a list both exist; capacity 20 (§3.9 :1387); going back restores the stored list with its sort order and no recomputation |
+| `Set Selected as Current` | :328 | Clicking a recommendation row re-seeds |
+| `<Double-Button-1>` re-seed | :347 | Folded into the single click above — the web list is a set of buttons, not a `tk.Listbox` |
+| Sort buttons | :335, :377-387 | A segmented control with the same five keys and directions, including the ascending lexicographic Camelot sort at :381 |
+| Sorts apply to all computed rows | :385-386 | Sorting runs over the full computed set before truncation |
+| `Top:` combobox | :336-337 | A `<select>` offering the same six values, default 50 (§3.9 :1377) |
+| Top-N does not recompute | :338 | Changing it re-renders only; verified in WKWebView to issue zero requests |
+| Rendered row fields | :356-366 | Artist, title, Camelot key, BPM, cosine and score. The Camelot key is a coloured pill and the score is a bar plus its number |
+| Score clamped, `Cos` not | :365-366 | Preserved exactly: `format.percentClamped` for score, `format.percent` for cosine |
+| Computation parameters | :370, §3.9 :1378 | `topk=500, final_top=200`, passed explicitly rather than left to a default. Pinned by `tests/web/test_api_recommendations.py::test_the_explore_tab_configuration_is_used_by_default` |
+| Full set retained, `topn` rendered | :372-373 | All 200 are fetched once and kept client-side |
+| Current-track header | §3.2 :1211-1218 | The gradient seed card, carrying the same fields |
+| `Copy Selected to Clipboard` | :327 | A `Copy` button on the seed card — see §6.3 for how it differs |
+
+### 6.2 Deferred to PR 3b
+
+Everything catalogued under §2.4 that PR 3a does **not** reimplement, so the
+omission is on the record rather than left for a reviewer to notice.
+
+| Control | §2.4 line | Note |
+|---|---|---|
+| Right-click context menu | :348-354 | Both of its items (`Set as Current Track`, `Copy to Clipboard`) exist as controls; the menu itself, and the `listbox.nearest` selection it performs first, are outstanding |
+| Status-bar message strings | :389-403 | The web UI shows a row count and a history count, not the catalogued strings, colours or the 3-second revert |
+| `SimplePicker` and search implementation B | :405-412, §3.4 | The palette calls the service `search_tracks` (implementation A) over the API. The regex `.head(50)` variant and the modal picker are outstanding |
+| `No match` dialog | :409 | The palette shows an inline empty state instead of a modal |
+| Selection-error dialogs | :431-437 | `No Selection`, `No Recommendations` and `Invalid selection.` have no web equivalent; a row can only be clicked when it is rendered |
+| Suggestions list as a `tk.Listbox` | :340-341 | The web list is a scrollable container of buttons; the mouse-wheel-only scrolling noted in §2.4 does not carry over |
+
+Outside §2.4, the whole of §2.1, §2.3, §2.5, §2.6, §2.7, §2.8, §2.9, §2.10,
+§2.11, §2.12 and §2.13 are outstanding, and the three non-Explore destinations
+say so on screen.
+
+### 6.3 Deliberate divergences
+
+Three places where the web UI does something different on purpose. Each is a
+change of behaviour, not an omission, and is called out for that reason.
+
+**Blank palette query.** `pick_current` (:407-408) and the two selector dialogs
+open with an empty list for a blank query — §4 defect #9. The palette lists the
+first 50 tracks instead, from a browse endpoint that does not go through
+`search_tracks`. The service is unchanged and the characterisation of defect #9
+still holds; this is a second surface answering the same question, pinned by
+`tests/web/test_api_library.py::test_search_with_no_query_is_a_bad_request` and
+its browse counterparts.
+
+**Copy.** The Tkinter implementation (:423-429) splits the rendered row at the
+first of six candidate separators and copies what follows, which yields the
+title alone and truncates differently when a hyphen sits inside an artist name.
+The web `Copy` puts `{artist} – {title}` on the clipboard. Workflow row 11
+(:1464) describes the Tkinter behaviour and still does.
+
+**Camelot keys are coloured.** §3.1 :1209 records that the key is displayed as
+stored, with no conversion. That still holds — the pill's text is the stored
+Camelot string. The web UI adds a hue derived from the wheel position on top of
+it. Colour is never the only signal, because the pill always draws its own
+text; all 24 pill variants are re-derived and checked against a 4.5:1 contrast
+floor by
+`tests/web/test_frontend_conventions.py::test_every_camelot_pill_is_readable`.
+
+### 6.4 What pins the web layer
+
+The web UI has no automated test of the rendered DOM — that is a stated gap,
+and the visual pass was done by hand in WKWebView. Everything below it is
+tested, and none of the web tests depend on `data/`, so every one of them runs
+in CI rather than skipping there. That was re-derived rather than assumed: the
+suite was run in a fresh clone with no `data/` directory and every skip
+enumerated, and all 25 of them are the pre-existing `real_library` and private
+XML cases in `tests/services/` and `tests/test_xml_parser.py`. The fixture the
+web tests use instead is built under `tmp_path` by
+`tests/web/webtest_support.py`, and it is what
+`tests/web/test_api_library.py::test_library_reports_the_real_track_count`
+counts.
+
+| Area | Pinned by |
+|---|---|
+| Token auth on every `/api/` path | `tests/web/test_server_auth.py::test_an_api_request_with_no_token_is_rejected` |
+| Loopback binding and port release | `…::test_the_server_binds_loopback_and_nothing_else` |
+| Static path traversal | `tests/web/test_static_assets.py::test_a_traversal_cannot_read_the_application_source` |
+| NaN and numpy scalars leaving as JSON | `tests/web/test_json_sanitisation.py::test_every_flavour_of_missing_becomes_null` |
+| The API layer staying free of a GUI toolkit | `tests/web/test_no_heavy_imports.py::test_only_host_may_import_webview` |
+| The host not reaching Tkinter | `tests/web/test_host_importable.py::test_importing_the_host_does_not_load_tkinter` |
+| Design tokens, focus rings, reduced motion, contrast | `tests/web/test_frontend_conventions.py::test_body_text_clears_the_contrast_floor` |
