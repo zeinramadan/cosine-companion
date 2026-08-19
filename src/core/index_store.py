@@ -5,15 +5,22 @@ The four files are one logical value: row ``i`` in ``index.npy`` is the vector
 for ``ids.json[i]``, and the same IDs must exist in both parquet tables.  A
 sequence of four ``os.replace`` calls cannot publish that value atomically.
 
-Deletion therefore follows the playlist store's existing shape: write four
-immutable, generation-scoped files, then atomically replace one small manifest
-that names them.  A reader sees either the preceding manifest or the new one;
-it never has to guess which four files belong together.  Flat files remain the
-legacy/no-manifest representation used by the indexing pipeline.  When that
-pipeline finishes all four writes it removes the manifest as its one commit,
-making the completed flat generation visible again.
+Every writer therefore uses the same shape: write four immutable,
+generation-scoped files, then atomically replace one small manifest that names
+them.  A reader sees either the preceding manifest or the new one; it never has
+to guess which four files belong together.  Flat files remain the
+legacy/no-manifest representation for an existing installation and are kept as
+compatibility hard links after the first write.
+
+Disk use is bounded to the current generation and its immediate predecessor.
+The manifest records that predecessor, so a commit reaps one exact generation;
+it never scans for "apparently stale" files and can never mistake a suspended
+writer's uncommitted generation for debris.  A small cross-process lock covers
+only verified reads and the short reap/manifest/link commit region.  The four
+large writes happen before the lock is taken.
 """
 
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -29,6 +36,7 @@ import pandas as pd
 
 INDEX_MANIFEST_FILENAME = "library_index.json"
 INDEX_MANIFEST_SCHEMA = 1
+INDEX_LOCK_FILENAME = ".library-index.lock"
 STAGING_SUFFIX = ".tmp"
 
 _KINDS = ("meta", "embeddings", "index", "ids")
@@ -48,6 +56,7 @@ class IndexGeneration:
     generation: str
     paths: Dict[str, Path]
     sha256: Dict[str, str]
+    previous_generation: Optional[str] = None
 
     def as_tuple(self) -> Tuple[Path, Path, Path, Path]:
         return tuple(self.paths[kind] for kind in _KINDS)
@@ -87,6 +96,42 @@ def _fsync(path: Path) -> None:
         os.fsync(handle.fileno())
 
 
+@contextmanager
+def _index_lock(data_dir: Path, exclusive: bool):
+    """Coordinate readers and the short commit region across processes.
+
+    POSIX ``flock`` locks are released by the kernel if a process exits.  The
+    Windows branch uses the equivalent one-byte ``msvcrt`` region lock so this
+    module remains importable in the shipped Windows build.
+    """
+    lock_path = Path(data_dir) / INDEX_LOCK_FILENAME
+    with open(lock_path, "a+b") as handle:
+        if os.name == "nt":
+            import msvcrt
+
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            mode = msvcrt.LK_LOCK if exclusive else msvcrt.LK_RLCK
+            msvcrt.locking(handle.fileno(), mode, 1)
+            try:
+                yield
+            finally:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            mode = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+            fcntl.flock(handle.fileno(), mode)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 def _claim_generation(data_dir: Path) -> Tuple[str, Dict[str, Path]]:
     """Claim all four names with O_EXCL, retrying a UUID collision as a unit."""
     while True:
@@ -107,13 +152,33 @@ def _claim_generation(data_dir: Path) -> Tuple[str, Dict[str, Path]]:
                 path.unlink(missing_ok=True)
 
 
-def _manifest_document(generation: str, paths: Dict[str, Path]) -> Dict[str, object]:
+def _manifest_document(
+    generation: str,
+    paths: Dict[str, Path],
+    digests: Dict[str, str],
+    previous_generation: Optional[str],
+) -> Dict[str, object]:
     return {
         "schema_version": INDEX_MANIFEST_SCHEMA,
         "generation": generation,
+        "previous_generation": previous_generation,
         "files": {kind: paths[kind].name for kind in _KINDS},
-        "sha256": {kind: _digest(paths[kind]) for kind in _KINDS},
+        "sha256": digests,
     }
+
+
+def _generation_paths(data_dir: Path, generation: str) -> Tuple[Path, ...]:
+    return tuple(
+        data_dir / f"{kind}.{generation}{_SUFFIXES[kind]}" for kind in _KINDS
+    )
+
+
+def _reap_generation(data_dir: Path, generation: Optional[str]) -> None:
+    """Remove the one generation the current manifest names as previous."""
+    if generation is None:
+        return
+    for path in _generation_paths(data_dir, generation):
+        path.unlink(missing_ok=True)
 
 
 def write_index_generation(
@@ -125,10 +190,11 @@ def write_index_generation(
 ) -> IndexGeneration:
     """Write and atomically commit one complete four-file generation.
 
-    All scratch paths are registered before any writer sees them.  A failure
-    before the manifest replace removes only this call's unreferenced files;
-    after the replace nothing is deleted, because the new manifest may already
-    name them.
+    All scratch paths are registered before any writer sees them.  The large
+    writes are lock-free and use names no other writer can choose.  The lock is
+    acquired only after they are durable; inside it, the current manifest is
+    re-read, its explicitly recorded predecessor is reaped, and this generation
+    is committed with that current generation as its own predecessor.
     """
     data_dir = Path(data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -151,6 +217,8 @@ def write_index_generation(
             except OSError:
                 pass
 
+    document = None
+    commit_attempted = False
     try:
         meta.to_parquet(paths["meta"], index=False)
         embeddings.to_parquet(paths["embeddings"], index=False)
@@ -164,47 +232,71 @@ def write_index_generation(
             if previous_modes[kind] is not None:
                 os.chmod(path, previous_modes[kind])
             _fsync(path)
+        digests = {kind: _digest(paths[kind]) for kind in _KINDS}
 
-        document = _manifest_document(generation, paths)
-        with open(staged_manifest, "x", encoding="utf-8") as handle:
-            json.dump(document, handle, indent=2)
-            handle.write("\n")
-            old_manifest_mode = _mode(manifest)
-            if old_manifest_mode is not None:
-                os.chmod(staged_manifest, old_manifest_mode)
-            handle.flush()
-            os.fsync(handle.fileno())
     except BaseException:
         discard_scratch()
         raise
 
     try:
-        os.replace(staged_manifest, manifest)
-    except OSError:
-        discard_scratch()
-        raise
+        with _index_lock(data_dir, exclusive=True):
+            previous = read_index_generation(data_dir)
+            previous_id = None if previous is None else previous.generation
+            document = _manifest_document(
+                generation,
+                paths,
+                digests,
+                previous_id,
+            )
 
-    # Compatibility mirrors for code that reads one legacy path directly
-    # (notably the Tk Settings statistics). They are not the commit and no
-    # loader trusts them while the manifest exists. Hard links avoid writing a
-    # second 38 MB copy; core.persistence replaces each link with a fresh temp
-    # file before a later indexing run writes, so the immutable generation's
-    # inode is never opened for truncation.
-    for kind, legacy in zip(_KINDS, legacy_index_file_paths(data_dir)):
-        staged_link = data_dir / f".{legacy.name}.{generation}.link"
-        try:
-            os.link(paths[kind], staged_link)
-            os.replace(staged_link, legacy)
-        except OSError:
-            # The manifest already committed, so raising would report failure
-            # after the deletion is live. A stale compatibility mirror is safe:
-            # load_all reads the manifest generation, never this path.
-            staged_link.unlink(missing_ok=True)
+            with open(staged_manifest, "x", encoding="utf-8") as handle:
+                json.dump(document, handle, indent=2)
+                handle.write("\n")
+                old_manifest_mode = _mode(manifest)
+                if old_manifest_mode is not None:
+                    os.chmod(staged_manifest, old_manifest_mode)
+                handle.flush()
+                os.fsync(handle.fileno())
+
+            # This is not a directory scan. The live manifest explicitly names
+            # the one two-commits-old generation, and the lock prevents another
+            # writer from moving the pointer or a reader from pinning it here.
+            if previous is not None:
+                _reap_generation(data_dir, previous.previous_generation)
+
+            # From the instant replace is attempted, an asynchronous exception
+            # cannot prove whether the commit landed. Never clean our files on
+            # that ambiguous path: the manifest may already name them.
+            commit_attempted = True
+            try:
+                os.replace(staged_manifest, manifest)
+            except OSError:
+                commit_attempted = False
+                raise
+
+            # Compatibility mirrors for code that reads one legacy path
+            # directly (notably Tk Settings statistics and playlist import).
+            # They are not the commit and core.loader never trusts them while a
+            # manifest exists. Hard links avoid a second physical 38 MB copy.
+            for kind, legacy in zip(_KINDS, legacy_index_file_paths(data_dir)):
+                staged_link = data_dir / f".{legacy.name}.{generation}.link"
+                try:
+                    os.link(paths[kind], staged_link)
+                    os.replace(staged_link, legacy)
+                except OSError:
+                    # The manifest already committed, so a stale mirror must
+                    # not turn a successful logical commit into an API error.
+                    staged_link.unlink(missing_ok=True)
+    except BaseException:
+        if not commit_attempted:
+            discard_scratch()
+        raise
 
     return IndexGeneration(
         generation=generation,
         paths=paths,
         sha256=document["sha256"],
+        previous_generation=document["previous_generation"],
     )
 
 
@@ -227,10 +319,18 @@ def read_index_generation(data_dir) -> Optional[IndexGeneration]:
         if document.get("schema_version") != INDEX_MANIFEST_SCHEMA:
             raise ValueError("unsupported schema version")
         generation = document["generation"]
+        previous_generation = document.get("previous_generation")
         files = document["files"]
         digests = document["sha256"]
         if not isinstance(generation, str) or not generation:
             raise ValueError("missing generation")
+        if previous_generation is not None and (
+            not isinstance(previous_generation, str)
+            or len(previous_generation) != 32
+            or any(character not in "0123456789abcdef" for character in previous_generation)
+            or previous_generation == generation
+        ):
+            raise ValueError("invalid previous generation")
         if set(files) != set(_KINDS) or set(digests) != set(_KINDS):
             raise ValueError("the file set is incomplete")
 
@@ -247,7 +347,12 @@ def read_index_generation(data_dir) -> Optional[IndexGeneration]:
     except (KeyError, TypeError, json.JSONDecodeError, ValueError) as error:
         raise ValueError(f"{INDEX_MANIFEST_FILENAME} is invalid: {error}") from None
 
-    return IndexGeneration(generation=generation, paths=paths, sha256=digests)
+    return IndexGeneration(
+        generation=generation,
+        paths=paths,
+        sha256=digests,
+        previous_generation=previous_generation,
+    )
 
 
 def current_index_file_paths(data_dir) -> Tuple[Path, Path, Path, Path]:
@@ -259,27 +364,25 @@ def current_index_file_paths(data_dir) -> Tuple[Path, Path, Path, Path]:
 
 def verified_index_payloads(data_dir) -> Tuple[bytes, bytes, bytes, bytes]:
     """Read each committed file once and verify the bytes that will be parsed."""
-    generation = read_index_generation(data_dir)
-    if generation is None:
-        return tuple(path.read_bytes() for path in legacy_index_file_paths(data_dir))
+    data_dir = Path(data_dir)
+    with _index_lock(data_dir, exclusive=False):
+        generation = read_index_generation(data_dir)
+        if generation is None:
+            return tuple(
+                path.read_bytes() for path in legacy_index_file_paths(data_dir)
+            )
 
-    payloads = []
-    for kind in _KINDS:
-        path = generation.paths[kind]
-        try:
-            payload = path.read_bytes()
-        except OSError as error:
-            raise ValueError(f"committed {kind} file could not be read: {error}") from None
-        actual = hashlib.sha256(payload).hexdigest()
-        if actual != generation.sha256[kind]:
-            raise ValueError(f"committed {kind} file failed its SHA-256 check")
-        payloads.append(payload)
-    return tuple(payloads)
-
-
-def retire_index_manifest(data_dir) -> None:
-    """Make a completed legacy-flat write visible as one logical commit."""
-    try:
-        index_manifest_path(data_dir).unlink()
-    except FileNotFoundError:
-        pass
+        payloads = []
+        for kind in _KINDS:
+            path = generation.paths[kind]
+            try:
+                payload = path.read_bytes()
+            except OSError as error:
+                raise ValueError(
+                    f"committed {kind} file could not be read: {error}"
+                ) from None
+            actual = hashlib.sha256(payload).hexdigest()
+            if actual != generation.sha256[kind]:
+                raise ValueError(f"committed {kind} file failed its SHA-256 check")
+            payloads.append(payload)
+        return tuple(payloads)

@@ -15,13 +15,20 @@ Known defects are pinned as CURRENT behaviour, not fixed - see
 docs/UI_FEATURE_INVENTORY.md section 4 and spec 3.2.
 """
 
+import contextlib
 import json
+import os
+from pathlib import Path
+import socket
+import subprocess
+import sys
 import threading
 
 import numpy as np
 import pandas as pd
 import pytest
 
+from core.index_store import read_index_generation
 from core.loader import index_file_paths
 from services.library_session import LibrarySession, LibrarySnapshot
 
@@ -480,7 +487,7 @@ def test_a_malformed_manifest_never_falls_back_to_stale_flat_files(tmp_library):
         LibrarySession.load(tmp_library)
 
 
-def test_a_completed_indexing_write_retires_the_deletion_pointer(
+def test_a_completed_indexing_write_uses_the_same_generation_commit(
     tmp_library, monkeypatch
 ):
     import core.loader as loader
@@ -488,6 +495,7 @@ def test_a_completed_indexing_write_retires_the_deletion_pointer(
 
     LibrarySession.load(tmp_library).delete_tracks(["t2"])
     assert (tmp_library / "library_index.json").is_file()
+    deletion_generation = read_index_generation(tmp_library)
 
     monkeypatch.setattr(loader, "META_PQ", tmp_library / "meta.parquet")
     existing_meta, existing_embeddings = loader.load_existing_data()
@@ -505,14 +513,188 @@ def test_a_completed_indexing_write_retires_the_deletion_pointer(
         replacement.ids,
     )
 
-    assert not (tmp_library / "library_index.json").exists()
-    assert index_file_paths(tmp_library) == (
-        tmp_library / "meta.parquet",
-        tmp_library / "embeddings.parquet",
-        tmp_library / "index.npy",
-        tmp_library / "ids.json",
+    indexing_generation = read_index_generation(tmp_library)
+    assert indexing_generation.generation != deletion_generation.generation
+    assert (
+        indexing_generation.previous_generation == deletion_generation.generation
+    )
+    assert index_file_paths(tmp_library) == indexing_generation.as_tuple()
+    assert all(
+        flat.samefile(committed)
+        for flat, committed in zip(
+            (
+                tmp_library / "meta.parquet",
+                tmp_library / "embeddings.parquet",
+                tmp_library / "index.npy",
+                tmp_library / "ids.json",
+            ),
+            indexing_generation.as_tuple(),
+        )
     )
     assert LibrarySession.load(tmp_library).ids == ["t1", "t3", "t4"]
+
+
+def test_commits_retain_only_the_current_and_immediately_previous_generation(
+    tmp_library,
+):
+    session = LibrarySession.load(tmp_library)
+
+    committed = []
+    for track_id in ("t1", "t2", "t3"):
+        session.delete_tracks([track_id])
+        generation = read_index_generation(tmp_library)
+        committed.append(generation.generation)
+
+    generation_ids_by_kind = []
+    for stem, suffix in (
+        ("meta", ".parquet"),
+        ("embeddings", ".parquet"),
+        ("index", ".npy"),
+        ("ids", ".json"),
+    ):
+        generation_ids_by_kind.append(
+            {
+                path.name[len(stem) + 1 : -len(suffix)]
+                for path in tmp_library.glob(f"{stem}.*{suffix}")
+            }
+        )
+
+    expected = set(committed[-2:])
+    assert all(generation_ids == expected for generation_ids in generation_ids_by_kind)
+    current = read_index_generation(tmp_library)
+    assert current.generation == committed[-1]
+    assert current.previous_generation == committed[-2]
+    assert committed[0] not in expected
+
+
+def test_index_process_and_web_delete_serialize_their_generation_commits(
+    tmp_library, monkeypatch
+):
+    """The CLI index path and web deletion may write from different processes.
+
+    The child calls the exact ``save_index_data`` boundary used at the end of
+    ``index_library``. It pauses while holding the short commit lock; the web
+    deletion must reach that lock but cannot enter until the child releases it.
+    """
+    import core.index_store as index_store
+
+    session = LibrarySession.load(tmp_library)
+    attempted = threading.Event()
+    acquired = threading.Event()
+    failures = []
+    real_lock = index_store._index_lock
+
+    @contextlib.contextmanager
+    def observed_lock(data_dir, exclusive):
+        deleting = threading.current_thread().name == "web-delete"
+        if deleting:
+            attempted.set()
+        with real_lock(data_dir, exclusive):
+            if deleting:
+                acquired.set()
+            yield
+
+    monkeypatch.setattr(index_store, "_index_lock", observed_lock)
+
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.settimeout(30)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    repo_root = Path(__file__).resolve().parents[2]
+    child_program = r"""
+import contextlib
+from pathlib import Path
+import socket
+import sys
+
+import core.index_store as index_store
+import core.persistence as persistence
+from core.loader import load_all
+
+data_dir = Path(sys.argv[1])
+port = int(sys.argv[2])
+meta, _meta_ix, emb_ix, _index, vectors, ids = load_all(data_dir)
+persistence.META_PQ = data_dir / "meta.parquet"
+persistence.EMB_PQ = data_dir / "embeddings.parquet"
+persistence.IDX_NPY = data_dir / "index.npy"
+persistence.IDS_JSON = data_dir / "ids.json"
+real_lock = index_store._index_lock
+
+@contextlib.contextmanager
+def paused_lock(lock_data_dir, exclusive):
+    with real_lock(lock_data_dir, exclusive):
+        with socket.create_connection(("127.0.0.1", port), timeout=30) as barrier:
+            barrier.settimeout(30)
+            barrier.sendall(b"ready")
+            if barrier.recv(1) != b"g":
+                raise RuntimeError("parent did not release the commit")
+        yield
+
+index_store._index_lock = paused_lock
+persistence.save_index_data(meta, emb_ix.reset_index(), vectors, ids)
+"""
+    child_environment = os.environ.copy()
+    child_environment["PYTHONPATH"] = os.pathsep.join(
+        filter(
+            None,
+            [str(repo_root / "src"), child_environment.get("PYTHONPATH", "")],
+        )
+    )
+    child = None
+    barrier = None
+    delete_thread = None
+
+    def delete_in_web_process():
+        try:
+            session.delete_tracks(["t2"])
+        except BaseException as error:  # noqa: BLE001 - asserted in parent
+            failures.append(error)
+
+    try:
+        child = subprocess.Popen(
+            [sys.executable, "-c", child_program, str(tmp_library), str(port)],
+            cwd=str(repo_root),
+            env=child_environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        barrier, _address = listener.accept()
+        barrier.settimeout(30)
+        assert barrier.recv(5) == b"ready"
+
+        delete_thread = threading.Thread(
+            target=delete_in_web_process,
+            name="web-delete",
+        )
+        delete_thread.start()
+        assert attempted.wait(30), "web deletion never attempted its commit"
+        assert not acquired.is_set(), "web deletion entered a child-held commit lock"
+
+        barrier.sendall(b"g")
+        stdout, stderr = child.communicate(timeout=30)
+        assert child.returncode == 0, (stdout, stderr)
+        delete_thread.join(30)
+        assert not delete_thread.is_alive(), "web deletion never finished"
+    finally:
+        if barrier is not None:
+            with contextlib.suppress(OSError):
+                barrier.sendall(b"g")
+            barrier.close()
+        listener.close()
+        if child is not None:
+            if child.poll() is None:
+                child.kill()
+            child.wait(timeout=30)
+        if delete_thread is not None:
+            delete_thread.join(30)
+
+    assert not failures
+    assert acquired.is_set()
+    assert LibrarySession.load(tmp_library).ids == ["t1", "t3", "t4"]
+    current = read_index_generation(tmp_library)
+    assert current.previous_generation is not None
 
 
 def test_delete_tracks_rebinds_rather_than_mutating(tmp_library):

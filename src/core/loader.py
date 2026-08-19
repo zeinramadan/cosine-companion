@@ -51,10 +51,6 @@ def load_existing_data(progress=None) -> Tuple[Optional[pd.DataFrame], Optional[
     Returns:
         Tuple of (existing_meta_df, existing_embeddings_df) or (None, None) if no data exists
     """
-    meta_pq, emb_pq, _idx_npy, _ids_json = index_file_paths()
-    if not meta_pq.exists() or not emb_pq.exists():
-        return None, None
-    
     try:
         meta_bytes, emb_bytes, _index_bytes, _ids_bytes = verified_index_payloads(
             Path(META_PQ).parent
@@ -63,6 +59,8 @@ def load_existing_data(progress=None) -> Tuple[Optional[pd.DataFrame], Optional[
         existing_emb = pd.read_parquet(io.BytesIO(emb_bytes))
         _report(progress, "start", f"Found existing data: {len(existing_meta)} tracks already indexed")
         return existing_meta, existing_emb
+    except FileNotFoundError:
+        return None, None
     except Exception as e:
         _report(progress, "start", f"Warning: Could not load existing data ({e}), starting fresh")
         return None, None
