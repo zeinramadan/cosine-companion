@@ -26,6 +26,7 @@ tests/web/test_no_heavy_imports.py.
 import dataclasses
 import math
 import re
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -34,6 +35,8 @@ import pandas as pd
 
 from services.explore_session import ExploreSession
 from services.playlist_service import IMPORT_COMMAND, PlaylistService
+from services.settings_store import XML_PATH_KEY
+
 
 API_VERSION = 1
 APP_NAME = "cosine-companion"
@@ -60,6 +63,10 @@ EXPLORE_FINAL_TOP = 200
 
 DEFAULT_RECOMMENDATION_LIMIT = 50
 MAX_RECOMMENDATION_LIMIT = 200
+
+# Filesystem limits differ, but a path longer than this is not useful on any
+# platform the desktop app supports and can raise from a later UI callback.
+MAX_XML_PATH_CHARACTERS = 4096
 
 
 class ApiError(Exception):
@@ -262,16 +269,20 @@ class CocoApi:
             else PlaylistService(getattr(library, "data_dir", None))
         )
 
+        self._settings_write_lock = threading.Lock()
+
     # -- routing -----------------------------------------------------------
     #
     # An ordered list of (method, pattern, handler name). No routing library:
-    # there are six routes and the only ordering constraint is that
+    # there are eight routes and the only ordering constraint is that
     # /api/tracks/search is matched before /api/tracks/{track_id}, which a list
     # expresses better than a dependency would.
 
     ROUTES = [
         ("GET", re.compile(r"^/api/health$"), "_health"),
         ("GET", re.compile(r"^/api/library$"), "_library"),
+        ("GET", re.compile(r"^/api/settings$"), "_settings"),
+        ("POST", re.compile(r"^/api/settings$"), "_update_settings"),
         ("GET", re.compile(r"^/api/tracks$"), "_browse"),
         ("GET", re.compile(r"^/api/tracks/search$"), "_search"),
         (
@@ -283,7 +294,11 @@ class CocoApi:
     ]
 
     def handle(
-        self, method: str, path: str, query: Dict[str, List[str]]
+        self,
+        method: str,
+        path: str,
+        query: Dict[str, List[str]],
+        body: Any = None,
     ) -> Tuple[int, Dict[str, Any]]:
         """Dispatch one request. Never raises; every failure is a status code."""
         matched_path = False
@@ -295,7 +310,10 @@ class CocoApi:
             if verb != method:
                 continue
             try:
-                return getattr(self, handler_name)(query, **match.groupdict())
+                arguments = match.groupdict()
+                if method == "POST":
+                    arguments["body"] = body
+                return getattr(self, handler_name)(query, **arguments)
             except ApiError as error:
                 return error.as_response()
 
@@ -320,6 +338,46 @@ class CocoApi:
                 "xml_path": self.settings.xml_path,
             }
         )
+
+    def _settings(self, query):
+        return 200, self._settings_document()
+
+    def _update_settings(self, query, body):
+        """Persist the one value the existing Settings window can change.
+
+        ``first_run_complete`` is a real setting, but it controls whether the
+        onboarding flow runs and is not a user-editable preference. Keeping it
+        out of both response and request prevents this small endpoint from
+        becoming a generic settings-file editor.
+        """
+        if not isinstance(body, dict) or set(body) != {XML_PATH_KEY}:
+            raise bad_request(
+                f"The JSON body must contain exactly one field: {XML_PATH_KEY}."
+            )
+
+        xml_path = body[XML_PATH_KEY]
+        if not isinstance(xml_path, str) or not xml_path.strip():
+            raise bad_request(f"{XML_PATH_KEY} must be a non-blank string.")
+        xml_path = xml_path.strip()
+        if len(xml_path) > MAX_XML_PATH_CHARACTERS:
+            raise bad_request(
+                f"{XML_PATH_KEY} must not exceed {MAX_XML_PATH_CHARACTERS} characters."
+            )
+
+        # SettingsStore.set is deliberately the merge operation: changing the
+        # XML path must preserve first_run_complete, as the Tkinter window does.
+        # The chosen path is not checked for existence there, so it is not
+        # checked here either.
+        with self._settings_write_lock:
+            self.settings.set(XML_PATH_KEY, xml_path)
+            return 200, self._settings_document()
+
+    def _settings_document(self):
+        return {
+            "settings": {
+                XML_PATH_KEY: _jsonable(self.settings.get(XML_PATH_KEY)),
+            }
+        }
 
     def _browse(self, query):
         """The first page of the library, for the palette's empty state.

@@ -420,12 +420,11 @@ def test_the_shell_uses_real_landmarks():
     assert len(re.findall(r"<main\b", body)) == 1
 
 
-def test_all_four_destinations_are_present():
-    """Three of them are not implemented in this PR and are still rendered: the
-    shape of the shell is part of what is being reviewed."""
+def test_all_five_destinations_are_present():
+    """Settings is the one addition; the three placeholders stay explicit."""
     body = read(INDEX_HTML)
 
-    for destination in ("explore", "set-creator", "library", "export"):
+    for destination in ("explore", "set-creator", "library", "export", "settings"):
         assert f'data-destination="{destination}"' in body
 
 
@@ -537,7 +536,7 @@ def test_every_interactive_control_is_a_real_element():
 
     assert not re.search(r"<div[^>]*\bonclick", body)
     for match in re.finditer(r"<button[^>]*>", body):
-        assert 'type="button"' in match.group(0), match.group(0)
+        assert re.search(r'type="(?:button|submit)"', match.group(0)), match.group(0)
 
 
 def test_every_script_file_is_reachable_from_the_entry_module():

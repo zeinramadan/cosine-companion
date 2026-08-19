@@ -43,7 +43,7 @@ function readTokenFromLocation() {
 
 const token = readTokenFromLocation();
 
-async function request(path, params = {}) {
+async function request(path, params = {}, options = {}) {
   const url = new URL(path, window.location.origin);
   for (const [name, value] of Object.entries(params)) {
     if (value !== undefined && value !== null) {
@@ -51,12 +51,20 @@ async function request(path, params = {}) {
     }
   }
 
+  const headers = { [TOKEN_HEADER]: token };
+  const init = {
+    method: options.method || 'GET',
+    headers,
+    cache: 'no-store',
+  };
+  if (options.body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+    init.body = JSON.stringify(options.body);
+  }
+
   let response;
   try {
-    response = await fetch(url, {
-      headers: { [TOKEN_HEADER]: token },
-      cache: 'no-store',
-    });
+    response = await fetch(url, init);
   } catch (cause) {
     throw new ApiError('network', 'Could not reach the local server.', 0);
   }
@@ -83,6 +91,9 @@ async function request(path, params = {}) {
 export const api = {
   health: () => request('/api/health'),
   library: () => request('/api/library'),
+  settings: () => request('/api/settings'),
+  updateSettings: (xmlPath) =>
+    request('/api/settings', {}, { method: 'POST', body: { xml_path: xmlPath } }),
   tracks: (limit = 50) => request('/api/tracks', { limit }),
   search: (q, limit = 50) => request('/api/tracks/search', { q, limit }),
   track: (trackId) => request(`/api/tracks/${encodeURIComponent(trackId)}`),

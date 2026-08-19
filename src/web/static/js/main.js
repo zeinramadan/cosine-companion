@@ -7,6 +7,7 @@
 import { api } from './api.js';
 import { createStore } from './store.js';
 import { mountSidebar } from './components/sidebar.js';
+import { mountSettings } from './components/settings.js';
 import { mountPalette } from './components/palette.js';
 import { mountDrawer } from './components/drawer.js';
 import { mountExplore, DEFAULT_SORT, DEFAULT_TOP_N } from './components/explore.js';
@@ -31,6 +32,7 @@ const store = createStore({
 });
 
 mountSidebar({ store });
+mountSettings();
 mountDrawer({ store });
 
 const palette = mountPalette({
