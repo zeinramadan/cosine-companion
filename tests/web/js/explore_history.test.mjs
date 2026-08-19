@@ -209,3 +209,26 @@ test('history is still capped at twenty', async () => {
 
   assert.equal(store.getState().history.length, 20);
 });
+
+test('a sort considers every computed row, not just the visible ones', async () => {
+  // Inventory :385-386 - "Sorts apply to all 200 computed recommendations,
+  // then the list is re-rendered truncated to topn". Sorting after truncating
+  // would show the best of the first N rather than the best N, and with a
+  // small Top-N the two differ by which tracks appear at all.
+  const store = freshStore();
+  const explore = mountExplore({ store, onPickSeed() {}, onShowDetail() {} });
+
+  await seedWith(explore, 'A', SEED_A, A_RECS);
+
+  const select = topNSelect();
+  select.value = '1';
+  select.dispatch('change');
+  assert.deepEqual(rowTitles(), [COSINE_ORDER[0]], 'only one row should be shown');
+
+  control('Artist').dispatch('click');
+
+  // T2 (Alice) is LAST by cosine among the three and first by artist. It can
+  // only be the single visible row if the sort saw all three.
+  assert.deepEqual(rowTitles(), [ARTIST_ORDER[0]]);
+  assert.equal(store.getState().recommendations.length, A_RECS.length, 'rows were dropped, not just hidden');
+});
