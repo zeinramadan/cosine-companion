@@ -1894,9 +1894,9 @@ lands;
 otherwise the response is dropped without a message, because the action that
 changed the configuration has already had its say. `Generate Set` is disabled
 for the duration of a build either way, so at most one is ever outstanding.
-Pinned by the five ordering cases in `tests/web/js/set_creator.test.mjs` that
-press before they answer, including the two that change the configuration and
-change it back — one by removing and re-adding the anchor, one by retyping the
+Pinned by the five cases in `tests/web/js/set_creator.test.mjs` that change
+something WHILE the generation is in flight and answer it afterwards — two of
+them positive controls that change the configuration and change it back — one by removing and re-adding the anchor, one by retyping the
 same length as `030` and then in Arabic-Indic digits — where the response is
 still valid and IS written.
 
