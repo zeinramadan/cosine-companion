@@ -57,6 +57,16 @@ DEFAULT_CONTENT_TYPE = "application/octet-stream"
 
 JSON_CONTENT_TYPE = "application/json; charset=utf-8"
 
+#: Methods this server answers, in the order the ``Allow`` header lists them.
+ALLOWED_METHODS = "GET, HEAD"
+
+#: Methods answered by running another method's handler. HEAD is *defined* as
+#: GET without the content (RFC 9110 §9.3.2), so the GET path is what has to
+#: produce its status, its headers and its Content-Length; ``_Handler._send``
+#: is where the content alone is dropped. Written as a mapping rather than an
+#: ``if`` so that "which methods stand in for which" is one readable fact.
+SAFE_ALIASES = {"HEAD": "GET"}
+
 INDEX_FILE = "index.html"
 
 #: ``serve_forever`` polls for the shutdown flag on this interval, so it also
@@ -151,10 +161,19 @@ class _Handler(BaseHTTPRequestHandler):
             path = unquote(split.path)
             query = parse_qs(split.query, keep_blank_values=True)
 
+            # HEAD is routed as GET. RFC 9110 §9.3.2 defines a HEAD response as
+            # the one GET would have produced with the content removed, and
+            # §8.6 requires the Content-Length to keep describing that removed
+            # content - so answering HEAD with its own 405 would satisfy
+            # neither. Aliasing here, after the Host check and before the two
+            # servers, means HEAD reaches _serve_api's token check by exactly
+            # the same route GET does; nothing about auth is special-cased.
+            routed = SAFE_ALIASES.get(method, method)
+
             if path == API_PREFIX or path.startswith(API_PREFIX + "/"):
-                self._serve_api(method, path, query)
+                self._serve_api(routed, path, query)
             else:
-                self._serve_static(method, path)
+                self._serve_static(routed, path)
         except Exception:  # pragma: no cover - defensive
             traceback.print_exc(file=sys.stderr)
             self._send_json(500, error_body("internal", "The server failed to respond."))
@@ -174,7 +193,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(
                 405,
                 error_body("method_not_allowed", f"{method} is not supported."),
-                extra_headers={"Allow": "GET"},
+                extra_headers={"Allow": ALLOWED_METHODS},
             )
             return
 
@@ -209,7 +228,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(
                 405,
                 error_body("method_not_allowed", f"{method} is not supported."),
-                extra_headers={"Allow": "GET"},
+                extra_headers={"Allow": ALLOWED_METHODS},
             )
             return
 
@@ -278,6 +297,12 @@ class _Handler(BaseHTTPRequestHandler):
         the last place an HTML body could leave this server, and the frontend
         reads every non-2xx body as JSON, so these are translated rather than
         left as the one exception.
+
+        The JSON is only half of it: most of these are raised while
+        ``request_version`` still holds the sentinel that suppresses response
+        framing entirely, so the translated body needed a status line in front
+        of it before it was a response at all. ``_ensure_framable`` is what
+        supplies that, on the shared path rather than here.
         """
         try:
             shortmsg = self.responses[code][0]
@@ -293,7 +318,54 @@ class _Handler(BaseHTTPRequestHandler):
         # These are all unrecoverable framing errors; the stdlib closes too.
         self.close_connection = True
 
+    def _ensure_framable(self) -> None:
+        """Guarantee this response gets a status line, headers and a blank line.
+
+        ``BaseHTTPRequestHandler`` suppresses all three whenever
+        ``request_version`` is the ``HTTP/0.9`` sentinel - ``send_response_only``,
+        ``send_header`` and ``end_headers`` each open with the same
+        ``if self.request_version != 'HTTP/0.9'``. That is how the base class
+        speaks 0.9, which has no response framing at all.
+
+        The trap is that ``parse_request`` installs that sentinel *before* it
+        reads anything and only replaces it once it has a version it accepts.
+        Every request line it rejects on the way there - a one-word line,
+        ``HTTP/9.9``, ``HTTP/2.0`` - is therefore answered while the sentinel is
+        still in place, and what went on the wire was a naked JSON body with no
+        ``HTTP/1.1`` line in front of it. A real client does not read that as
+        our 400: ``http.client`` raises ``BadStatusLine`` and never sees the
+        status or the body. (The 414 escaped this only because
+        ``handle_one_request`` blanks ``request_version`` rather than leaving
+        the sentinel, which is a difference of one line in the stdlib and not
+        something to rely on.)
+
+        This is inherited behaviour, not something the ``send_error`` override
+        introduced - the same request lines got an unframed HTML page before
+        it. What the override did was make the module docstring's promise
+        louder than what was delivered.
+
+        Normalising here rather than inside ``send_error`` puts it on the one
+        path every response takes, so a future error route cannot miss it, and
+        it is safe unconditionally because there is no HTTP/0.9 client to
+        confuse: a 0.9 request carries no headers, so it cannot carry ``Host``,
+        and ``_dispatch`` refuses it 403 either way. Framing that refusal makes
+        it legible instead of leaving a bare body on the socket.
+
+        Note what this deliberately does **not** do: it does not authorise
+        anything. These failures happen before a header has been parsed, so
+        there is no API request here to protect - only a request line this
+        server could not read, which it must be able to say so about.
+
+        Pinned by the raw-socket cases in tests/web/test_server_auth.py, which
+        use sockets rather than ``http.client`` precisely because
+        ``http.client`` is forgiving enough to hand an unframed body back as a
+        response.
+        """
+        if self.request_version == "HTTP/0.9":
+            self.request_version = "HTTP/1.1"
+
     def _send(self, status: int, payload: bytes, content_type: str, extra_headers=None):
+        self._ensure_framable()
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))
@@ -303,10 +375,17 @@ class _Handler(BaseHTTPRequestHandler):
         for name, value in (extra_headers or {}).items():
             self.send_header(name, value)
         self.end_headers()
-        # A HEAD response carries the headers its GET would carry and no body
-        # (RFC 9110 §9.3.2). Writing one anyway would desynchronise a keep-alive
-        # connection: the client stops reading at Content-Length 0 for HEAD, and
-        # the bytes left in the socket become the start of the next response.
+        # The only difference between a HEAD response and its GET, and the
+        # last moment at which it can be made. _dispatch already routed this
+        # request as GET, so the status, the Content-Type and the
+        # Content-Length above are the GET's - which is what RFC 9110 §9.3.2
+        # and §8.6 require - and all that is left is to not write the content.
+        #
+        # Writing it anyway does NOT show up as a stray body: the client stops
+        # reading on the method's semantics, so it reports no body either way.
+        # It shows up one response later, on a keep-alive connection, when the
+        # bytes still in the socket are read as the start of the NEXT response.
+        # That is why the test for this reuses its connection.
         if self.command != "HEAD":
             self.wfile.write(payload)
 
