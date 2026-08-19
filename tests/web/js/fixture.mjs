@@ -47,6 +47,17 @@ export function buildExploreDom() {
   return { root };
 }
 
+/** Build the Settings form's mount points. Mirrors index.html. */
+export function buildSettingsDom() {
+  const form = withId(new Node('form'), 'settings-form');
+  const input = withId(new Node('input'), 'settings-xml-path');
+  const submit = withId(new Node('button'), 'settings-submit');
+  const status = withId(new Node('p'), 'settings-status');
+  form.append(input, submit, status);
+  document.body.append(form);
+  return { form, input, submit, status };
+}
+
 /* -- a fetch whose responses the test hands out by hand -------------------
  *
  * Deterministic on purpose. Sequencing bugs are about which response lands
@@ -60,11 +71,11 @@ export function installFetch() {
 
   // defineGlobal, not assignment: `fetch` is a runtime-owned global too, and
   // the node-21 `navigator` breakage is the same shape of risk here.
-  defineGlobal('fetch', (url) => {
+  defineGlobal('fetch', (url, options = {}) => {
     const path = url.pathname;
     const query = url.searchParams.get('q') || '';
     const key = `${path}?q=${query}`;
-    requests.push({ path, query, key });
+    requests.push({ path, query, key, options });
     return new Promise((resolve, reject) => {
       pending.set(key, { resolve, reject });
     });

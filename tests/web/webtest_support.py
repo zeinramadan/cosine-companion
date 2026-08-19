@@ -54,7 +54,7 @@ class Client:
         self.host = host
         self.port = port
 
-    def request(self, method, path, headers=None, host_header=True):
+    def request(self, method, path, headers=None, host_header=True, body=None):
         """Send one request.
 
         ``host_header=False`` sends no Host header at all, which
@@ -65,7 +65,7 @@ class Client:
         connection = http.client.HTTPConnection(self.host, self.port, timeout=10)
         try:
             if host_header:
-                connection.request(method, path, headers=headers or {})
+                connection.request(method, path, body=body, headers=headers or {})
             else:
                 connection.putrequest(
                     method, path, skip_host=True, skip_accept_encoding=True
@@ -73,6 +73,8 @@ class Client:
                 for name, value in (headers or {}).items():
                     connection.putheader(name, value)
                 connection.endheaders()
+                if body:
+                    connection.send(body)
             raw = connection.getresponse()
             return Response(raw.status, dict(raw.getheaders()), raw.read())
         finally:
@@ -82,6 +84,13 @@ class Client:
         """GET ``path``, sending ``token`` in the header when one is given."""
         headers = {"X-Coco-Token": token} if token is not None else {}
         return self.request("GET", path, headers)
+
+    def post(self, path, body, token=None, content_type="application/json"):
+        """POST raw ``body`` with the headers the web frontend uses."""
+        headers = {"Content-Type": content_type}
+        if token is not None:
+            headers["X-Coco-Token"] = token
+        return self.request("POST", path, headers=headers, body=body)
 
 
 class StubApi:
@@ -98,8 +107,9 @@ class StubApi:
         self.response = response if response is not None else (200, {"stub": True})
         self.raises = raises
 
-    def handle(self, method, path, query):
-        self.calls.append((method, path, query))
+    def handle(self, method, path, query, body=None):
+        call = (method, path, query) if body is None else (method, path, query, body)
+        self.calls.append(call)
         if self.raises is not None:
             raise self.raises
         return self.response
