@@ -52,6 +52,7 @@ def _loaded_forbidden_after(import_statements):
         cwd=str(SRC),
         capture_output=True,
         text=True,
+        timeout=120,
     )
     assert result.returncode == 0, result.stderr
     return [m for m in result.stdout.strip().split(",") if m]
@@ -88,7 +89,11 @@ def test_the_web_package_itself_imports_nothing_heavy():
         "print(','.join(eager))\n"
     )
     result = subprocess.run(
-        [sys.executable, "-c", program], cwd=str(SRC), capture_output=True, text=True
+        [sys.executable, "-c", program],
+        cwd=str(SRC),
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
 
     assert result.returncode == 0, result.stderr

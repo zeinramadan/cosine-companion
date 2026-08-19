@@ -56,6 +56,7 @@ def _loaded_forbidden_after(import_statements):
         cwd=str(SRC),
         capture_output=True,
         text=True,
+        timeout=120,
     )
     assert result.returncode == 0, result.stderr
     return [m for m in result.stdout.strip().split(",") if m]
@@ -90,6 +91,7 @@ def test_the_settings_reader_is_importable_on_its_own():
         cwd=str(SRC),
         capture_output=True,
         text=True,
+        timeout=120,
     )
 
     assert result.returncode == 0, result.stderr
@@ -137,7 +139,11 @@ def test_the_embedder_is_still_reachable_from_the_pipeline():
         "print('ok')\n"
     )
     result = subprocess.run(
-        [sys.executable, "-c", program], cwd=str(SRC), capture_output=True, text=True
+        [sys.executable, "-c", program],
+        cwd=str(SRC),
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
 
     assert result.returncode == 0, result.stderr
@@ -180,7 +186,11 @@ def test_the_indexing_service_still_reaches_the_pipeline_when_it_runs():
         "print(result.status)\n"
     )
     result = subprocess.run(
-        [sys.executable, "-c", program], cwd=str(SRC), capture_output=True, text=True
+        [sys.executable, "-c", program],
+        cwd=str(SRC),
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
 
     assert result.returncode == 0, result.stderr
