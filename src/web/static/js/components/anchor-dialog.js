@@ -6,7 +6,7 @@
  *   :948  `Position in Set:` + entry, BLANK default -> the position field
  *   :949  `Search for Track:` + entry, live filter  -> the search field
  *   :950  `Search Results:` + single-selection list -> the results listbox
- *   :951  `<Double-Button-1>` = Add to Set          -> double-click a row
+ *   :951  `<Double-Button-1>` = Add to Set          -> double-click, or Enter
  *   :952  `Add to Set` and `Cancel`, Cancel rightmost
  *   :954  search implementation A, limit=50, rows `{artist} – {title}`
  *   :961  no selection    -> No Selection / Please select a track.
@@ -42,6 +42,7 @@
 
 import { api } from '../api.js';
 import { displayName, element, parseIntegerStrictly } from '../format.js';
+import { wireListbox } from '../listbox.js';
 import { openModal } from '../modal.js';
 import { askyesno, showerror, showwarning } from './message-box.js';
 
@@ -96,24 +97,44 @@ export function openAnchorDialog({ existingAnchors }) {
       return;
     }
 
-    list.replaceChildren(
-      ...results.map((track, index) => {
-        // Inventory :954 and §3.1 - one line, `{artist} – {title}`.
-        const option = element('li', 'picker__option', displayName(track));
-        option.setAttribute('role', 'option');
-        option.setAttribute('aria-selected', 'false');
-        option.addEventListener('click', () => {
-          selected = index;
-          syncSelection();
-        });
-        option.addEventListener('dblclick', () => {
-          selected = index;
-          syncSelection();
-          add();
-        });
-        return option;
-      }),
-    );
+    const options = results.map((track, index) => {
+      // Inventory :954 and §3.1 - one line, `{artist} – {title}`.
+      const option = element('li', 'picker__option', displayName(track));
+      option.setAttribute('role', 'option');
+      option.setAttribute('aria-selected', 'false');
+      option.addEventListener('click', () => {
+        selected = index;
+        syncSelection();
+      });
+      option.addEventListener('dblclick', () => {
+        selected = index;
+        syncSelection();
+        add();
+      });
+      return option;
+    });
+
+    list.replaceChildren(...options);
+    // `role="option"` is a promise the row can be chosen. Without this the rows
+    // are not in the tab order and take no keys, so a keyboard user could reach
+    // every other control in this dialog and never make a selection - which
+    // left `Add to Set` able to answer only "No Selection" (:961).
+    //
+    // `syncSelection` updates aria-selected in place rather than re-rendering,
+    // which is what lets the arrow keys keep the focus they just moved.
+    wireListbox(options, {
+      selected,
+      onSelect: (index) => {
+        selected = index;
+        syncSelection();
+      },
+      // Enter and Space on a row do what double-clicking it does (:951).
+      onActivate: (index) => {
+        selected = index;
+        syncSelection();
+        add();
+      },
+    });
     syncSelection();
   }
 

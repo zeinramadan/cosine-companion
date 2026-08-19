@@ -1751,7 +1751,7 @@ coordinates in this document.
 | `Anchor Tracks:` label | :454 | The anchor section heading |
 | `+ Add Anchor` | :455 | Opens the §2.12 dialog. The macOS re-styling workaround at :456 has no web counterpart and is not one — §3.5, §4 #8 |
 | Anchor listbox | :457 | A single-selection list, ascending by position |
-| `Remove` | :458 | Removes the selected anchor, or warns (:523) |
+| `Remove` | :458 | Removes the selected anchor, or warns (:523). The anchor list is a keyboard-operable listbox, or this control could be pressed and never satisfied without a mouse |
 | `Generated Set:` label | :461 | The set section heading |
 | Generated-set listbox | :462 | The generated rows |
 | `Export to Clipboard` | :463 | The button below them |
@@ -1773,7 +1773,7 @@ coordinates in this document.
 | `AddAnchorDialog`, modal | :946 | A modal dialog whose `aria-modal` is backed by an inert shell and a Tab trap, as the palette's is |
 | `Position in Set:` entry, blank | :948 | Blank by default. It is not pre-filled with the next free slot, because :966 says the dialog does not know the set's length |
 | `Search for Track:` entry | :949 | Filters as you type, debounced 120 ms and sequenced by keystroke, as the palette is |
-| Results list, single selection | :950 | Nothing is selected until a row is clicked, which is what keeps :961 reachable |
+| Results list, single selection | :950 | Nothing is selected until a row is chosen, which is what keeps :961 reachable. Both web lists are operable from the keyboard - roving tabindex, arrows to move, Enter or Space to choose - because `role="option"` on an unfocusable row is a promise the row cannot keep |
 | `<Double-Button-1>` = `Add to Set` | :951 | Double-clicking a row adds it |
 | `Add to Set` / `Cancel`, Cancel rightmost | :952 | Both, in that visual order |
 | Search implementation A, `limit=50` | :954 | `GET /api/tracks/search?limit=50`, which is `LibrarySession.search_tracks` — implementation A unchanged. Rows render `{artist} – {title}` |

@@ -37,6 +37,7 @@ const dom = buildSetCreatorDom();
 const { openAnchorDialog } = await import(
   '../../../src/web/static/js/components/anchor-dialog.js'
 );
+const { focusablesWithin } = await import('../../../src/web/static/js/modal.js');
 
 const BROWSE_KEY = '/api/tracks?q=';
 
@@ -446,6 +447,140 @@ test('Cancel and Escape both discard the selection', async () => {
   positionField().value = '1';
   dialog().querySelector('.modal__panel').dispatch('keydown', { key: 'Escape' });
   assert.equal(await escaped, null);
+});
+
+// ---------------------------------------------------------------------------
+// Keyboard reach
+// ---------------------------------------------------------------------------
+
+test('the result rows are reachable and choosable without a mouse', async () => {
+  /* THE DEFECT THIS PINS. The rows shipped as `<li role="option">` with a
+   * click handler and nothing else: not in the tab order, no key handling. A
+   * keyboard user could reach the position field, the search box, `Add to Set`
+   * and `Cancel`, and could never select a track - so the only answer this
+   * dialog could give them was "No Selection". `role="option"` is a promise
+   * that the row can be chosen, and it was false. */
+  const { answered } = await open();
+
+  // Roving tabindex: exactly one row is a tab stop, not fifty.
+  assert.deepEqual(
+    options().map((option) => option.getAttribute('tabindex')),
+    ['0', '-1', '-1'],
+  );
+
+  options()[0].dispatch('keydown', { key: 'ArrowDown', preventDefault() {} });
+  assert.deepEqual(
+    options().map((option) => option.getAttribute('aria-selected')),
+    ['false', 'true', 'false'],
+    'ArrowDown did not move the selection',
+  );
+  assert.equal(document.activeElement, options()[1], 'ArrowDown did not move the focus');
+  assert.deepEqual(
+    options().map((option) => option.getAttribute('tabindex')),
+    ['-1', '0', '-1'],
+    'the tab stop did not follow the selection',
+  );
+
+  options()[1].dispatch('keydown', { key: 'End', preventDefault() {} });
+  assert.equal(document.activeElement, options()[2]);
+
+  options()[2].dispatch('keydown', { key: 'ArrowDown', preventDefault() {} });
+  assert.equal(document.activeElement, options()[2], 'the selection ran off the end');
+
+  options()[2].dispatch('keydown', { key: 'Home', preventDefault() {} });
+  assert.equal(document.activeElement, options()[0]);
+
+  positionField().value = '4';
+  options()[0].dispatch('keydown', { key: 'Enter', preventDefault() {} });
+  await settle();
+
+  assert.deepEqual(await answered, { position: 4, track: TRACKS[0] });
+});
+
+test('the tab trap stops on the list, and only on its one tab stop', async () => {
+  /* THE DEFECT THIS PINS, and it was found in Chrome rather than here.
+   *
+   * `focusablesWithin` knew four tag names. The result rows are
+   * `<li tabindex="0">`, so the trap did not merely fail to include them - it
+   * calls preventDefault on Tab and moves the caret to the next element it
+   * DOES know about, which meant Tab jumped the whole list and landed on
+   * `Cancel`. The list was operable by arrow key and unreachable by Tab at the
+   * same time, which is worse than either.
+   *
+   * This shim has no tab order, so what is asserted is the SET the trap walks.
+   * The ordering half was verified by driving real key events through CDP in
+   * real Chrome and reading back document.activeElement; that pass is in the
+   * PR description.
+   */
+  const { answered } = await open();
+  const panel = dialog().querySelector('.modal__panel');
+
+  const stops = focusablesWithin(panel);
+  const classes = stops.map((node) => node.className);
+
+  assert.ok(
+    classes.some((name) => name.includes('picker__option')),
+    `the trap skips the result list entirely: ${JSON.stringify(classes)}`,
+  );
+  // Exactly ONE row, because the roving tabindex puts the other two at -1. A
+  // trap that took every row would need fifty presses of Tab to get past.
+  assert.equal(
+    stops.filter((node) => node.className.includes('picker__option')).length,
+    1,
+  );
+  // ...and the controls are all still in it.
+  assert.deepEqual(
+    stops.filter((node) => node.tagName === 'BUTTON').map((node) => node.textContent),
+    ['Cancel', 'Add to Set'],
+  );
+  assert.equal(stops.filter((node) => node.tagName === 'INPUT').length, 2);
+
+  press('Cancel');
+  await answered;
+});
+
+test('a control taken out of the tab order stays out of it', async () => {
+  // The negative half of the same rule: an explicit tabindex wins over the tag
+  // in BOTH directions, or "tabindex=-1" would stop meaning anything.
+  const { answered } = await open();
+  const panel = dialog().querySelector('.modal__panel');
+  const cancel = focusablesWithin(panel).find((node) => node.textContent === 'Cancel');
+
+  cancel.setAttribute('tabindex', '-1');
+
+  assert.ok(
+    !focusablesWithin(panel).includes(cancel),
+    'a tabindex="-1" button is still being trapped onto',
+  );
+
+  cancel.removeAttribute('tabindex');
+  press('Cancel');
+  await answered;
+});
+
+test('Space chooses a row too', async () => {
+  const { answered } = await open();
+  options()[1].dispatch('keydown', { key: 'ArrowDown', preventDefault() {} });
+  positionField().value = '2';
+
+  options()[1].dispatch('keydown', { key: ' ', preventDefault() {} });
+  await settle();
+
+  assert.deepEqual(await answered, { position: 2, track: TRACKS[1] });
+});
+
+test('a keyboard selection is what "No Selection" stops being about', async () => {
+  // The check is still live - it is reachable by never touching the list - but
+  // it must not be the ONLY thing a keyboard user can reach.
+  const { answered } = await open();
+  positionField().value = '1';
+
+  options()[0].dispatch('keydown', { key: 'ArrowDown', preventDefault() {} });
+  press('Add to Set');
+  await settle();
+
+  assert.equal(messageBox(), null, 'a keyboard selection was not seen');
+  assert.deepEqual(await answered, { position: 1, track: TRACKS[1] });
 });
 
 // ---------------------------------------------------------------------------

@@ -45,6 +45,7 @@
 import { api, ApiError } from '../api.js';
 import { copyToClipboard } from '../clipboard.js';
 import { element, stateBlock, wholePercent, parseIntegerStrictly } from '../format.js';
+import { wireListbox } from '../listbox.js';
 import { openAnchorDialog } from './anchor-dialog.js';
 import { showerror, showinfo, showwarning } from './message-box.js';
 
@@ -105,6 +106,11 @@ export function mountSetCreator({ store }) {
   let selectedAnchor = null;
   let generating = false;
 
+  /* The rendered anchor rows, so selecting one can update `aria-selected` in
+   * place. A full re-render would destroy the node the arrow keys just focused,
+   * which is the whole reason the roving tabindex in `listbox.js` works. */
+  let anchorRowNodes = [];
+
   // -- actions ------------------------------------------------------------
 
   async function addAnchor() {
@@ -137,6 +143,19 @@ export function mountSetCreator({ store }) {
     anchors = remaining;
     selectedAnchor = null;
     render();
+    focusAnchorControl('Remove');
+  }
+
+  /* After a re-render the node that had focus is gone, so the caret would land
+   * back at the top of the document. Putting it on the named control keeps a
+   * keyboard user where they were working. */
+  function focusAnchorControl(label) {
+    const control = [...root.querySelectorAll('button')].find(
+      (button) => button.textContent.trim() === label,
+    );
+    if (control && typeof control.focus === 'function') {
+      control.focus();
+    }
   }
 
   /* Inventory :501-503, in the catalogued order, then :506-508 for whatever the
@@ -299,10 +318,12 @@ export function mountSetCreator({ store }) {
     const list = element('ul', 'anchors');
     list.setAttribute('role', 'listbox');
     list.setAttribute('aria-label', 'Anchor tracks');
-    for (const position of positions) {
+
+    anchorRowNodes = positions.map((position) => {
       const anchor = anchors[position];
       // Inventory :471 - `{position}. {artist} – {title}`.
       const row = element('li', 'anchors__row');
+      row.dataset.position = String(position);
       row.setAttribute('role', 'option');
       row.setAttribute('aria-selected', String(selectedAnchor === position));
       row.append(
@@ -310,13 +331,37 @@ export function mountSetCreator({ store }) {
         element('span', 'anchors__name', anchorName(anchor)),
       );
       row.addEventListener('click', () => {
-        selectedAnchor = selectedAnchor === position ? null : position;
-        render();
+        // Clicking the selected row deselects it, so `Remove` can be put back
+        // into its no-selection state without removing anything.
+        selectAnchor(selectedAnchor === position ? null : position);
       });
-      list.append(row);
-    }
+      return row;
+    });
+
+    list.append(...anchorRowNodes);
+    // Keyboard reach for a list that calls itself a listbox. Without it
+    // `Remove` (:458) is a control a keyboard user can press and never satisfy.
+    wireListbox(anchorRowNodes, {
+      selected: positions.indexOf(selectedAnchor),
+      onSelect: (index) => selectAnchor(positions[index]),
+      onActivate: (index) =>
+        selectAnchor(selectedAnchor === positions[index] ? null : positions[index]),
+    });
     section.append(list);
     return section;
+  }
+
+  /* Selection is NOT a re-render. Rebuilding the destination on every arrow
+   * key would throw away the focused node and the caret in `Total Tracks`
+   * along with it; only the rows' `aria-selected` actually changes. */
+  function selectAnchor(position) {
+    selectedAnchor = position === undefined ? null : position;
+    for (const row of anchorRowNodes) {
+      row.setAttribute(
+        'aria-selected',
+        String(Number(row.dataset.position) === selectedAnchor),
+      );
+    }
   }
 
   /* `{artist} – {title}` with the en dash of §3.1, built the way

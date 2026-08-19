@@ -39,10 +39,39 @@ const SHELL_ID = 'app';
  * `querySelectorAll` understands class, id and attribute selectors only. */
 const FOCUSABLE_TAGS = new Set(['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA']);
 
+/**
+ * Whether the tab trap should stop on `node`.
+ *
+ * AN EXPLICIT `tabindex` WINS OVER THE TAG, IN BOTH DIRECTIONS, and getting
+ * that wrong was a real defect rather than a theoretical one. The anchor
+ * dialog's result rows are `<li role="option" tabindex="0">` - a listbox with
+ * a roving tabindex, so exactly one row is a tab stop. A trap that only knew
+ * about the four form tags did not merely fail to include them: it called
+ * preventDefault on Tab and moved the caret to the NEXT element it did know
+ * about, so Tab in the real browser jumped the whole list and landed on
+ * `Cancel`. The list was keyboard-operable and unreachable at the same time.
+ *
+ * Found in the manual pass in Chrome; the DOM shim has no tab order to get
+ * wrong, so no test written against it could have shown this.
+ *
+ * The negative case matters as much: a `<button tabindex="-1">` is deliberately
+ * out of the tab order and the trap has to respect that too.
+ */
+function isTabStop(node) {
+  if (node.disabled) {
+    return false;
+  }
+  const declared = node.getAttribute ? node.getAttribute('tabindex') : null;
+  if (declared !== null && declared !== undefined && declared !== '') {
+    return Number(declared) >= 0;
+  }
+  return FOCUSABLE_TAGS.has(node.tagName);
+}
+
 /** Every focusable descendant of `node`, in tree order. */
 export function focusablesWithin(node, found = []) {
   for (const child of node.children || []) {
-    if (FOCUSABLE_TAGS.has(child.tagName) && !child.disabled) {
+    if (isTabStop(child)) {
       found.push(child);
     }
     focusablesWithin(child, found);

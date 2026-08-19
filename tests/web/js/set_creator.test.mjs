@@ -520,6 +520,63 @@ test('Remove takes out the selected anchor and only that one', async () => {
   assert.deepEqual(anchorTexts(), ['1. Blawan – Why They Hide']);
 });
 
+test('the anchor rows are reachable and selectable without a mouse', async () => {
+  /* Same defect as the picker's: `Remove` (:458) acts on a selection, and a
+   * list of unfocusable `role="option"` rows gives a keyboard user no way to
+   * make one - so `Remove` was a control they could press and never satisfy. */
+  const { view } = mount();
+  await addAnchor(ALPHA, 1);
+  await addAnchor(BETA, 5, 1);
+
+  assert.deepEqual(
+    anchorRows().map((row) => row.getAttribute('tabindex')),
+    ['0', '-1'],
+    'roving tabindex: one tab stop, not one per anchor',
+  );
+
+  anchorRows()[0].dispatch('keydown', { key: 'ArrowDown', preventDefault() {} });
+
+  assert.equal(view.state().selectedAnchor, 5);
+  assert.deepEqual(
+    anchorRows().map((row) => row.getAttribute('aria-selected')),
+    ['false', 'true'],
+  );
+  assert.equal(document.activeElement, anchorRows()[1]);
+
+  control('Remove').dispatch('click');
+  await settle();
+
+  assert.equal(messageBox(), null, 'the keyboard selection was not seen');
+  assert.deepEqual(Object.keys(view.state().anchors), ['1']);
+});
+
+test('selecting an anchor does not rebuild the destination around it', async () => {
+  // If it did, the arrow keys would destroy the node they just focused - and
+  // the caret in Total Tracks would be thrown away on every selection.
+  const { view } = mount();
+  await addAnchor(ALPHA, 1);
+  await addAnchor(BETA, 5, 1);
+
+  const before = anchorRows();
+  const field = totalField();
+  anchorRows()[0].dispatch('keydown', { key: 'ArrowDown', preventDefault() {} });
+
+  assert.equal(anchorRows()[0], before[0], 'the rows were rebuilt');
+  assert.equal(totalField(), field, 'the Total Tracks field was rebuilt');
+  assert.equal(view.state().selectedAnchor, 5);
+});
+
+test('Enter on a selected anchor row deselects it', async () => {
+  const { view } = mount();
+  await addAnchor(ALPHA, 1);
+
+  anchorRows()[0].dispatch('keydown', { key: 'Enter', preventDefault() {} });
+  assert.equal(view.state().selectedAnchor, 1);
+
+  anchorRows()[0].dispatch('keydown', { key: 'Enter', preventDefault() {} });
+  assert.equal(view.state().selectedAnchor, null, 'a second Enter did not deselect');
+});
+
 // ---------------------------------------------------------------------------
 // Export to Clipboard
 // ---------------------------------------------------------------------------
