@@ -441,11 +441,21 @@ button {
   gap: var(--space-2);
 }
 
-/* The four catalogued status strings (:510-514) and the tab hint (:271). Quiet
-   and full width, the way the Tk status bar is quiet and full width. */
+/* The four catalogued status strings (:510-514) and the tab hint (:271).
+   Quiet, full width, and STUCK TO THE BOTTOM - inventory :244 and :1293 record
+   that the Tk status bar is packed `side="bottom"` "so a short window cannot
+   hide it", and that is a property of the control, not a detail of Tk's
+   geometry manager. Left in the flow it sat below a twelve-row set and was off
+   screen at the moment it said the set had been generated. It sticks to the
+   bottom of the scrolling viewport instead, with an opaque background so rows
+   pass under it rather than through it. */
 .setc__status {
-  padding-top: var(--space-2);
+  position: sticky;
+  bottom: calc(var(--space-6) * -1);
+  margin-bottom: calc(var(--space-6) * -1);
+  padding: var(--space-3) 0;
   border-top: 1px solid var(--border-subtle);
+  background: var(--surface-0);
   color: var(--ink-tertiary);
   font-size: var(--text-sm);
   line-height: var(--leading-normal);

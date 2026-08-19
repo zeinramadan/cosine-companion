@@ -1766,6 +1766,7 @@ coordinates in this document.
 | `Generation Error` | :506-508 | `Failed to generate set: {error}`, carrying the service's own `ValueError` text over the wire as `set_generation_failed`. Pinned by `tests/web/test_api_set.py::test_an_anchor_past_the_end_is_the_generation_error_inventory_names` |
 | The four status strings | :510-514 | `🎵 Generating set... This may take a moment.`, `✅ Generated {n}-track set successfully!`, `❌ Set generation failed.` and `🧹 Set cleared.`, in a status line inside the destination |
 | Set Creator status hint | :271 | The resting text of that status line, verbatim |
+| The status bar staying visible | :244, :1293 | `packed side="bottom"` "so a short window cannot hide it" is a property of the control, so the web status line is sticky to the bottom of the scrolling viewport. Left in the flow it sat under the generated rows and was off screen at the moment it announced the set. Pinned by `tests/web/test_frontend_conventions.py::test_the_set_creator_status_line_cannot_be_scrolled_out_of_reach` |
 | `Remove` with no selection | :523 | `No Selection` / `Please select an anchor track to remove.` |
 | `Export to Clipboard` with no set | :529 | `No Set` / `Please generate a set first.` |
 | Clipboard contents | :530-533 | One `display_name` per line, no positions, icons or scores, and every row whose display name contains `No suitable track found` left out. Then `Exported` / `Copied {n} tracks to clipboard!` |

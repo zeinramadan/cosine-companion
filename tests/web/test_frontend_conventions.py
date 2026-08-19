@@ -496,6 +496,27 @@ def test_the_set_creator_destination_is_no_longer_a_placeholder():
     )[1].split("</button>")[0], "the Set Creator nav item still says Soon"
 
 
+def test_the_set_creator_status_line_cannot_be_scrolled_out_of_reach():
+    """Inventory :244 and :1293 - the Tk status bar is packed ``side="bottom"``
+    "so a short window cannot hide it". That is a property of the control, not
+    of Tk's geometry manager, and it has to survive the port.
+
+    Left in the normal flow the line sat under the generated rows, so with a
+    500-row set the message announcing the set was off screen. This is a
+    SOURCE-TEXT check - it cannot lay anything out - and the behavioural half
+    was done by hand against real Chrome and recorded in the PR description.
+    """
+    body = without_comments(read(APP_CSS))
+    match = re.search(r"\.setc__status\s*\{([^}]*)\}", body)
+
+    assert match, "the Set Creator status rule is gone"
+    declarations = match.group(1)
+    assert re.search(r"position\s*:\s*sticky", declarations), declarations
+    assert re.search(r"\bbottom\s*:", declarations), declarations
+    # Opaque, or the rows scroll THROUGH the text rather than under it.
+    assert re.search(r"background\s*:\s*var\(--surface", declarations), declarations
+
+
 def test_the_modal_layer_the_dialogs_mount_into_exists():
     """`modal.js` looks this up by id; a rename would leave every dialog
     building nodes into nothing and failing silently at the moment a user
