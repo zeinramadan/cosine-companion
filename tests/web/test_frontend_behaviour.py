@@ -65,6 +65,7 @@ def test_the_javascript_suites_are_discoverable():
         "globals.test.mjs",
         "palette_modality.test.mjs",
         "palette_sequencing.test.mjs",
+        "settings.test.mjs",
     }, f"a behavioural suite disappeared: {sorted(names)}"
 
 

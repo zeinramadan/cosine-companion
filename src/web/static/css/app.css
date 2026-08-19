@@ -293,6 +293,95 @@ button {
   color: var(--ink-secondary);
 }
 
+/* ---- Settings destination ---------------------------------------------- */
+
+.settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  max-width: 44rem;
+  padding: var(--space-6);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-sm);
+}
+
+.settings__intro,
+.settings__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.settings__title {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.02em;
+}
+
+.settings__description {
+  max-width: 52ch;
+  color: var(--ink-secondary);
+}
+
+.settings__form {
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.settings__label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--ink-secondary);
+}
+
+.settings__input {
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--ink-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  transition: border-color var(--motion-fast) var(--ease-out),
+              background var(--motion-fast) var(--ease-out),
+              opacity var(--motion-fast) var(--ease-out);
+}
+
+.settings__input:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--surface-3);
+}
+
+.settings__input::placeholder {
+  color: var(--ink-tertiary);
+}
+
+.settings__input:disabled {
+  opacity: 0.5;
+}
+
+.settings__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.settings__status {
+  font-size: var(--text-sm);
+  color: var(--ink-tertiary);
+}
+
+.settings__status[data-state="success"] {
+  color: var(--accent-2);
+}
+
+.settings__status[data-state="error"] {
+  color: var(--danger);
+}
+
 /* ==========================================================================
    Shared pieces
    ========================================================================== */

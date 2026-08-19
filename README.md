@@ -100,8 +100,9 @@ python src/cosine_companion.py ui-web
 ```
 
 Tkinter remains the default and is what `ui` and the packaged `.app` launch.
-`ui-web` currently implements the Explore workflow only; Set Creator, Library
-and Export render a placeholder. See [the web UI](#the-experimental-web-ui).
+`ui-web` currently implements Explore plus the small Settings path editor;
+Set Creator, Library and Export render a placeholder. See
+[the web UI](#the-experimental-web-ui).
 
 ### 4. Start Exploring
 
@@ -134,7 +135,7 @@ python src/cosine_companion.py index /path/to/rekordbox.xml --force
 # Launch the graphical interface (Tkinter - the default)
 python src/cosine_companion.py ui
 
-# Launch the experimental web UI (pywebview; Explore only for now)
+# Launch the experimental web UI (pywebview; Explore + Settings for now)
 python src/cosine_companion.py ui-web
 
 # ...with devtools, and against a specific index directory
@@ -153,9 +154,10 @@ the engine underneath is identical.
 
 **Status.** Experimental. Explore works end to end - pick a seed with ⌘K, see
 ranked recommendations with Camelot keys and match scores, re-seed by clicking
-one, go back through history. The other three destinations render a
-"coming in the next PR" placeholder. Tkinter is unchanged, is still the
-default, and is what the packaged `.app` launches.
+one, go back through history. Settings reads and writes the Rekordbox XML path;
+the other three destinations render a "coming in the next PR" placeholder.
+Tkinter is unchanged, is still the default, and is what the packaged `.app`
+launches.
 
 **How it is wired.**
 
@@ -163,6 +165,8 @@ default, and is what the packaged `.app` launches.
   thread; pywebview owns the main thread, as macOS requires.
 - Every `/api/` request needs a per-process token, `/api/health` included. The
   token reaches the page in its own URL and moves to a header from there.
+- Authenticated API requests may use bounded JSON `POST` bodies. Static files
+  remain `GET`/`HEAD` only.
 - The frontend is hand-written HTML, CSS and ES modules. **There is no build
   step and no Node toolchain** - what is in `src/web/static/` is what the
   browser loads.

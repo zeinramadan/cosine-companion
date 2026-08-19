@@ -38,6 +38,10 @@
           <span>Export</span>
           <span class="nav__soon">Soon</span>
         </button>
+        <button class="nav__item" type="button" data-destination="settings">
+          <span class="nav__glyph" aria-hidden="true">⚙</span>
+          <span>Settings</span>
+        </button>
       </div>
 
       <div class="sidebar__footer">
@@ -88,6 +92,37 @@
               M3U playlist export with determinate progress and real cancellation —
               the long-running-work surface described in the spec.
             </p>
+          </div>
+        </section>
+
+        <section class="view" id="view-settings" hidden aria-label="Settings">
+          <div class="settings">
+            <div class="settings__intro">
+              <p class="eyebrow">Library configuration</p>
+              <h2 class="settings__title">Rekordbox XML</h2>
+              <p class="settings__description">
+                Choose which Rekordbox export future library updates will read.
+                Saving the path does not run indexing.
+              </p>
+            </div>
+
+            <form class="settings__form" id="settings-form">
+              <label class="settings__label" for="settings-xml-path">XML path</label>
+              <input
+                class="settings__input"
+                id="settings-xml-path"
+                name="xml_path"
+                type="text"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="/path/to/rekordbox.xml">
+              <div class="settings__actions">
+                <button class="button button--primary" id="settings-submit" type="submit">
+                  Save path
+                </button>
+                <p class="settings__status" id="settings-status" role="status" aria-live="polite"></p>
+              </div>
+            </form>
           </div>
         </section>
       </div>
