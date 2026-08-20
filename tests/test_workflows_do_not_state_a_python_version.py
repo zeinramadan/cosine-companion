@@ -762,8 +762,8 @@ def conda_python_pin(expected, entries):
         "more than one means it is ambiguous which one a conda user gets."
     )
 
-    assert pins[0].strip() == accepted, (
-        f"{CONDA_ENV_FILE.name} pins Python as {pins[0].strip()!r}. The only "
+    assert pins[0] == accepted, (
+        f"{CONDA_ENV_FILE.name} pins Python as {pins[0]!r}. The only "
         f"form this guard accepts is exactly {accepted!r} -- no channel "
         "prefix, no build string, no wildcard, no range, no spaces. This is "
         "deliberately narrower than conda's own grammar: three earlier "
@@ -774,7 +774,7 @@ def conda_python_pin(expected, entries):
         f"{accepted!r}; if the version itself differs from "
         f"{VERSION_FILE_NAME}, that is the divergence this guard is for."
     )
-    return pins[0].strip()
+    return pins[0]
 
 
 def test_the_conda_environment_pins_the_same_python():
@@ -853,6 +853,17 @@ REJECTED_PYTHON_SPECS = [
     "python=3.12",              # right FORM, wrong version -- the divergence
     "python=3.1",               # a prefix of the right version
     "python=3.11.9",            # more precise than the stated version
+    # Quoted in YAML so the scalar carries the padding: `- " python=3.11 "` is
+    # valid YAML and conda REJECTS it outright --
+    # `CondaValueError: invalid package specification:  python=3.11`. The
+    # comparison used to .strip() the entry before comparing, so the guard
+    # blessed an environment.yml that cannot be created. Identification still
+    # strips, so this is reported as a wrongly-spelled pin rather than as no
+    # pin at all; the comparison does not.
+    " python=3.11 ",            # surrounding whitespace inside the quotes
+    " python=3.11",             # leading whitespace only
+    "python=3.11 ",             # trailing whitespace only
+    "\tpython=3.11",            # a tab is whitespace conda will not accept
 ]
 
 
@@ -860,6 +871,21 @@ REJECTED_PYTHON_SPECS = [
 def test_only_the_exactly_accepted_spec_passes(spec):
     with pytest.raises(AssertionError):
         conda_python_pin("3.11", [spec])
+
+
+def test_a_quoted_padded_pin_is_identified_and_then_rejected():
+    """The asymmetry this rests on, stated as a test.
+
+    Identification is tolerant so that a badly spelled pin is still FOUND --
+    otherwise a padded entry would count as zero python entries and the
+    failure would read "names Python 0 time(s)", pointing at a missing pin
+    rather than at the one that is right there. The comparison is exact,
+    because the accepted string is the one conda accepts.
+    """
+    assert python_entries_in([" python=3.11 "]) == [" python=3.11 "]
+
+    with pytest.raises(AssertionError, match="pins Python as"):
+        conda_python_pin("3.11", [" python=3.11 "])
 
 
 def test_the_accepted_spec_passes():
