@@ -2057,30 +2057,73 @@ MOTIVATED the removal: changing `build-macos.yml`'s Python without changing
 longer ships on, with nothing to report it. Today both name 3.11, so every CI
 run does prove the table correct for the shipped interpreter.
 
-*That was not the whole cost, and an earlier draft of this section implied it
-was.* The deleted test —
+*That was not the whole cost, and two earlier drafts of this section understated
+it.* The deleted test —
 `test_every_workflow_names_exactly_one_python_this_file_can_resolve` — enforced
-five further properties, and nothing in this repository enforces any of them
-now:
+six further properties, and nothing in this repository enforces any of them now:
 
-1. `.github/workflows/test-macos.yml` exists and names exactly one resolvable
-   Python. Renaming it was a failure; it is now silence.
+1. `.github/workflows/test-macos.yml` exists. Renaming it was a failure; it is
+   now silence.
 2. At least one `build-*` workflow exists at all.
-3. No workflow the shipped-interpreter answer depends on names several
-   different Pythons.
-4. Every `python-version` anywhere under `.github/workflows/` resolves to a
+3. Every workflow the shipped-interpreter answer depends on names a Python **at
+   all** — a build that stops setting `python-version`, because the
+   `setup-python` step lost it or now takes its version from somewhere the
+   reader did not look, was a failure with its own message and its own fix.
+4. …and names no **more** than one, so "the interpreter this workflow uses"
+   never becomes an ambiguous phrase.
+5. Every `python-version` anywhere under `.github/workflows/` resolves to a
    literal CPython version — not a matrix expression, not an `env` lookup, and
    not an unquoted `3.10`, which YAML reads as the float `3.1`.
-5. Every `.yml`/`.yaml` in that directory parses as YAML at all.
+6. Every `.yml`/`.yaml` in that directory parses as YAML at all.
+
+*That list is derived from the deleted code, and has to be.* It said four while
+listing five, then five while there were six — both times because the losses
+were enumerated by reading this prose rather than the source it describes. The
+mechanical check is to walk
+`git show d5b358f^:tests/web/test_integer_parsing_matches_python.py` from the
+deleted test into every helper it calls and count the reachable `assert` and
+`raise` sites. There are nine — lines 702, 777, 816, 822, 838, 1095, 1100, 1110
+and 1145 of that revision — mapping onto the six above as 777 → 6, 816 → 3, 822
+and 1145 → 5, 838 → 4, 1100 → 1, 1110 → 2. The other three are accounted for,
+not dropped: 702 fires when PyYAML is missing, which guarded the deleted code's
+own dependency rather than anything about this repository (no test imports
+`yaml` now); 1095 refuses an empty workflows directory, which is strictly
+entailed by 1 and 2; and 822 and 1145 are one property reported twice, at two
+scopes, so 5 states the wider one.
 
 Reproduced rather than recalled: with the deleted test restored beside the
-current one in a copy of the tree, each of those five mutations turns it red
-and the clean tree passes before and after each, which is what proves the
-mutation applied. All five at once leave the surviving parity file at exactly
-its unmutated result — 8 passed on 3.11 — because nothing in it opens
-`.github/workflows/` at all. So malformed YAML in a workflow, a renamed test
-workflow, or a build naming two interpreters are now things this suite goes
-green over.
+current one in a copy of the tree, each of those six mutations turns it red at
+the site it is meant to, with the workflow directory's sha recorded either side
+of every mutation so a probe that silently failed to apply could not be read as
+a finding. Under every one of them the surviving parity file stays at exactly
+its unmutated result — 8 passed on 3.11, and 1 failed / 7 passed on 3.10 where
+the failure is the version refusal below — because nothing in it imports `yaml`
+or names a path under `.github/` at all. So malformed YAML in a workflow, a
+renamed test workflow, a build naming two interpreters, and a build naming
+none are now things this suite goes green over.
+
+*Property 3 is the one the two earlier drafts missed, and it hides for a
+reason.* Removing only `build-macos.yml`'s `python-version` line leaves the
+other five true — the test workflow is still there, a build still exists,
+nothing names several, every value still present still resolves, every file
+still parses — and the restored test fails anyway, with `build-macos.yml sets
+no python-version at all`. "Names exactly one" is two properties, and only the
+"no more than one" half had been written down.
+
+*And the removal reads differently beside what would replace it.* The open
+change that gives the Python version one source of truth — every workflow
+dropping `python-version:` for `python-version-file: .python-version`, so that
+no workflow states a version and divergence becomes impossible rather than
+detected — produces a tree in which every workflow "sets no python-version at
+all". The deleted roll call would have gone **red** on it: restored from
+`tests/web/test_integer_parsing_matches_python.py` at `d5b358f^` beside the
+current one, over a copy of the tree with that shape applied, it fails with
+`build-macos-intel.yml sets no python-version at all`. A check whose purpose was catching build/test
+interpreter divergence would have blocked the structural fix for that exact
+divergence, because the property it enforced — every workflow names its own
+interpreter — is precisely the one such a fix removes. That is a better reason
+for the deletion than four wrong answers, and it is the one worth keeping.
+
 
 There is no allowance for running the suite on an older interpreter, and the
 absence is the design rather than an omission. One lived there for two rounds
