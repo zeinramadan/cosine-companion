@@ -744,20 +744,21 @@ Confirmation `messagebox.askyesno("Confirm Deletion", …)`:
 - several:
   `Delete {n} selected tracks from your library?\n\nThis will remove them from recommendations but won't delete the audio files.`
 
-On confirm, `LibrarySession.delete_tracks` (moved verbatim from
-`library_tab.py:213-273` on `main`):
+On confirm, `LibrarySession.delete_tracks` (moved from
+`library_tab.py:213-273` on `main`, with the §4 deletion defects repaired):
 
 1. Appends the tracks to `deleted_tracks.json` with `{artist, title}` so they are excluded from
    future indexing runs.
 2. Filters `meta_ix` and `emb_ix` in memory.
-3. Rebuilds `V`, `ids` and a fresh `NumpyCosIndex`. **If nothing remains**, sets `V = np.array([])`,
-   `ids = []` and **`idx = None`**.
-4. Writes `meta.parquet`, `embeddings.parquet`, `index.npy` (skipped when `V` is empty) and
-   `ids.json` — **four separate writes, no atomicity, no rollback** (§4).
+3. Rebuilds `V`, `ids` and a fresh `NumpyCosIndex`. **If nothing remains**, sets
+   `V` to an empty `(0, dimension)` matrix, `ids = []` and **`idx = None`**.
+4. Writes immutable generation-scoped metadata, embeddings, index and IDs files,
+   fsyncs them, then atomically replaces the one `library_index.json` pointer
+   that names the complete generation (§4).
 5. Returns the count of removed metadata rows.
 
-It does **not** rebuild `meta`. Everything that reads `meta_ix` refreshes immediately; everything
-that reads `meta` keeps showing the deleted track until the app is restarted (§4 defect #14).
+It rebuilds and publishes `meta` with the indexed views, so every in-memory
+consumer refreshes immediately (§4 defect #14 is resolved).
 
 Afterwards the tab restores the scroll position (`first_visible` minus the number of deleted rows
 above it), refreshes the list, and reports `✅ Deleted {n} tracks from library` or
@@ -776,10 +777,10 @@ selection, all of which may still reference the removed ids.
 | Library tab list and stats | `meta_ix` | **updated** immediately |
 | Explore recommendations | `meta_ix` / `emb_ix` / `idx` | **updated** immediately |
 | Set Creator anchor list | `meta_ix` | **updated** (rows for missing ids are skipped) |
-| Explore `Set Current Track` picker | **`meta`** | **stale** — still offers the deleted track, and choosing it raises `KeyError` from `meta_ix.loc` |
-| Playlist Export all-tracks count | **`meta`** | **stale** — still counts the deleted track |
-| Playlist Export all-tracks id list | **`meta`** | **stale** — still exports the id, which `create_m3u_playlist` then silently skips |
-| A running export | its start-of-run snapshot | **stale by design** — see §4 defect #1 |
+| Explore `Set Current Track` picker | **`meta`** | **updated** immediately |
+| Playlist Export all-tracks count | **`meta`** | **updated** immediately |
+| Playlist Export all-tracks id list | **`meta`** | **updated** immediately |
+| A running export | its start-of-run snapshot | **unchanged by design** — it finishes wholly against the generation captured at start; see resolved §4 defect #1 |
 
 ---
 
@@ -1414,9 +1415,9 @@ them and say so.
 
 | # | Defect | Location | Current observable behaviour |
 |---|---|---|---|
-| 1 | Export/delete data race | export worker thread vs `library_tab` delete | The export thread holds references to `meta_ix`/`emb_ix`/`idx` captured at start while deletion rebinds them on the main thread. A delete mid-export can yield `KeyError`, an `IndexError` from the index, or playlists built from a stale index. Nothing warns the user |
-| 2 | Non-atomic four-file rewrite | `services/library_session.py::_persist` (was `library_tab.py:257-270` on `main`) | `meta.parquet`, `embeddings.parquet`, `index.npy`, `ids.json` are written in sequence with no temp-file-and-rename and no rollback. A crash or full disk between writes leaves the four files mutually inconsistent, and the next launch fails the `load_all` validation → the `Inconsistent Index Data` dialog |
-| 3 | Deleting every track leaves `idx = None` | `services/library_session.py::delete_tracks` (was `library_tab.py:251-255` on `main`) | `V = np.array([])`, `ids = []`, `idx = None`, and `index.npy` is **not** rewritten, so it retains the pre-delete vectors and disagrees with the now-empty `ids.json` |
+| 1 | Export/delete data race | *(resolved in Library destination)* | `LibrarySession.snapshot()` and deletion now share one capture/publication lock. A running export retains its complete start-of-run generation; a later export sees the deletion. The stale result is explicit snapshot semantics, not a mixed read that can raise `KeyError`/`IndexError` |
+| 2 | Non-atomic four-file rewrite | *(resolved in Library destination)* | Deletion writes four immutable generation files, fsyncs them, records their SHA-256 digests, and atomically replaces one `library_index.json` pointer. A pre-commit failure leaves the preceding generation readable |
+| 3 | Deleting every track leaves `idx = None` | *(resolved in Library destination)* | In memory the empty library still has `idx = None`, but disk now receives a real `(0, dimension)` matrix beside empty metadata/IDs, and `load_all()` reloads that as an empty session rather than an inconsistent one |
 | 4 | Cancel discards all work | `pipeline.py:182-186` | `KeyboardInterrupt` is raised at the next per-track checkpoint **if one remains** (§2.13 timing A); every embedding computed so far is dropped. A cancelled 6.8-minute run leaves nothing behind. If no checkpoint remains the opposite happens and the work is kept — defect #17 |
 | 5 | `sys.exit(0)` after indexing | `reindex_window.py:304-321` | Choosing "Restart now?" kills the process without relaunching. Declining leaves the app running on a stale index with no indication |
 | 6 | Indeterminate progress bar | `reindex_window.py:92-97`, `onboarding.py:335-341` | The pipeline prints `[ i/N]` per track but the bar is `mode='indeterminate'`; the ratio is only readable in the log pane |
@@ -1427,21 +1428,21 @@ them and say so.
 | 11 | Combined export reports no progress | `playlist_export_tab.py:403-412` | `export_single_playlist` **does** accept a `progress_callback` and emits one per seed (`playlist_exporter.py:183`, `:223-229`), and `ExportService.export_combined` forwards it. The preserved behaviour is in the **caller**: the tab deliberately omits the `progress=` argument for combined mode (`playlist_export_tab.py:403-412`), exactly as `main` did, so the determinate bar sits at 0 % for the whole run. Wiring it up is PR 3 work — a one-argument change, not a redesign |
 | 12 | Duplicate ranking policy | *(resolved in PR 2)* | There were three copies of the same `recommend_for(topk=500, final_top=200)` + cosine re-sort, in `recommendations_tab.py` and twice in `playlist_exporter.py`. **Verified behaviourally identical** before consolidation (harness: `tests/manual/ranking_equivalence.py`); only the caller-supplied truncation differed. All three now call `recommendations/ranking.py::ranked_recommendations` |
 | 13 | Selection is an unordered `set` | `playlist_export_tab.py:338-347` | Manual-mode export order is arbitrary and varies between runs; the progress readout therefore visits tracks in no particular order |
-| 14 | Deletion leaves `meta` stale | `services/library_session.py::delete_tracks` (was `library_tab.py:213-273` on `main`) | Deletion rebuilds `meta_ix`, `emb_ix`, `V`, `ids` and the index, but **not** `meta`. Explore's `Set Current Track` picker still offers the deleted track (and raises `KeyError` from `meta_ix.loc` if it is chosen), and the Playlist Export all-tracks count and id list still include it, until the app is restarted. See the stale-consumer table in §2.7 |
+| 14 | Deletion leaves `meta` stale | *(resolved in Library destination)* | Deletion rebuilds and publishes `meta` with `meta_ix`, `emb_ix`, vectors, IDs and the index, so Explore's picker and Playlist Export's all-tracks count/list update immediately |
 | 15 | `after()` called from a worker thread | `playlist_export_tab.py:420,422,438` | The export worker marshals progress (`:438`, via `update_export_progress`), completion (`:420`) and errors (`:422`) back to Tk with `self.after(0, …)` from a background thread. Tk is not thread-safe and `after` is not an exception to that; it happens to work. **Pre-existing on `main` and deliberately untouched by PR 2** — fixing it would be a behaviour change in a PR whose contract forbids one |
 | 16 | Cancellation is signalled by `KeyboardInterrupt`, so the log line the user sees is timing-dependent | `reindex_window.py:180-194` | `KeyboardInterrupt` derives from `BaseException`, so `except Exception` at `:186` never catches it. When the pipeline **does** raise (timing A) the worker thread dies unhandled and neither `\n⚠️ Indexing cancelled by user` nor `\n⚠️ Indexing cancelled` is appended; when it does **not** (timings B and C, defect #17) one of them is. Which line — or none — the user ends up with is decided by an interleaving, not by anything they did. Pre-existing on `main`; §2.13 |
 | 17 | Late cancel is silently ignored by the pipeline, then reported as a cancellation | `pipeline.py:182` (the only `cancel_check` call) vs `reindex_window.py:180-182` | `cancel_check` is read **only** at the top of each per-track loop iteration. A flag first set after the last checkpoint — during the final `embed_file`, during the 50 ms sleep, during the merge/index/write phase, or at any time on a run that returns `STATUS_UP_TO_DATE`/`STATUS_NO_EMBEDDINGS` without re-entering the loop — is never observed. The pipeline completes, and on the `STATUS_INDEXED` path **writes all four data files**; `run_indexing` then sees `cancel_requested` and queues `('cancelled', True)` plus `\n⚠️ Indexing cancelled by user`. The user is told the run was cancelled while the index was in fact updated, and `show_cancelled` offers `Close` rather than `Done`, so the `Restart Required` prompt (#5) is never shown and the app keeps a stale in-memory index over changed files. Pre-existing on `main`; §2.13 timing B |
 | 18 | The two cancellation log lines can arrive in either order | `reindex_window.py:151-152` vs `processing/pipeline.py:182-183` | `cancel_indexing` sets the `threading.Event` **before** it queues `\n⚠️ Cancellation requested...`. Between those two statements the worker may reach a checkpoint, see the flag and queue `⚠️ Cancellation detected, stopping...` first. Both lines always appear; which one is last is decided by a GIL switch. The window is narrow in wall-clock terms — microseconds — but it is not two instructions and it is not atomic: `:151` is a property assignment whose setter calls `Event.set()`, and `:152` builds a tuple and calls `queue.Queue.put`, which takes a mutex and notifies a condition variable, across several Python frames. Line 1 therefore nearly always wins, which is exactly why an ordering assertion here would pass in testing and fail in the field. Pre-existing on `main`; §2.13 timing A |
 
-Backlog references: `backlog-n3-ids-lag-race` (#1, #3), spec §3.2 (#1–#8), spec §10.
+Resolved backlog references: `backlog-n3-ids-lag-race` (#1, #3); remaining
+references: spec §3.2 (#4–#8), spec §10.
 
-**Deliberately fixed in PR 3, not here:** #14 (recompute or invalidate `meta` on delete), #15 (marshal
+**Deliberately fixed in later PR 3 destinations:** #15 (marshal
 through a queue the main thread drains, as `ReindexWindow` already does), #16 (catch `BaseException`
 or stop using `KeyboardInterrupt` as a control-flow signal), #17 (check cancellation at more than
 one point, and have the pipeline report whether it actually stopped rather than letting the window
 infer it from a flag), #18 (queue the log line before setting the flag, or emit both from one
-thread), #1 (a real read/write discipline around the library), #10 and #11 (the
-combined-export dialog and progress).
+thread), #10 and #11 (the combined-export dialog and progress).
 
 ---
 
@@ -1474,11 +1475,11 @@ Every row is a user-reachable workflow catalogued above. Task 9 records pass/fai
 | 21 | Library ▸ Set as Current with no selection ▸ warning dialog | §2.7 |
 | 22 | Library ▸ Delete Selected ▸ confirmation ▸ track gone, status updated | §2.7 |
 | 22a | …then Library ▸ Refresh ▸ the deleted track is **gone** from the list and the stats count drops | §2.7 |
-| 22b | …then Explore ▸ Set Current Track ▸ search for the deleted track ▸ it is **still offered** (stale `meta`), and choosing it raises `KeyError` | §2.7, §4 #14 |
-| 22c | …then Playlist Export ▸ All tracks radio ▸ the count is **unchanged** (still counts the deleted track) | §2.7, §4 #14 |
-| 22d | …then Playlist Export ▸ All tracks ▸ export ▸ the deleted id is sent and silently skipped; no playlist is written for it (`recommendations/playlist_exporter.py:137-139` — a seed missing from `meta_ix` is `continue`d before the write) | §2.7, §4 #14 |
+| 22b | …then Explore ▸ Set Current Track ▸ search for the deleted track ▸ it is absent because `meta` is published with the deletion | §2.7, §4 #14 |
+| 22c | …then Playlist Export ▸ All tracks radio ▸ the count drops with the deletion | §2.7, §4 #14 |
+| 22d | …then Playlist Export ▸ All tracks ▸ export ▸ the deleted id is not sent | §2.7, §4 #14 |
 | 22e | …then Set Creator ▸ an anchor on the deleted track disappears from the anchor list on next render | §2.5, §2.7 |
-| 22f | Restart the app ▸ every stale surface above is now correct | §2.7, §4 #14 |
+| 22f | Restart the app ▸ the already-correct deletion state reloads unchanged | §2.7, §4 #14 |
 | 22g | Start a full export, delete a track while it runs ▸ the export finishes against its start-of-run snapshot; the deleted track still appears in playlists written after the delete | §2.6, §4 #1 |
 | 23 | Playlist Export ▸ + Add Tracks ▸ search, multi-select, Add ▸ selection list and info label update | §2.6, §2.11 |
 | 24 | Playlist Export ▸ Clear All ▸ orange warning label | §2.6 |
@@ -1521,9 +1522,9 @@ This section records **which catalogued controls the web UI reimplements**, so
 the rewrite can be reviewed against the contract rather than against a demo.
 It adds no claim about the Tkinter app. PR 3a implemented Explore; the small
 write-surface follow-up adds only the Rekordbox XML path from Settings; the Set
-Creator follow-up adds §2.5 and the §2.12 dialog it opens (§6.5, §6.6). Library
-and Export still render a labelled placeholder, so §2.6 and §2.7 are entirely
-outstanding.
+Creator follow-up adds §2.5 and the §2.12 dialog it opens (§6.6, §6.7), and the
+Library follow-up adds §2.7 (§6.3). Export still renders a labelled placeholder,
+so §2.6 is entirely outstanding.
 
 The line numbers below are coordinates in this document.
 
@@ -1531,7 +1532,7 @@ The line numbers below are coordinates in this document.
 
 | Control | §2.4 line | How it appears in the web UI |
 |---|---|---|
-| `Set Current Track` | :326 | The ⌘K palette. Unlike `pick_current` it lists the first 50 tracks for a blank query rather than an empty list — see §6.3 |
+| `Set Current Track` | :326 | The ⌘K palette. Unlike `pick_current` it lists the first 50 tracks for a blank query rather than an empty list — see §6.4 |
 | `← Back` | :325 | A button on the seed card, disabled until the history is non-empty, per §3.10 :1397 |
 | History behaviour | :414-421 | Pushed only when a seed and a list both exist; capacity 20 (§3.9 :1387). Going back restores the stored list **in the order it was stored in**, with no recomputation, and re-renders honouring the **current** Top-N — the asymmetry :420-421 states. Pinned by `tests/web/test_frontend_behaviour.py::test_frontend_behaviour`, which runs `tests/web/js/explore_history.test.mjs` against the shipped module |
 | `Set Selected as Current` | :328 | Clicking a recommendation row re-seeds |
@@ -1545,7 +1546,7 @@ The line numbers below are coordinates in this document.
 | Computation parameters | :370, §3.9 :1378 | `topk=500, final_top=200`, passed explicitly rather than left to a default. Pinned by `tests/web/test_api_recommendations.py::test_the_explore_tab_configuration_is_used_by_default` |
 | Full set retained, `topn` rendered | :372-373 | All 200 are fetched once and kept client-side |
 | Current-track header | §3.2 :1211-1218 | The gradient seed card, carrying the same fields |
-| `Copy Selected to Clipboard` | :327 | A `Copy` control on **each recommendation row**, which is the target :423-429 describes. The seed card also carries one; that is an addition rather than this control — see §6.3. The clipboard FORMAT still differs from Tkinter's on purpose, also §6.3 |
+| `Copy Selected to Clipboard` | :327 | A `Copy` control on **each recommendation row**, which is the target :423-429 describes. The seed card also carries one; that is an addition rather than this control — see §6.4. The clipboard FORMAT still differs from Tkinter's on purpose, also §6.4 |
 | Sort selection follows the list | :380 | A fresh computation arrives in cosine order — :380, "matches the post-refresh default order" — and the segmented control returns to `Cosine` to say so, matching `refresh_suggestions` replacing `current_recommendations` without reapplying the last sort |
 
 ### 6.2 Deferred to PR 3b
@@ -1562,18 +1563,69 @@ omission is on the record rather than left for a reviewer to notice.
 | Selection-error dialogs | :431-437 | `No Selection`, `No Recommendations` and `Invalid selection.` have no web equivalent; a row can only be clicked when it is rendered |
 | Suggestions list as a `tk.Listbox` | :340-341 | The web list is a scrollable container of buttons; the mouse-wheel-only scrolling noted in §2.4 does not carry over |
 
-Outside §2.4, the whole of §2.1, §2.3, §2.6, §2.7, §2.9, §2.10, §2.11 and
-§2.13 are outstanding, and the two remaining placeholder destinations say so on
-screen. §2.5 and §2.12 are covered by §6.5 and §6.6 below. Within §2.8, library
-statistics, deleted-track management and both reindex actions remain
-outstanding; this follow-up implements only reading and changing `xml_path`.
+Outside §2.4, the whole of §2.1, §2.3, §2.6, §2.9, §2.10, §2.11 and §2.13 are
+outstanding, and the one remaining placeholder destination says so on screen.
+§2.5 and §2.12 are covered by §6.6 and §6.7 below, and §2.7 is implemented as
+recorded in §6.3. Within §2.8, library statistics, deleted-track management and
+both reindex actions remain outstanding; this follow-up implements only reading
+and changing `xml_path`.
 
-### 6.3 Deliberate divergences
+### 6.3 Library controls reimplemented
 
-Four places where PR 3a's Explore and Settings work does something different on
-purpose. Each is a change of behaviour, not an omission, and is called out for
-that reason. The Set Creator destination's divergences are listed with that
-destination, in §6.6.
+| Control | §2.7 line | How it appears in the web UI |
+|---|---|---|
+| `Search:` / `Clear` / `Refresh` | :671-672 | A native search field filtering on every `input`, plus the two named buttons |
+| `Delete Selected` / `Set as Current` / stats | :674-675 | The two named controls and a right-aligned live count |
+| Extended-selection track list and scrollbar | :677-701 | A scrollable ARIA multi-select list; plain click selects one, Command/Ctrl-click toggles and Shift-click selects a range |
+| Double-click to set current | :707 | Double-click and the named button both seed Explore |
+| Row format and artist/title order | :711-716 | Preserved exactly, including optional key and BPM suffixes and lowercase sort keys |
+| Filter fields, case and whitespace | :722-724 | Preserved exactly: plain substring over artist, title, album and key; the query is lowercased and never stripped |
+| Stats strings | :718 | `{n} tracks` and `{shown} of {total} tracks` |
+| No-selection warnings | :731, :738 | The exact body strings are shown through the browser's modal alert |
+| Set-current history behaviour | :731-734 | Library calls Explore's direct-load path, switches destination, and does not push history |
+| Delete confirmations | :740-745 | The singular and plural body strings are byte-for-byte the same |
+| Deleted-track record, rebuilt data and statuses | :747-768 | `LibrarySession.delete_tracks` remains the single mutation; the success, no-op, load-error and delete-error statuses are preserved |
+| Scroll restoration | :763-768 | The first visible row is restored after subtracting deleted rows above it |
+| Deleting the current Explore seed | :765-771 | The seed and recommendation list clear; history is deliberately retained |
+
+`DeletedTracksDialog` (§2.10) is not part of this destination. It remains
+deferred with the rest of Settings' deleted-track management: Library records
+artist/title metadata on delete, but this PR adds no restore or clear-deleted
+controls.
+
+### 6.4 Deliberate divergences
+
+Places where the web UI does something different on purpose. Each is a
+change of behaviour, not an omission, and is called out for that reason. The
+Set Creator destination's divergences are listed with that destination, in
+§6.7.
+
+**Library list semantics and dialogs.** The Tk list is a `tk.Listbox`; the web
+list is a scrollable set of native buttons carrying `role="option"`, because a
+browser has no equivalent listbox widget with Tk's extended-selection model.
+The same plain/Command-or-Ctrl/Shift selection operations are implemented.
+Warnings and confirmations use the browser's modal `alert`/`confirm`, which
+preserves every catalogued body string but does not let the application set the
+Tk dialog titles `No Selection`, `Confirm Deletion` or `Deletion Error`.
+
+**Library presentation.** The search field and track list are responsive rather
+than fixed at Tk's width 30 and height 20 (:671, :677). Typography, grey text
+and the destructive button use the web design-system tokens rather than the Tk
+font declarations and literal `lightcoral` (:671, :674-675). Status text lives
+inside the Library destination rather than the Tk window's shared status bar
+(:726-727, :763-768). When deletion clears the current seed, Explore returns to
+its existing `Pick a seed track` empty state rather than rendering the literal
+Tk header `Current track: —` (:765-766); the seed, recommendations and history
+semantics are unchanged.
+
+**Library deletion repairs the characterised defects.** Defects #2, #3 and #14
+are fixed rather than reproduced. The four aligned files are immutable
+generation files published by one atomically replaced `library_index.json`
+pointer; an empty deletion writes a `(0, dimension)` matrix; and `meta` is
+published with the rebuilt indexed views. Defect #1 is also retired:
+`snapshot()` and deletion use one lock around capture/publication, so an export
+finishes wholly against the generation it captured at start while a later run
+sees the deletion.
 
 **Blank palette query.** `pick_current` (:407-408) and the two selector dialogs
 open with an empty list for a blank query — §4 defect #9. The palette lists the
@@ -1618,7 +1670,7 @@ explicit text field instead. Like §2.8, it does not require the file to exist,
 and its API uses `SettingsStore.set` so `first_run_complete` is preserved. The
 rest of §2.8 is deferred in §6.2.
 
-### 6.4 What pins the web layer
+### 6.5 What pins the web layer
 
 **The HTTP surface, stated exactly.** Static assets still answer only `GET` and
 `HEAD`; their `405` names `GET, HEAD`. Authenticated API requests additionally
@@ -1689,11 +1741,16 @@ distinction is the whole of what those tests are worth — they can say what a
 module did, not what a user saw — and it is stated at the top of the shim as
 well as here.
 
-The one environmental dependency in the web suite is `node`, for the JavaScript
-suites. When it is absent they skip with a reason naming the file that did not
-run. With node present the web suite gives **434 passed**; without it, **424
-passed and 10 skipped** — one named skip per JavaScript file, and those ten
-files are what `tests/web/test_frontend_behaviour.py` discovers. One of them,
+The environmental dependencies in the web suite are `node`, for the JavaScript
+suites, and pywebview, for the host module. When node is absent those suites
+skip with a reason naming the file that did not run, one named skip per
+JavaScript file, and those files are what `tests/web/test_frontend_behaviour.py`
+discovers; the digit-parity comparisons in
+`tests/web/test_integer_parsing_matches_python.py`, which reach `int()` through
+node, skip with a reason of their own. On the interpreter `build-*.yml` freezes,
+with node 20 and pywebview installed, the current web suite gives **474 passed
+and 0 skipped**; without node on PATH, **456 passed and 18 skipped** — eleven
+JavaScript files and seven parity comparisons. One of the JavaScript suites,
 `globals.test.mjs`, has the
 shim itself as its subject rather than any shipped module — CI runs node 24,
 where `globalThis.navigator` is a getter-only accessor the runtime owns, and
@@ -1737,8 +1794,13 @@ may skip with it.
 | Settings loading and submitting the edited XML path | `…::test_frontend_behaviour` (`settings.test.mjs`) |
 | Settings preserving the onboarding flag | `tests/web/test_api_settings.py::test_post_settings_persists_immediately_and_preserves_onboarding` |
 | Browse, search and recommendation caps actually binding | `tests/web/test_api_library.py::test_tracks_clamps_an_absurd_limit_rather_than_serialising_the_library` |
+| Library row format, sort, filter, seeding and deletion sequence | `tests/web/test_frontend_behaviour.py::test_frontend_behaviour` (`library.test.mjs`) |
+| Library mutation auth, media type and 16 KiB limit on a real socket | `tests/web/test_library_delete_wire.py` |
+| Four-file row alignment and empty-library reload | `tests/web/test_api_library_delete.py::test_committed_generation_stays_row_aligned_and_reloads`, `…::test_deleting_the_last_track_commits_a_reloadable_empty_matrix` |
+| Pre-commit failures preserving the prior generation | `tests/services/test_library_session.py::test_a_failure_before_the_manifest_commit_preserves_the_old_generation`, `…::test_a_failed_manifest_replace_preserves_the_previous_generation` |
+| Export snapshot capture not straddling delete publication | `tests/services/test_library_session.py::test_snapshot_cannot_land_inside_the_delete_publication` |
 
-### 6.5 Set Creator controls reimplemented
+### 6.6 Set Creator controls reimplemented
 
 §2.5 and the §2.12 dialog it opens. Line numbers are §2.5, §2.12 and §2.2
 coordinates in this document.
@@ -1757,7 +1819,7 @@ coordinates in this document.
 | `Export to Clipboard` | :463 | The button below them |
 | Anchor row format | :471 | `{position}. {artist} – {title}`, built unconditionally as `update_anchor_listbox` builds it (`src/ui/set_creator_tab.py:90`), so a blank artist keeps the leading separator |
 | Ascending position order | :473 | Sorted numerically, not by the string the position renders as |
-| Generated row fields | :479-489 | Position, icon, `display_name` and the match percentage, laid out as a row rather than padded into one string — see §6.6. `display_name` and `icon` are computed by `SetTrack` and sent over the wire, so the four-branch resolution order at :484-486 has exactly one implementation |
+| Generated row fields | :479-489 | Position, icon, `display_name` and the match percentage, laid out as a row rather than padded into one string — see §6.7. `display_name` and `icon` are computed by `SetTrack` and sent over the wire, so the four-branch resolution order at :484-486 has exactly one implementation |
 | Score suffix rule | :487-489 | ` ({score:.0%} match)` for non-anchors scoring above zero, and for nothing else. Anchors carry `score=1.0` and show none; the unfillable placeholder carries `0.0` and shows none. One condition, not two special cases |
 | `:.0%` rounding | :488 | Reproduced exactly, including the tie rule: Python rounds a tie to EVEN and both JavaScript roundings do not, which differs on 96 of 21,215 sampled values. `format.wholePercent`, pinned by `tests/web/js/set_creator.test.mjs` |
 | Unfillable slot row | :490-495 | Rendered from the placeholder's own fields, so it reads `No suitable track found – (Unknown Title)` with no score suffix. Pinned by `tests/web/test_api_set.py::test_an_unfillable_slot_arrives_with_the_fields_the_row_is_built_from` |
@@ -1776,10 +1838,10 @@ coordinates in this document.
 | Results list, single selection | :950 | Nothing is selected until a row is chosen, which is what keeps :961 reachable. Both web lists are operable from the keyboard - roving tabindex, arrows to move, Enter or Space to choose - because `role="option"` on an unfocusable row is a promise the row cannot keep |
 | `<Double-Button-1>` = `Add to Set` | :951 | Double-clicking a row adds it |
 | `Add to Set` / `Cancel`, Cancel rightmost | :952 | Both, in that visual order |
-| Search implementation A, `limit=50` | :954 | `GET /api/tracks/search?limit=50`, which is `LibrarySession.search_tracks` — implementation A unchanged. What the ROWS render is **not** parity and is declared as a divergence in §6.6: a blank field is dropped, and the separator with it |
+| Search implementation A, `limit=50` | :954 | `GET /api/tracks/search?limit=50`, which is `LibrarySession.search_tracks` — implementation A unchanged. What the ROWS render is **not** parity and is declared as a divergence in §6.7: a blank field is dropped, and the separator with it |
 | The four dialog checks | :961-964 | In the catalogued order with the catalogued strings. `Position Taken` is a Yes/No question whose No returns to the dialog with the selection and the typed position intact |
 | No upper bound on the position | :966 | The dialog accepts 9999 against a 10-track set; the builder is what refuses it, as :506-508 says |
-| The same track at several positions | :967 | The dialog permits it. What GENERATION then does with it is not catalogued anywhere in §2.5 or §2.12 — see §6.6 |
+| The same track at several positions | :967 | The dialog permits it. What GENERATION then does with it is not catalogued anywhere in §2.5 or §2.12 — see §6.7 |
 
 **What pins it.**
 
@@ -1796,7 +1858,7 @@ coordinates in this document.
 | A message box over the dialog making the DIALOG inert as well as the shell | `…::test_frontend_behaviour` (`anchor_dialog.test.mjs`) |
 | The Set Creator destination no longer rendering a placeholder | `tests/web/test_frontend_conventions.py::test_the_set_creator_destination_is_no_longer_a_placeholder` |
 
-### 6.6 Set Creator: deferred, divergent, and found along the way
+### 6.7 Set Creator: deferred, divergent, and found along the way
 
 **Deferred.** Everything catalogued under §2.5 or §2.12 that this follow-up does
 not reimplement, so the omission is on the record.
@@ -1815,7 +1877,7 @@ not reimplement, so the omission is on the record.
 *The blank query opens on a browse, not on nothing.* :955 records that the
 dialog opens EMPTY, because search implementation A returns `[]` for a blank
 query — §4 defect #9. The web dialog lists the first 50 tracks instead, from the
-same browse endpoint the ⌘K palette uses and for the same reason (§6.3). The
+same browse endpoint the ⌘K palette uses and for the same reason (§6.4). The
 service is untouched and the characterisation of defect #9 still holds.
 
 *The generated row is a row, not a padded string.* :479 specifies
@@ -1866,7 +1928,7 @@ unconditionally (`ui/set_creator_tab.py:90`), that row is delivered as
 catalogued, and so the same blank-artist track reads `Skee Mask - Reviver` in
 the dialog and `1.  – Skee Mask - Reviver` once it is an anchor. Two renderings
 of one track, a few centimetres apart. The second is that this is the same
-decision §6.3 records for `Copy`, taken for the same reason and against the same
+decision §6.4 records for `Copy`, taken for the same reason and against the same
 69 tracks; it is declared separately because it is a different control on a
 different surface.
 

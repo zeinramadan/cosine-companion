@@ -12,6 +12,7 @@ import { mountPalette } from './components/palette.js';
 import { mountDrawer } from './components/drawer.js';
 import { mountExplore, DEFAULT_SORT, DEFAULT_TOP_N } from './components/explore.js';
 import { mountSetCreator } from './components/set-creator.js';
+import { mountLibrary } from './components/library.js';
 
 const store = createStore({
   destination: 'explore',
@@ -55,6 +56,12 @@ const explore = mountExplore({
   store,
   onPickSeed: () => palette.open(),
   onShowDetail: (trackId) => store.setState({ detailTrackId: trackId, detail: null }),
+});
+
+mountLibrary({
+  store,
+  onSetCurrent: (trackId) => explore.setCurrent(trackId),
+  onClearCurrent: () => explore.clearCurrent(),
 });
 
 api

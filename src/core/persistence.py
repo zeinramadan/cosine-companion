@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Data persistence functions for saving and merging indexed data."""
 
-import json
+from pathlib import Path
 from typing import Tuple, Optional, List
 
 import numpy as np
 import pandas as pd
 
 from config import META_PQ, EMB_PQ, IDX_NPY, IDS_JSON
+from core.index_store import write_index_generation
 
 
 def merge_embeddings(
@@ -65,15 +66,15 @@ def save_index_data(
         vectors: Vector array
         track_ids: List of track IDs
     """
-    # Save metadata
-    meta_df.to_parquet(META_PQ, index=False)
-    
-    # Save embeddings
-    embeddings_df.to_parquet(EMB_PQ, index=False)
-    
-    # Save vectors
-    np.save(IDX_NPY, vectors)
-    
-    # Save track IDs
-    with open(IDS_JSON, "w") as f:
-        json.dump(track_ids, f)
+    # CLI indexing and web deletion are separate processes that can overlap.
+    # Both must use the same immutable-generation commit; otherwise indexing's
+    # old flat rewrite could unlink a deletion manifest that committed midway
+    # through it. The configured flat paths are refreshed as compatibility
+    # hard links by write_index_generation, but the manifest is authoritative.
+    write_index_generation(
+        Path(META_PQ).parent,
+        meta_df,
+        embeddings_df,
+        vectors,
+        track_ids,
+    )

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Data loading functions for metadata, embeddings, and index."""
 
+import io
 import json
 import re
 from pathlib import Path
@@ -11,27 +12,24 @@ import pandas as pd
 
 from config import META_PQ, EMB_PQ, IDX_NPY, IDS_JSON
 from core.index_builder import NumpyCosIndex
+from core.index_store import current_index_file_paths, verified_index_payloads
 
 
 VECTOR_COLUMN_PATTERN = re.compile(r"^v\d+$")
 
 
 def index_file_paths(data_dir: Optional[Path] = None) -> Tuple[Path, Path, Path, Path]:
-    """Return (meta.parquet, embeddings.parquet, index.npy, ids.json) for a data directory.
+    """Return the four paths in the currently committed index generation.
 
     ``data_dir=None`` yields the configured application paths, which is what
     every existing caller relies on. Passing a directory is what lets the
     service layer be pointed at a fixture without touching the real library.
+    A directory without a generation manifest uses the legacy flat filenames.
     """
     if data_dir is None:
-        return META_PQ, EMB_PQ, IDX_NPY, IDS_JSON
-    data_dir = Path(data_dir)
-    return (
-        data_dir / "meta.parquet",
-        data_dir / "embeddings.parquet",
-        data_dir / "index.npy",
-        data_dir / "ids.json",
-    )
+        # META_PQ remains the test/manual seam used by the indexing harnesses.
+        data_dir = Path(META_PQ).parent
+    return current_index_file_paths(data_dir)
 
 
 def _report(progress, phase, message):
@@ -53,14 +51,16 @@ def load_existing_data(progress=None) -> Tuple[Optional[pd.DataFrame], Optional[
     Returns:
         Tuple of (existing_meta_df, existing_embeddings_df) or (None, None) if no data exists
     """
-    if not META_PQ.exists() or not EMB_PQ.exists():
-        return None, None
-    
     try:
-        existing_meta = pd.read_parquet(META_PQ)
-        existing_emb = pd.read_parquet(EMB_PQ)
+        meta_bytes, emb_bytes, _index_bytes, _ids_bytes = verified_index_payloads(
+            Path(META_PQ).parent
+        )
+        existing_meta = pd.read_parquet(io.BytesIO(meta_bytes))
+        existing_emb = pd.read_parquet(io.BytesIO(emb_bytes))
         _report(progress, "start", f"Found existing data: {len(existing_meta)} tracks already indexed")
         return existing_meta, existing_emb
+    except FileNotFoundError:
+        return None, None
     except Exception as e:
         _report(progress, "start", f"Warning: Could not load existing data ({e}), starting fresh")
         return None, None
@@ -113,7 +113,7 @@ def _validate_index_data(V: np.ndarray, ids: List[str], emb: pd.DataFrame) -> No
         )
 
 
-def load_all(data_dir: Optional[Path] = None) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, NumpyCosIndex, np.ndarray, List[str]]:
+def load_all(data_dir: Optional[Path] = None) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Optional[NumpyCosIndex], np.ndarray, List[str]]:
     """
     Load all indexed data: metadata, embeddings, vectors, and cosine index.
 
@@ -131,19 +131,23 @@ def load_all(data_dir: Optional[Path] = None) -> Tuple[pd.DataFrame, pd.DataFram
         - V: Vector array
         - ids: List of track IDs
     """
-    meta_pq, emb_pq, idx_npy, ids_json = index_file_paths(data_dir)
+    resolved_data_dir = Path(META_PQ).parent if data_dir is None else Path(data_dir)
+    meta_bytes, emb_bytes, index_bytes, ids_bytes = verified_index_payloads(
+        resolved_data_dir
+    )
 
-    meta = pd.read_parquet(meta_pq)
-    emb = pd.read_parquet(emb_pq)
-    V = np.load(idx_npy)
-    with open(ids_json, encoding="utf-8") as f:
-        ids = json.load(f)
+    meta = pd.read_parquet(io.BytesIO(meta_bytes))
+    emb = pd.read_parquet(io.BytesIO(emb_bytes))
+    V = np.load(io.BytesIO(index_bytes))
+    ids = json.loads(ids_bytes.decode("utf-8"))
 
     _validate_index_data(V, ids, emb)
 
-    idx = NumpyCosIndex(V.shape[1])
-    for tid, v in zip(ids, V):
-        idx.add(tid, v)
+    idx = None
+    if len(ids) > 0:
+        idx = NumpyCosIndex(V.shape[1])
+        for tid, v in zip(ids, V):
+            idx.add(tid, v)
 
     meta_ix = meta.set_index("track_id")
     emb_ix = emb.set_index("track_id")

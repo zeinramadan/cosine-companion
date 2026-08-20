@@ -76,6 +76,23 @@ export function buildSetCreatorDom() {
   return { app, root, modalLayer };
 }
 
+/** Build the Library destination's fixed controls. Mirrors index.html. */
+export function buildLibraryDom() {
+  const root = withId(new Node('section'), 'view-library');
+  const input = withId(new Node('input'), 'library-search');
+  const clear = withId(new Node('button'), 'library-clear');
+  const refresh = withId(new Node('button'), 'library-refresh');
+  const remove = withId(new Node('button'), 'library-delete');
+  const setCurrent = withId(new Node('button'), 'library-set-current');
+  const stats = withId(new Node('p'), 'library-stats');
+  const status = withId(new Node('p'), 'library-status');
+  const list = withId(new Node('ul'), 'library-tracks');
+  list.scrollTop = 0;
+  root.append(input, clear, refresh, remove, setCurrent, stats, status, list);
+  document.body.append(root);
+  return { root, input, clear, refresh, remove, setCurrent, stats, status, list };
+}
+
 /* -- a fetch whose responses the test hands out by hand -------------------
  *
  * Deterministic on purpose. Sequencing bugs are about which response lands
