@@ -157,19 +157,41 @@ changing ``test-macos.yml``'s, the table would be proved correct for an
 interpreter the app no longer ships on and nothing here would say so. While the
 two agree - both are 3.11 today - every CI run proves the property in full.
 
-FOUR OTHER PROPERTIES WENT WITH IT, and they are named here rather than left to
-be rediscovered. The deleted roll call also enforced that ``test-macos.yml``
-EXISTS and names exactly one resolvable Python; that at least one ``build-*``
-workflow exists; that no relevant workflow names several different Pythons;
-that every ``python-version`` anywhere under ``.github/workflows/`` resolves to
-a version this file understands, rather than to a matrix expression; and that
-every ``.yml``/``.yaml`` there parses at all. None of those is checked now. A
-workflow with malformed YAML, or one that renames ``test-macos.yml``, passes
-this file in silence.
+FIVE OTHER PROPERTIES WENT WITH IT, and the sentence above is not a full
+account of the removal on its own. The deleted
+``test_every_workflow_names_exactly_one_python_this_file_can_resolve`` also
+enforced all of the following, and NOTHING enforces any of them now:
 
-That is a larger loss than the one sentence above suggests, and it is the
-honest accounting. Closing all of it is tracked separately and is not covered
-by this file.
+1. ``.github/workflows/test-macos.yml`` EXISTS and names exactly one
+   resolvable Python. Renaming it used to be a failure; it is now silence.
+2. At least one ``build-*`` workflow exists at all.
+3. No workflow the shipped-interpreter answer depends on names several
+   different Pythons.
+4. Every ``python-version`` ANYWHERE under ``.github/workflows/`` resolves to
+   a literal CPython version - not a matrix expression, not an ``env`` lookup,
+   and not an unquoted ``3.10`` that YAML reads as the float 3.1.
+5. Every ``.yml``/``.yaml`` in that directory parses as YAML at all.
+
+Those five are measured, not recalled. Each was reproduced before this
+paragraph was written, by restoring the deleted test beside this file and
+mutating a copy of the tree one property at a time: clean it passes; rename
+``test-macos.yml``, remove the ``build-*`` workflows, give one build a second
+Python, add an unrelated workflow setting
+``python-version: ${{ matrix.python }}``, or add a file with malformed YAML,
+and it goes red on each. All five applied AT ONCE leave THIS file at exactly
+the result it has with none of them applied: 8 passed on 3.11, and 1 failed /
+7 passed on 3.10 where the failure is the version refusal above and not the
+workflows. Nothing below opens ``.github/workflows/``, so there is no path by
+which it could be otherwise.
+
+So a build workflow that stops naming a Python this file understands, a
+renamed test workflow, a build that names two interpreters, and a workflow
+that does not parse at all are now things nothing here will notice. That is a
+substantially larger loss than the single-sentence gap above suggests, and it
+is written down here because an undercounted removal is the same defect as
+prose that was true when written: the record stops matching the code, and the
+next reader budgets against coverage that is not there. Closing it is tracked
+separately and is not covered by this file.
 
 WHAT IT DOES NOT CHECK
 ----------------------
