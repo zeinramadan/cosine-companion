@@ -1,5 +1,38 @@
-"""Guard: every CI job takes its Python from ``.python-version``, and no file
-anywhere states a version of its own.
+"""Guard: every ordinary CI job contains an unconditional
+``actions/setup-python`` step configured from ``.python-version``, and no
+workflow states a version of its own inline.
+
+WHAT THIS DOES **NOT** ESTABLISH -- stated here, first, next to the claim,
+because the sentence that used to open this file claimed the opposite. It said
+"every CI job takes its Python from ``.python-version``" and "nothing can
+disagree". Both were false, and a reviewer showed it in three lines: inserting,
+AFTER a perfectly valid setup-python step,
+
+    - name: Replace the configured interpreter
+      run: uv python install 3.12 --default
+
+left every test in this file green.
+
+What is asserted is that the step is PRESENT, UNCONDITIONAL, and CONFIGURED
+FROM THE FILE -- ``test_every_job_sets_up_python_from_the_version_file`` and
+``test_every_setup_python_step_points_at_the_version_file``. Which interpreter
+the job *subsequently uses* is not asserted here by anything, and the gap is
+not narrow. A later ``run:`` step can replace the configured interpreter
+outright (``uv python install --default``, ``pyenv global``, a
+``$GITHUB_PATH`` prepend, ``conda activate``), and an *earlier* ``run:`` step
+never sees it at all, because this file checks that the setup step exists and
+not where in the list it sits. Every one of those is ordinary shell behaviour
+on a runner; reading it would take exactly the interpret-the-workflow
+apparatus that shipped four confident wrong answers before being deleted, and
+that apparatus is not coming back. The same list appears once more, in full,
+under KNOWN BLIND SPOTS.
+
+What this file does buy, and the whole of it: the *declared* second sources of
+truth are gone. One file states the version; every workflow points at that
+file instead of restating it (assertions 1-3); ``environment.yml`` restates it
+in one fixed spelling and is checked to equal it (assertion 5). Two workflows
+cannot disagree about a version that neither of them states -- which is the
+defect described next, and is the one thing here that is actually mechanised.
 
 For months CI tested 3.10 while ``.github/workflows/build-*.yml`` froze the
 app on 3.11. Nothing detected it. It surfaced only because a compiled-in
@@ -13,7 +46,8 @@ counterexample (flow mappings, escaped keys, block-scalar decoys,
 ``python-version-file``), and every fix was "teach it one more Actions shape".
 That apparatus is gone. **This file does not determine which Python anything
 uses.** It asserts that exactly one file states a version and that everything
-else points at it. If nothing else states a version, nothing can disagree.
+else points at it -- no more than that, and see the second paragraph above for
+what that leaves uncovered.
 
 WHAT THIS FILE ASSERTS
 ----------------------
@@ -63,20 +97,30 @@ once PyYAML is done.
 
 KNOWN BLIND SPOTS
 -----------------
-Deliberate. Each is a way a job could obtain a Python this file would not
-notice. None has an instance in this repository today, and each was left
-undetected on purpose: detecting them is the "teach it one more Actions shape"
-treadmill that produced four wrong answers. They are listed so the next reader
-does not have to rediscover them.
+Deliberate, and the reason the opening paragraph says what it says. Each is a
+way a job could run a Python other than the one its setup-python step
+installed, and each was left undetected on purpose: detecting them is the
+"teach it one more Actions shape" treadmill that produced four wrong answers.
+They are listed so the next reader does not have to rediscover them.
 
 * ``container:`` jobs -- the image's interpreter, not the runner's.
 * Composite actions -- a ``uses:`` step whose own action.yml sets up Python.
-* ``uv python install`` (and ``pyenv install``, ``conda create``) inside a
-  ``run:`` block.
+* ``uv python install 3.12 --default`` inside a ``run:`` block -- this is the
+  one a reviewer used, and it is the reason the guarantee at the top of this
+  file is worded the way it is. ``pyenv global``, ``conda activate`` and
+  ``conda create`` are the same hole with different spellings.
 * Manual ``PATH`` manipulation, including ``$GITHUB_PATH`` writes.
 * Step *order*: a ``run:`` step placed before the setup-python step in the
   same job runs on the runner's default Python. Presence is asserted here;
   position is not.
+
+None of the above has an instance in this repository as this is written --
+``grep -n "container:|GITHUB_PATH|uv python|pyenv|conda activate|conda create"``
+over ``.github/workflows/*.yml`` returns nothing, and the only ``uses:`` steps
+are checkout, setup-python, cache, upload-artifact and ``setup-uv`` (given
+``version:`` alone, so it installs no interpreter). That is an observation
+about today, not an invariant: NOTHING RE-RUNS THAT GREP. It is not a test,
+this file does not make it one, and a commit adding any of them goes green.
 * ``setup.py`` declares ``python_requires=">=3.8"``. That is a lower bound on
   installability, not an interpreter selection -- it cannot make any job run a
   different Python -- so it is out of scope here. README.md already records
