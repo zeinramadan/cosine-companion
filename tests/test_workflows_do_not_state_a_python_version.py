@@ -119,8 +119,16 @@ WHAT THIS FILE ASSERTS
    weakest of the six, and the lock-drift gate in ``test-macos.yml`` does NOT
    back it up -- a recompile at 3.12 was measured byte-identical to the
    committed lock. Both the measurement and the shapes this assertion cannot
-   see are recorded on :func:`uv_python_version_problems`, next to the code,
-   and each has an executable test pinning it green.
+   see are recorded on :func:`uv_python_version_problems`, next to the code.
+   That list has 5 entries, of which 3 have an executable test pinning the miss
+   and 2 are documented only. This sentence used to say "each has an executable
+   test pinning it green", which was false, and which the comment sitting above
+   those pins in this same file already contradicted -- two sentences each
+   plausible alone and impossible together, which is a shape no sweep for
+   unsupported absolutes can see, because neither is unsupported on its own.
+   Neither number is remembered now:
+   :func:`test_the_blind_spot_accounting_is_checked_not_remembered` counts the
+   entries in the code and renders both sentences from that count.
 5. ``environment.yml`` pins conda to the same version, in the single
    spelling ``python=<that version>`` and no other.
 6. ``.python-version`` itself holds exactly one bare version token.
@@ -1084,21 +1092,115 @@ def test_a_variable_is_never_resolved_to_a_literal():
     assert literal_python_versions_passed_to_uv(_DERIVED_RUN) == []
 
 
-# The three shapes below are PINNED AS MISSES, not fixed. They are the first
-# three entries of the five-entry blind-spot list in
-# :func:`uv_python_version_problems`, in that order, kept here as executable
+# 3 of the 5 blind-spot entries in :func:`uv_python_version_problems` are
+# PINNED AS MISSES below, in the order they appear there; the other 2 are
+# documented only. They are pinned, not fixed, and kept here as executable
 # statements so the prose cannot quietly drift from the code. If a later
 # change makes any of them visible, that test reddens and whoever made the
 # change corrects the list, assertion 4's wording and the module docstring in
 # the same commit.
 #
-# The remaining two entries -- a value glued together by the shell, and any
-# OTHER flag that selects a resolution target -- are documented but NOT
-# pinned. That asymmetry is not an oversight to be tidied away: they are
-# facts about which characters the check looks at, provable by reading the
-# five lines of :func:`literal_python_versions_passed_to_uv`, whereas the
-# three below each turn on a construct a reader could plausibly believe is
-# handled.
+# The asymmetry is not an oversight to be tidied away. The two documented-only
+# entries -- a value glued together by the shell, and any OTHER flag that
+# selects a resolution target -- are facts about which characters the check
+# looks at, provable by reading the five lines of
+# :func:`literal_python_versions_passed_to_uv`, whereas the three below each
+# turn on a construct a reader could plausibly believe is handled.
+#
+# The two tuples below exist because the module docstring said "each has an
+# executable test pinning it green" while this comment said two of them were
+# not pinned. Both sentences are rendered from these tuples now, and
+# :func:`test_the_blind_spot_accounting_is_checked_not_remembered` fails if
+# either stops matching.
+
+PINNED_BLIND_SPOTS = (
+    "test_a_flag_assembled_from_fragments_is_not_seen",
+    "test_a_value_arriving_from_outside_the_block_is_not_seen",
+    "test_a_variable_assigned_a_literal_in_the_same_block_is_not_seen",
+)
+
+DOCUMENTED_ONLY_BLIND_SPOTS = (
+    "A value glued together by the shell",
+    "Any OTHER flag that selects a resolution target",
+)
+
+
+def test_the_blind_spot_accounting_is_checked_not_remembered():
+    """The pinned/documented split is derived from the code, not recalled.
+
+    Round 6 found the module docstring claiming every blind spot had an
+    executable pin and the comment above these tests saying two did not.
+    Each sentence was plausible on its own; they were 900 lines apart and
+    jointly impossible. Counting absolutes one at a time cannot catch that,
+    because neither sentence is an unsupported absolute -- it is the PAIR
+    that is wrong.
+
+    So both sentences are now rendered from the same two tuples and the same
+    count taken off :func:`uv_python_version_problems`. They cannot disagree
+    with each other, and neither can disagree with the number of entries in
+    the list they describe.
+
+    WHAT THIS DOES NOT CATCH, said here rather than discovered later: moving
+    an entry from one tuple to the other without touching the code it
+    describes. The totals still add up, the sentences still render the same
+    way, and this test still passes. It pins the ARITHMETIC and the names,
+    not the claim that a given bullet is the one a given test pins.
+    """
+    source = Path(__file__).read_text(encoding="utf-8")
+    # Both statements are prose, one inside a docstring and one inside a ``#``
+    # comment block, and both are wrapped. Flatten to a single line and drop
+    # the comment markers so the search is about the words rather than about
+    # where the wrapper happened to break.
+    prose = " ".join(
+        part
+        for part in (
+            line.strip().removeprefix("#").strip() for line in source.splitlines()
+        )
+        if part
+    )
+
+    entries = [
+        line for line in uv_python_version_problems.__doc__.splitlines()
+        if line.strip().startswith("* ")
+    ]
+    pinned = len(PINNED_BLIND_SPOTS)
+    documented = len(DOCUMENTED_ONLY_BLIND_SPOTS)
+
+    assert len(entries) == pinned + documented, (
+        f"the blind-spot list in uv_python_version_problems has "
+        f"{len(entries)} entries, but {pinned} are declared pinned and "
+        f"{documented} documented-only. Whoever added or removed a bullet "
+        "updates PINNED_BLIND_SPOTS or DOCUMENTED_ONLY_BLIND_SPOTS and the "
+        "two sentences that quote them."
+    )
+
+    for name in PINNED_BLIND_SPOTS:
+        assert callable(globals().get(name)), (
+            f"PINNED_BLIND_SPOTS names {name!r}, which is not a function in "
+            "this module. A pin that was renamed or deleted stops pinning "
+            "anything, silently, which is the whole failure this guards."
+        )
+
+    for phrase in DOCUMENTED_ONLY_BLIND_SPOTS:
+        assert phrase in uv_python_version_problems.__doc__, (
+            f"DOCUMENTED_ONLY_BLIND_SPOTS names {phrase!r}, which no longer "
+            "appears in the blind-spot list it is supposed to be describing."
+        )
+
+    total = len(entries)
+    sentences = (
+        f"That list has {total} entries, of which {pinned} have an executable "
+        f"test pinning the miss and {documented} are documented only.",
+        f"{pinned} of the {total} blind-spot entries in "
+        f":func:`uv_python_version_problems` are PINNED AS MISSES below",
+    )
+    for sentence in sentences:
+        assert sentence in prose, (
+            f"this file no longer contains, verbatim, {sentence!r}. The "
+            "module docstring and the comment above the pins both state the "
+            "split; they contradicted each other before this test existed, "
+            "so they are rendered from the same numbers now."
+        )
 
 
 def test_a_flag_assembled_from_fragments_is_not_seen():
