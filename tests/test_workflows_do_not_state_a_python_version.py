@@ -319,6 +319,22 @@ def _is_setup_python(where, resolved):
     action_path, _ref = resolved
     segments = tuple(action_path.split("/"))
     if segments[:2] == SETUP_PYTHON:
+        # Comparing the first two segments establishes a PREFIX, not an
+        # identity, and the two are not the same claim.
+        # ``actions/setup-python/not-the-root-action@<sha>`` shares the prefix
+        # and is a different action: GitHub resolves a sub-path ``uses:`` to
+        # that directory's own action.yml, which this guard has never read and
+        # which need not consult .python-version at all. Under the prefix
+        # comparison it was accepted as the real thing and the whole suite
+        # stayed green. So the prefix is where the match STARTS and the length
+        # is what finishes it.
+        assert len(segments) == 2, (
+            f"{where} uses {action_path!r}, a sub-path under the "
+            f"{'/'.join(SETUP_PYTHON)} repository rather than the root "
+            "action. GitHub runs that directory's own action.yml, which this "
+            f"guard has not read and which need not read {VERSION_FILE_NAME}. "
+            f"Use exactly {'/'.join(SETUP_PYTHON)}@<40-character sha>."
+        )
         return True
 
     assert segments[-1] != SETUP_PYTHON[1], (
@@ -596,6 +612,44 @@ def test_every_setup_python_step_is_pinned_to_one_agreed_sha():
         "defect as two workflows stating two Python versions. Pin all of "
         "them to one reviewed commit."
     )
+
+
+# Which strings are, and are not, the action this guard is about.
+#
+# Every step in this repository is spelled correctly, so :func:`_is_setup_python`
+# only ever sees the root action here and never reaches the branches that
+# decide anything. One of those branches compared a PREFIX and called it an
+# identity, and it was wrong for four rounds with nothing going red.
+
+
+def test_the_root_action_is_recognised():
+    assert _is_setup_python("w::j step 0", ("actions/setup-python", "0" * 40)) is True
+
+
+def test_a_sub_path_under_setup_python_is_not_the_root_action():
+    """The reviewer's mutation, in isolation.
+
+    ``actions/setup-python/not-the-root-action@<sha>`` shares two segments
+    with the real action and is a different action: GitHub runs that
+    directory's own action.yml. The prefix comparison accepted it as the real
+    thing and the whole suite stayed green.
+    """
+    with pytest.raises(AssertionError, match="sub-path"):
+        _is_setup_python(
+            "w::j step 0", ("actions/setup-python/not-the-root-action", "0" * 40)
+        )
+
+
+def test_a_fork_or_mirror_of_setup_python_is_not_silently_skipped():
+    with pytest.raises(AssertionError, match="looks like setup-python"):
+        _is_setup_python("w::j step 0", ("someone-else/setup-python", "0" * 40))
+
+
+def test_an_unrelated_action_is_not_setup_python():
+    """The false positive that would get this deleted: setup-uv also takes a
+    ``python-version`` input."""
+    assert _is_setup_python("w::j step 0", ("astral-sh/setup-uv", "v7")) is False
+    assert _is_setup_python("w::j step 0", None) is False
 
 
 # ---------------------------------------------------------------------------
