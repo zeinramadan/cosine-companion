@@ -680,7 +680,10 @@ def conda_python_pin():
                 if isinstance(nested, list):
                     entries.extend(n for n in nested if isinstance(n, str))
 
-    pins = [e for e in entries if re.split(r"[=<>!~\s]", e.strip(), 1)[0] == "python"]
+    def _name_of(entry):
+        return re.split(r"[=<>!~\s]", entry.strip(), maxsplit=1)[0]
+
+    pins = [e for e in entries if _name_of(e) == "python"]
 
     assert len(pins) == 1, (
         f"{CONDA_ENV_FILE.name} names Python {len(pins)} times ({pins!r}); "
