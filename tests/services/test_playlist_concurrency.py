@@ -1232,6 +1232,7 @@ class _RecordsEveryUnlink:
 
     def __init__(self):
         self.paths = []
+        self._path_unlink_calls = threading.local()
 
     def install(self, monkeypatch):
         real_path_unlink = Path.unlink
@@ -1239,15 +1240,37 @@ class _RecordsEveryUnlink:
         real_os_remove = os.remove
 
         def path_unlink(inner_self, *args, **kwargs):
-            self.paths.append(Path(inner_self))
-            return real_path_unlink(inner_self, *args, **kwargs)
+            path = Path(inner_self)
+            self.paths.append(path)
+            stack = getattr(self._path_unlink_calls, "stack", None)
+            if stack is None:
+                stack = []
+                self._path_unlink_calls.stack = stack
+            call = {"path": path, "delegated": False}
+            stack.append(call)
+            try:
+                return real_path_unlink(inner_self, *args, **kwargs)
+            finally:
+                stack.pop()
+
+        def record_low_level(path):
+            path = Path(path)
+            stack = getattr(self._path_unlink_calls, "stack", ())
+            if stack and stack[-1]["path"] == path and not stack[-1]["delegated"]:
+                # Python 3.11+ Path.unlink delegates through os.unlink at call
+                # time, so both monkeypatches see the same operation. Suppress
+                # only that nested delegation; a second delete is still an
+                # independently recorded event.
+                stack[-1]["delegated"] = True
+                return
+            self.paths.append(path)
 
         def os_unlink(path, *args, **kwargs):
-            self.paths.append(Path(path))
+            record_low_level(path)
             return real_os_unlink(path, *args, **kwargs)
 
         def os_remove(path, *args, **kwargs):
-            self.paths.append(Path(path))
+            record_low_level(path)
             return real_os_remove(path, *args, **kwargs)
 
         monkeypatch.setattr(Path, "unlink", path_unlink)
@@ -1258,6 +1281,19 @@ class _RecordsEveryUnlink:
     @property
     def generation_files(self):
         return [path for path in self.paths if GENERATION_FILE.match(path.name)]
+
+
+def test_unlink_recorder_keeps_separate_delete_operations(tmp_path, monkeypatch):
+    """Suppress pathlib's delegation, never a later delete of the same path."""
+    victim = tmp_path / "victim"
+    unlinks = _RecordsEveryUnlink().install(monkeypatch)
+
+    victim.write_bytes(b"first")
+    victim.unlink()
+    victim.write_bytes(b"second")
+    victim.unlink()
+
+    assert unlinks.paths == [victim, victim]
 
 
 def test_a_generation_COMMITTED_BETWEEN_THE_READ_AND_THE_UNLINK_survives(

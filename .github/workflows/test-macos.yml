@@ -20,7 +20,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.11"
           cache: pip
 
       # Deliberately WITHOUT essentia-tensorflow. Nothing under src/services/
@@ -39,7 +39,7 @@ jobs:
       # design, so that is the case worth checking on CI rather than only on a
       # developer's machine; without typer those three tests skip themselves.
       - name: Install test dependencies
-        run: python -m pip install numpy pandas pyarrow lxml "pytest>=7.0" pywebview typer
+        run: python -m pip install numpy==2.2.6 pandas==2.3.2 pyarrow==21.0.0 lxml==6.1.2 pytest==9.1.1 pywebview==6.2.1 typer==0.27.1
 
       - name: Run tests
         run: python -m pytest -q
