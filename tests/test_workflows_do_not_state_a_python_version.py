@@ -733,6 +733,60 @@ def uv_resolution_blocks(name, document):
     return found
 
 
+def uv_resolution_problems(collected):
+    """Compare a collected mapping against the reviewed copies kept here.
+
+    ``collected`` is passed in rather than gathered here for the reason argued
+    on :func:`conda_python_pin`: this repository's one such block is correct,
+    so every reporting branch below is unreachable through the real workflows
+    and loosening any of them would redden nothing. Relaxing the ``==`` to a
+    substring test is the obvious way to gut this check, and on the real files
+    alone it is invisible.
+
+    Both directions matter. A collected block with no reviewed copy is a NEW
+    place uv's target is chosen. A reviewed key with nothing collected means
+    the step was deleted, renamed out of its job, or had every marker removed
+    -- which is what a mutation moving the target elsewhere looks like from
+    here.
+    """
+    problems = []
+
+    for key in sorted(set(collected) - set(REVIEWED_UV_RESOLUTION_BLOCKS)):
+        problems.append(
+            f"{key[0]}::{key[1]} names uv's resolution target and has no "
+            "reviewed copy in this file. uv resolves the dependency set FOR "
+            "whatever it selects, and the lock-drift gate does not catch a "
+            "wrong selection (the recompile at 3.12 is byte-identical today; "
+            "see the note above). Read the block, then add it to "
+            "REVIEWED_UV_RESOLUTION_BLOCKS verbatim."
+        )
+
+    for key in sorted(set(REVIEWED_UV_RESOLUTION_BLOCKS) - set(collected)):
+        problems.append(
+            f"no run block was collected for {key[0]}::{key[1]}, which this "
+            "file has a reviewed copy of. The step was deleted, moved to "
+            "another job, or no longer contains any of "
+            f"{UV_RESOLUTION_MARKERS}. If uv's resolution target moved, the "
+            "new block has to be reviewed and pinned here; if it is genuinely "
+            "gone, delete the entry."
+        )
+
+    for key, reviewed in sorted(REVIEWED_UV_RESOLUTION_BLOCKS.items()):
+        if key in collected and collected[key] != reviewed:
+            problems.append(
+                f"{key[0]}::{key[1]} run block differs from the reviewed copy "
+                "in this file.\n--- reviewed ---\n"
+                f"{reviewed}--- in the workflow ---\n{collected[key]}"
+                "--- end ---\nThis block chooses the interpreter uv resolves "
+                "the dependency set FOR, and the lock-drift gate does not "
+                "catch a wrong choice. If the change is intended, read it and "
+                "paste the new text into REVIEWED_UV_RESOLUTION_BLOCKS in the "
+                "same commit."
+            )
+
+    return problems
+
+
 def test_every_uv_resolution_block_matches_its_reviewed_text():
     """The blocks that choose what uv resolves against are pinned verbatim.
 
@@ -741,51 +795,65 @@ def test_every_uv_resolution_block_matches_its_reviewed_text():
     five rounds. This compares fixed text with ``==``: a literal version, a
     re-quoted flag, a variable assigned a literal, a moved ``--exclude-newer``
     and a deleted flag are all simply "the text differs".
-
-    Both directions matter. A collected block that is not in the reviewed
-    mapping is a NEW place uv's target is chosen. A reviewed key with no
-    collected block means the step was deleted, renamed out of its job, or had
-    every marker removed -- which is what a mutation moving the target
-    somewhere else looks like from here.
     """
-    found = {}
+    collected = {}
     for path in workflow_files():
-        found.update(uv_resolution_blocks(path.name, _parse(path)))
+        collected.update(uv_resolution_blocks(path.name, _parse(path)))
 
-    unreviewed = sorted(set(found) - set(REVIEWED_UV_RESOLUTION_BLOCKS))
-    assert not unreviewed, (
-        "these run blocks name uv's resolution target and have no reviewed "
-        f"copy in this file: {unreviewed}. uv resolves the dependency set FOR "
-        "whatever they select, and the lock-drift gate does not catch a wrong "
-        "selection (the recompile at 3.12 is byte-identical today; see the "
-        "note above). Read the block, then add it to "
-        "REVIEWED_UV_RESOLUTION_BLOCKS verbatim."
+    assert not uv_resolution_problems(collected), "\n".join(
+        uv_resolution_problems(collected)
     )
-
-    missing = sorted(set(REVIEWED_UV_RESOLUTION_BLOCKS) - set(found))
-    assert not missing, (
-        f"no run block was collected for {missing}, which this file has a "
-        "reviewed copy of. The step was deleted, moved to another job, or no "
-        "longer contains any of "
-        f"{UV_RESOLUTION_MARKERS}. If uv's resolution target moved, the new "
-        "block has to be reviewed and pinned here; if it is genuinely gone, "
-        "delete the entry."
-    )
-
-    for key, reviewed in sorted(REVIEWED_UV_RESOLUTION_BLOCKS.items()):
-        assert found[key] == reviewed, (
-            f"{key[0]}::{key[1]} run block differs from the reviewed copy in "
-            "this file.\n--- reviewed ---\n"
-            f"{reviewed}--- in the workflow ---\n{found[key]}"
-            "--- end ---\nThis block chooses the interpreter uv resolves the "
-            "dependency set FOR, and the lock-drift gate does not catch a "
-            "wrong choice. If the change is intended, read it and paste the "
-            "new text into REVIEWED_UV_RESOLUTION_BLOCKS in the same commit."
-        )
 
 
 # The branches of assertion 4 that this repository does not exercise: its own
-# workflows are correct, so the comparison above only ever walks its happy path.
+# workflows are correct, so both functions above only ever walk their happy
+# path, and every reporting branch was unreachable from the real files.
+
+
+def test_an_unreviewed_block_is_reported():
+    """A NEW place uv's resolution target is chosen."""
+    problems = uv_resolution_problems({("other.yml", "j"): "uv pip compile x.in"})
+
+    assert len(problems) == 2, problems  # unreviewed, plus the real one missing
+    assert "other.yml::j" in problems[0]
+    assert "no reviewed copy" in problems[0]
+
+
+def test_a_reviewed_block_that_vanished_is_reported():
+    """The step was deleted, or the target moved somewhere not collected."""
+    problems = uv_resolution_problems({})
+
+    assert len(problems) == 1, problems
+    assert "no run block was collected" in problems[0]
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        ('"$PYTHON_VERSION"', "3.12"),                    # the naive literal
+        ("--python-version", '"--python-version"'),       # the round-6 mutant
+        ("--python-version", '--pyth"on-version"'),       # the round-7 mutant
+        ("--exclude-newer 2026-08-20", "--exclude-newer 2027-01-01"),
+        ("git diff --exit-code", "git diff"),             # the drift gate itself
+    ],
+    ids=["literal", "quoted-flag", "interior-quote", "exclude-newer", "drift-gate"],
+)
+def test_a_one_character_edit_to_a_reviewed_block_is_reported(edit):
+    """Every shape the deleted shell parser missed is simply "the text differs".
+
+    The middle two are the mutations that walked past that parser in rounds 6
+    and 7 -- a quote at the end of the flag name, and a quote in the MIDDLE of
+    it, which the shell glues back together before uv sees it. Neither needs
+    understanding here.
+    """
+    key = ("test-macos.yml", "pytest")
+    mutated = _LOCK_COMPILE_RUN.replace(*edit, 1)
+    assert mutated != _LOCK_COMPILE_RUN, "this row edits nothing and pins nothing"
+
+    problems = uv_resolution_problems({key: mutated})
+
+    assert len(problems) == 1, problems
+    assert "differs from the reviewed copy" in problems[0]
 
 
 def test_a_run_block_naming_no_marker_is_not_collected():
