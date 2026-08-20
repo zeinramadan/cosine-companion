@@ -598,6 +598,26 @@ def test_every_setup_python_step_points_at_the_version_file(workflow):
     two differ when the file is gone: omission logs a warning and falls back
     to whatever Python the runner preinstalled, while a stated file that does
     not exist throws. Fail-closed, and it names its source in the workflow.
+
+    ON THE ``.strip()`` BELOW -- the rule is STRIP WHERE THE CONSUMER STRIPS.
+    Comparing a stripped copy is exactly the shape that was a defect for the
+    conda pin, where a padded ``" python=3.11 "`` passed a guard claiming that
+    one string and only one string passes, while conda rejects the spec
+    outright. It is correct here, and the difference is the consumer, not the
+    style. setup-python reads this input as
+    ``core.getInput('python-version-file')`` with no options, and at the
+    commit this repository pins -- a26af69be951a213d495a4c3e4e4022e16d87065 --
+    the bundled toolkit's ``getInput`` ends ``return val.trim()`` unless
+    ``options.trimWhitespace === false`` is passed, which setup-python does
+    not pass. The action sees the trimmed string, so a padded value here is
+    genuinely equivalent. conda is the opposite: it takes the spec verbatim,
+    which is why :func:`conda_python_pin` compares the raw scalar.
+
+    That argument is also not load-bearing, which is the point of assertion 2
+    demanding this input at all. If the trim ever went away, setup-python
+    reaches ``fs.existsSync(versionFile)`` and THROWS "The specified python
+    version file at: ... doesn't exist". A padded value cannot become a silent
+    fall-back to the runner's Python in either world.
     """
     for where, step, _ref in setup_python_steps(workflow):
         with_block = step.get("with")
@@ -1068,6 +1088,16 @@ def conda_python_pin(expected, entries):
     has to rewrite it in the accepted form. The failure message says so. That
     is a minute of annoyance in exchange for the property that no spec this
     guard has not seen can pass it.
+
+    The comparison is against the RAW scalar. It used to ``.strip()`` first,
+    and ``- " python=3.11 "`` -- valid YAML -- therefore passed, while conda
+    refuses it: ``CondaValueError: invalid package specification:
+    python=3.11``. A guard that accepts exactly one literal has to compare the
+    literal. Identification (:func:`_conda_package_name`) still strips, on
+    purpose, so a padded pin is FOUND and reported as wrongly spelled rather
+    than counted as absent. Other ``.strip()`` calls in this file are correct
+    because their consumer strips too; the rule and the evidence are in
+    :func:`test_every_setup_python_step_points_at_the_version_file`.
     """
     accepted = f"python={expected}"
     pins = [e for e in entries if _conda_package_name(e) == "python"]
@@ -1243,6 +1273,21 @@ def test_the_version_file_holds_exactly_one_version():
 
     pyenv reads every line of this file as a version name, so a second line or
     a trailing comment is not a note -- it is a second source of truth.
+
+    The two consumers disagree about the file in a way that makes "exactly one
+    line" the only spelling both accept. setup-python does not read it line by
+    line at all: at the pinned commit ``getVersionInputFromPlainFile`` is
+    ``fs.readFileSync(versionFile, 'utf8').trim()`` returning ``[version]`` --
+    the WHOLE file, trimmed, as ONE version string. A second line does not
+    become a second candidate there; it becomes the single nonsense version
+    ``"3.11\n3.12"``. pyenv, meanwhile, would read two. Neither is what anyone
+    meant, and both are refused here.
+
+    The ``.strip()`` calls below therefore mirror their consumer exactly --
+    the same rule argued at length in
+    :func:`test_every_setup_python_step_points_at_the_version_file`: a padded
+    ``" 3.11 "`` is trimmed by setup-python before it is used, so accepting it
+    here matches what actually happens.
     """
     raw = stated_version_text()
     lines = [line for line in raw.splitlines() if line.strip()]
