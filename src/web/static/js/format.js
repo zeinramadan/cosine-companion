@@ -155,26 +155,87 @@ const PYTHON_SPACE =
   '\\t\\n\\v\\f\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000';
 const SURROUNDING_SPACE = new RegExp(`^[${PYTHON_SPACE}]+|[${PYTHON_SPACE}]+$`, 'g');
 
+/* Every code point THIS PROJECT'S PYTHON calls a decimal digit, as inclusive
+ * `[first, last]` runs of consecutive code points.
+ *
+ * NOT `\p{Nd}`, which is what this used to be, and the difference is a defect
+ * rather than pedantry. `\p{Nd}` resolves against the Unicode tables of
+ * WHICHEVER JavaScript runtime evaluates it, and those are not the tables
+ * CPython was built with - the two version independently:
+ *
+ *   CPython 3.10       unicodedata 13.0  650 Nd code points
+ *   node 20.20 / ICU 78  Unicode 17.0    770 Nd code points
+ *
+ * That is 120 code points - Kawi, Tangsa, Nag Mundari, Kirat Rai and nine other
+ * blocks - that node reads as digits and `int()` refuses. `parseIntegerStrictly`
+ * answered 10 for a Kawi ten while `int()` raised ValueError, and both `Total
+ * Tracks` (:501) and the anchor `Position` control (:962) go through here, so
+ * both accepted a length the Tkinter tab would have refused with "Invalid
+ * Input". The skew is one-directional today - every digit CPython knows, node
+ * also knows - but nothing makes it stay that way.
+ *
+ * So the table is CPython's, enumerated rather than delegated, and
+ * `tests/web/test_integer_parsing_matches_python.py` re-derives it from the
+ * RUNNING interpreter on every run: a Python upgrade fails there and names the
+ * digits to add, and a node upgrade cannot reach it at all.
+ *
+ * 61 runs, 650 code points, `unicodedata.unidata_version` 13.0.0. Regenerate
+ * with `python -c` over `unicodedata.category(chr(c)) == "Nd"`; the test says
+ * so too, and says what to run. */
+const PYTHON_DECIMAL_RUNS = [
+  [0x0030, 0x0039], [0x0660, 0x0669], [0x06f0, 0x06f9], [0x07c0, 0x07c9],
+  [0x0966, 0x096f], [0x09e6, 0x09ef], [0x0a66, 0x0a6f], [0x0ae6, 0x0aef],
+  [0x0b66, 0x0b6f], [0x0be6, 0x0bef], [0x0c66, 0x0c6f], [0x0ce6, 0x0cef],
+  [0x0d66, 0x0d6f], [0x0de6, 0x0def], [0x0e50, 0x0e59], [0x0ed0, 0x0ed9],
+  [0x0f20, 0x0f29], [0x1040, 0x1049], [0x1090, 0x1099], [0x17e0, 0x17e9],
+  [0x1810, 0x1819], [0x1946, 0x194f], [0x19d0, 0x19d9], [0x1a80, 0x1a89],
+  [0x1a90, 0x1a99], [0x1b50, 0x1b59], [0x1bb0, 0x1bb9], [0x1c40, 0x1c49],
+  [0x1c50, 0x1c59], [0xa620, 0xa629], [0xa8d0, 0xa8d9], [0xa900, 0xa909],
+  [0xa9d0, 0xa9d9], [0xa9f0, 0xa9f9], [0xaa50, 0xaa59], [0xabf0, 0xabf9],
+  [0xff10, 0xff19], [0x104a0, 0x104a9], [0x10d30, 0x10d39], [0x11066, 0x1106f],
+  [0x110f0, 0x110f9], [0x11136, 0x1113f], [0x111d0, 0x111d9], [0x112f0, 0x112f9],
+  [0x11450, 0x11459], [0x114d0, 0x114d9], [0x11650, 0x11659], [0x116c0, 0x116c9],
+  [0x11730, 0x11739], [0x118e0, 0x118e9], [0x11950, 0x11959], [0x11c50, 0x11c59],
+  [0x11d50, 0x11d59], [0x11da0, 0x11da9], [0x16a60, 0x16a69], [0x16b50, 0x16b59],
+  [0x1d7ce, 0x1d7ff], [0x1e140, 0x1e149], [0x1e2f0, 0x1e2f9], [0x1e950, 0x1e959],
+  [0x1fbf0, 0x1fbf9],
+];
+
+/* The same table as a character class, built from it rather than written
+ * beside it: two spellings of one set is how they drift apart. */
+const PYTHON_DIGIT = `[${PYTHON_DECIMAL_RUNS.map(
+  ([first, last]) => `\\u{${first.toString(16)}}-\\u{${last.toString(16)}}`,
+).join('')}]`;
+
 /* Python's decimal-literal grammar: an optional sign, then digits carrying
  * single underscores BETWEEN them - never leading, never trailing, never
- * doubled. `\p{Nd}` is the character class `int()` accepts, which is every
- * Unicode decimal digit and not only `0-9`. */
-const PYTHON_INTEGER = /^([+-]?)(\p{Nd}(?:_?\p{Nd})*)$/u;
-
-const DECIMAL_DIGIT = /\p{Nd}/u;
+ * doubled. */
+const PYTHON_INTEGER = new RegExp(
+  `^([+-]?)(${PYTHON_DIGIT}(?:_?${PYTHON_DIGIT})*)$`,
+  'u',
+);
 
 /** The value of one Unicode decimal digit, an Arabic-Indic seven as readily as `7`. */
 function decimalValue(character) {
   const code = character.codePointAt(0);
   // Decimal digits are laid out in blocks of ten whose first member is the
   // zero, and consecutive blocks can be adjacent - U+1D7CE..U+1D7FF is five of
-  // them with no gap - so the offset is taken from the start of the contiguous
-  // run and reduced modulo ten rather than from the previous non-digit.
-  let start = code;
-  while (start > 0 && DECIMAL_DIGIT.test(String.fromCodePoint(start - 1))) {
-    start -= 1;
+  // them with no gap, which is why one run can be fifty long - so the offset is
+  // taken from the start of the run and reduced modulo ten.
+  //
+  // The run is found in THIS table, not by walking back over `\p{Nd}`, which is
+  // what this did before. That walk asked the runtime where the block began,
+  // and a runtime that knows a digit block CPython does not could have walked
+  // out of one run into another and returned the wrong VALUE for a perfectly
+  // ordinary digit. It does not happen on node 20 - no node-only run abuts a
+  // CPython run start, checked - but it was luck, not design.
+  for (const [first, last] of PYTHON_DECIMAL_RUNS) {
+    if (code >= first && code <= last) {
+      return (code - first) % 10;
+    }
   }
-  return (code - start) % 10;
+  // Unreachable: PYTHON_INTEGER matched, so every character came from the table.
+  return Number.NaN;
 }
 
 /**

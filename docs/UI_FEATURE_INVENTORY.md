@@ -1900,6 +1900,61 @@ them positive controls that change the configuration and change it back — one 
 same length as `030` and then in Arabic-Indic digits — where the response is
 still valid and IS written.
 
+**Both numeric controls read Python's integer grammar, not JavaScript's.**
+`Total Tracks` (:501) and the anchor dialog's `Position in Set` (:962) are each
+a bare `int()` in Tkinter whose `ValueError` IS the branch that raises the
+dialog, so "not an integer" is a question CPython answers. Both go through one
+helper, `format.parseIntegerStrictly`, and what it accepts is catalogued here
+rather than left to be discovered per control:
+
+| input | `int()` | why it is not obvious |
+| --- | --- | --- |
+| `1_0` | `10` | Python's literal grammar allows single underscores BETWEEN digits; `_10`, `10_` and `1__0` all raise |
+| `١٠` (Arabic-Indic) | `10` | `int()` takes every Unicode decimal digit, not `0-9`. An Arabic macOS keyboard produces these when you type a ten, and this library's owner has one |
+| `𝟙𝟘` (mathematical) | `10` | five ten-blocks run together at U+1D7CE..U+1D7FF, so place value cannot be found by walking back to the previous non-digit |
+| `\u008510` | `10` | U+0085 NEXT LINE is stripped by `int()` and NOT by `String.prototype.trim()` |
+| `\ufeff10` | `ValueError` | U+FEFF is stripped by `trim()` and NOT by `int()` — the pair runs both ways |
+| `10.0`, `0x10`, `1e3`, `3 apples`, `""` | `ValueError` | all of them are things `Number()` or `parseInt` accept |
+| `-2` | `-2` | it must PARSE so :963 can reject it as "Position must be 1 or greater" rather than :962 rejecting it as "not a valid position number" — the order of the two dialogs is observable |
+
+*The digit set is CPython's, enumerated, and it did not used to be.* The helper
+wrote its digit class as `\p{Nd}`, which resolves against the Unicode tables of
+whichever runtime evaluates it — and those version independently from CPython's:
+
+| runtime | Unicode | `Nd` code points |
+| --- | --- | --- |
+| CPython 3.10 | 13.0 | 650 |
+| node 20.20 / ICU 78 | 17.0 | 770 |
+
+So 120 code points — Kawi, Tangsa, Nag Mundari, Kirat Rai and nine other blocks
+— were digits to the browser and `ValueError` to `int()`. A Kawi ten
+(`U+11F51 U+11F50`) parsed as 10 in `Total Tracks` and generated a ten-track
+set, where the Tkinter tab shows "Invalid Input". Reachable through BOTH
+controls, and one-directional: every digit CPython knows, node also knows, so
+nothing was being wrongly refused. `format.js` now carries the 61-run CPython
+table and `tests/web/test_integer_parsing_matches_python.py` re-derives it from
+the RUNNING interpreter, in both directions — a Python upgrade fails and names
+the digits to add, and a node upgrade cannot reach the answer at all.
+
+*The residue, which is not closed.* A compiled-in table is one Unicode version,
+and it is pinned to the interpreter that runs the TESTS. That is not the
+interpreter the app is SHIPPED with: `test-macos.yml` sets up Python 3.10 and
+both macOS build workflows set up 3.11, whose `unicodedata` is 14.0 and which
+calls ten more code points decimal digits (Tangsa, U+16AC0..U+16AC9). Measured:
+3.10 → 650, 3.11 → 660, 3.13 → 680. A build on 3.11 therefore REFUSES in the
+browser ten digits its own `int()` accepts — the same divergence with the sign
+flipped, over ten code points instead of a hundred and twenty. It cannot be
+closed from the frontend, because the browser cannot ask the interpreter which
+Unicode version it was built against; aligning the two workflow versions and
+regenerating the table would close it. Pinned as the mismatch by
+`test_the_table_is_pinned_to_the_test_interpreter_not_the_build_one`, which
+fails the moment they are aligned.
+
+*The other limit, unchanged:* magnitude. Python's integers are unbounded and
+these arrive as a float64, so a value past `Number.MAX_SAFE_INTEGER` loses
+precision. `Number.parseInt` did too, and both are some fifteen orders of
+magnitude past `MAX_SET_TRACKS`.
+
 *A failed regeneration keeps the set that is already on screen.* This is
 Tkinter's behaviour and an earlier version of this destination diverged from it
 silently. `generate_set_ui` assigns the RESULT of `build()` to
