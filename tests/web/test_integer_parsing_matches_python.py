@@ -105,9 +105,23 @@ That second line is the whole design. A 3.10 run does not get a green suite and
 an allowance; it gets one named failure saying parity with the shipped
 interpreter was not proved here and naming the interpreter that proves it. An
 interpreter that cannot see the property does not get to certify it - which is
-also why there is no ``pytest.skip`` and no ``if os.environ["CI"]`` here. A
-skip exits zero, and an environment sniff is the same fail-open shape four
-successive readers of ``.github/workflows/`` were deleted for being.
+why a version mismatch FAILS here rather than skipping, and why there is no
+``if os.environ["CI"]`` anywhere in this file. A skip exits zero, and an
+environment sniff is the same fail-open shape four successive readers of
+``.github/workflows/`` were deleted for being.
+
+THREE ``pytest.skip`` CALLS DO REMAIN IN THIS FILE, counted rather than
+remembered, and they are named here rather than left for a reader to find: two
+in ``_require_node`` - one when ``node`` is not on ``PATH``, one when it is
+older than 18 - and one for a running minor this file has no measured
+``unicodedata`` row for. The last is about a map and is harmless. The first two
+are not: they gate the ship-blocking comparison itself. Measured, on 3.11 with
+``node`` off ``PATH``: 2 passed, 6 skipped, and the six include
+``test_the_helper_accepts_exactly_the_shipped_interpreters_digits``. So a run
+with no usable ``node`` exits zero having compared the parser with ``int()``
+not at all, and ``.github/workflows/test-macos.yml`` contains no ``setup-node``
+step - what makes this property checked on CI is the runner image happening to
+carry ``node``, which is not a thing this repository states anywhere.
 
 ``.github/workflows/test-macos.yml`` names 3.11, which is what the builds
 freeze, so every CI run makes that comparison in full. A developer on 3.10
@@ -672,8 +686,18 @@ def test_the_measured_unicode_versions_are_right_about_this_interpreter():
     A minor that is not in the map is skipped rather than failed: running the
     suite on an interpreter the project does not build or test on is a
     developer's business, not a defect. The skip is about THIS map having no
-    row to check, and it is the only skip in this test. Two others live in this
-    file, both about node being absent, and neither is about parity.
+    row to check, and it is the only skip in this TEST - not the only one in
+    this file. Two more live in ``_require_node``: one when ``node`` is not on
+    ``PATH``, one when it is present but older than 18.
+
+    Those two are not harmless the way this one is, and calling them "just node
+    availability" would be the softer half of the same lie. They gate the
+    ship-blocking comparison: measured on 3.11 with ``node`` off ``PATH``, this
+    file goes 2 passed, 6 skipped, and the six include
+    ``test_the_helper_accepts_exactly_the_shipped_interpreters_digits``. An
+    environment without ``node`` gets a zero exit code and no parity check at
+    all - which is precisely what the rest of this file refuses to let a skip
+    do, and the exception is recorded here rather than described away.
     """
     running = "%d.%d" % sys.version_info[:2]
     if running not in MEASURED_UNICODE_VERSION:
