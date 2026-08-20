@@ -1,0 +1,23 @@
+# Resolve the complete human-facing dependency declaration, then constrain its
+# direct dependencies to the versions exercised by the macOS Python 3.11 job.
+-r requirements.txt
+
+# Core/tested runtime dependencies (shared with the Python 3.11 CI baseline)
+numpy==2.2.6
+pandas==2.3.2
+pyarrow==21.0.0
+lxml==6.1.2
+pywebview==6.2.1
+typer==0.27.1
+
+# Build/audio/UI dependencies. These capture what the previously unpinned
+# build resolved on 2026-08-20 instead of speculating about older releases.
+soundfile==0.14.0
+essentia-tensorflow==2.1b6.dev1177
+Pillow==12.3.0
+pyobjc-framework-Cocoa==12.2.2
+pyinstaller==6.22.2
+
+# The lock is shared by build and test; the PyInstaller spec excludes pytest
+# from the app bundle explicitly.
+pytest==9.1.1

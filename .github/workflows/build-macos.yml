@@ -19,7 +19,7 @@ jobs:
       with:
         python-version: '3.11'
         cache: 'pip'
-        cache-dependency-path: requirements.txt
+        cache-dependency-path: requirements-macos-arm64-py311.lock
     
     - name: Cache Essentia model
       id: cache-model
@@ -30,9 +30,7 @@ jobs:
     
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install pyinstaller
+        python -m pip install --require-hashes -r requirements-macos-arm64-py311.lock
         python -c "import sys; print('Python:', sys.executable)"
     
     - name: Download Essentia model
@@ -66,4 +64,3 @@ jobs:
         name: Cosine-Companion-macOS
         path: Cosine-Companion-macOS.dmg
         retention-days: 90
-    

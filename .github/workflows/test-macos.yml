@@ -22,24 +22,39 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
+          cache-dependency-path: requirements-macos-arm64-py311.lock
 
-      # Deliberately WITHOUT essentia-tensorflow. Nothing under src/services/
-      # may need it at import time - see tests/test_services_are_lightweight.py.
-      # lxml is here because processing/xml_parser.py parses the Rekordbox XML
-      # that the indexing characterisation tests feed through the pipeline; it
-      # is a 4 MB parser, not the 483 MB TensorFlow stack.
-      # pywebview is the web backbone's one new runtime dependency. Only
-      # src/web/host.py imports it, and only tests/web/test_host_importable.py
-      # needs it installed; the API tests deliberately run without any GUI
-      # toolkit loaded - see tests/web/test_no_heavy_imports.py.
-      # typer is what src/cosine_companion.py is built on, and it is here so
-      # tests/services/test_playlist_concurrency.py can run the SHIPPED
-      # import-playlists command in a real subprocess while a PlaylistService
-      # reads the same directory. Reader and writer are different processes by
-      # design, so that is the case worth checking on CI rather than only on a
-      # developer's machine; without typer those three tests skip themselves.
-      - name: Install test dependencies
-        run: python -m pip install numpy==2.2.6 pandas==2.3.2 pyarrow==21.0.0 lxml==6.1.2 pytest==9.1.1 pywebview==6.2.1 typer==0.27.1
+      # Install the same complete, hashed environment as the app build. This
+      # deliberately includes the large Essentia wheel: dependency parity is
+      # the property this job protects.
+      - name: Install locked build and test dependencies
+        run: python -m pip install --require-hashes -r requirements-macos-arm64-py311.lock
 
       - name: Run tests
+        run: python -m pytest -q
+
+  dependency-canary:
+    # HEAD-of-PyPI incompatibilities should be visible without blocking work on
+    # the reproducible release set.
+    continue-on-error: true
+    timeout-minutes: 45
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install unpinned runtime dependencies
+        run: |
+          python -m pip install -r requirements.txt
+          python -m pip install pytest==9.1.1
+
+      - name: Run tests against current dependency releases
         run: python -m pytest -q
