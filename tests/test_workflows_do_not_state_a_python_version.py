@@ -153,10 +153,16 @@ VERSION_TOKEN = re.compile(r"^\d+(?:\.\d+)*$")
 # A full-length git commit SHA, which is the only ref that cannot move.
 COMMIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 
-# ``--python-version <token>`` anywhere in a shell block. uv reads this flag to
-# choose the interpreter it RESOLVES for, so a literal here does not fail
-# loudly -- it silently resolves the dependency set for the wrong Python.
-UV_PYTHON_VERSION_FLAG = re.compile(r"--python-version[=\s]+(\S+)")
+# The flag as PLAIN TEXT, matched with ``in``. It was a regex --
+# ``--python-version[=\s]+(\S+)`` -- which required a space or an ``=``
+# immediately after the flag name and therefore missed
+# ``"--python-version" 3.12``: the shell strips those quotes and uv receives
+# the literal, while the regex saw a ``"`` where it demanded a separator and
+# matched nothing at all. A substring cannot be dodged by re-quoting the flag,
+# because the characters are still there. See
+# :func:`uv_python_version_problems` for what is done with it and for what it
+# still cannot see.
+UV_PYTHON_VERSION_FLAG = "--python-version"
 
 
 # ---------------------------------------------------------------------------
@@ -657,6 +663,140 @@ def test_an_unrelated_action_is_not_setup_python():
 # ---------------------------------------------------------------------------
 
 
+def _shell_words(run):
+    """``run`` split on whitespace, each word stripped of surrounding quotes.
+
+    This is NOT a shell parser and must never become one. It does not know
+    about expansion, comments, escapes, line continuations, heredocs or word
+    splitting; it splits on whitespace and removes leading and trailing ``'``
+    and ``"`` characters from each piece. Four rounds of this PR family died
+    trying to work out what a construct would MEAN at runtime. This decides
+    nothing about meaning: it reports which characters sit next to which.
+    """
+    return [word.strip("'\"") for word in run.split()]
+
+
+def literal_python_versions_passed_to_uv(run):
+    """Every bare version literal sitting where uv reads ``--python-version``.
+
+    Both spellings: ``--python-version 3.12`` (the value is the next word) and
+    ``--python-version=3.12`` (the value is glued on). Quoting either the flag
+    or the value changes nothing, because the quotes come off first -- which
+    is the whole repair, since ``"--python-version" 3.12`` is exactly the shape
+    that walked past the previous regex.
+
+    A word that is not a bare version token is not judged. ``"$PYTHON_VERSION"``
+    strips to ``$PYTHON_VERSION``, which :data:`VERSION_TOKEN` does not match,
+    so it is left alone -- this function never tries to work out what a
+    variable holds.
+    """
+    literals = []
+    words = _shell_words(run)
+
+    for index, word in enumerate(words):
+        flag, glued, value = word.partition("=")
+        if flag != UV_PYTHON_VERSION_FLAG:
+            continue
+
+        if not glued:
+            value = words[index + 1] if index + 1 < len(words) else ""
+
+        value = value.strip("'\"")
+        if VERSION_TOKEN.match(value):
+            literals.append(value)
+
+    return literals
+
+
+def uv_python_version_problems(where, run):
+    """Every way one ``run:`` block can hand uv a version that is not the file's.
+
+    Returns a list of problem descriptions; empty means this block is clean.
+
+    THE STRUCTURAL BACKSTOP FOR THIS ASSERTION DOES NOT EXIST -- MEASURED
+    --------------------------------------------------------------------
+    The strongest argument for deleting this check is that ``test-macos.yml``
+    already recompiles the lock and runs ``git diff --exit-code``, so a wrong
+    ``--python-version`` would resolve a different dependency set and the
+    committed lock would stop matching -- a real recompile catching it with no
+    text matching anywhere. That argument was measured on 2026-08-20 rather
+    than believed. The job's own command was run with the flag set to 3.12,
+    output to a temporary path, and the committed lock never used as a target:
+
+        MACOSX_DEPLOYMENT_TARGET=15.2 uv pip compile --python-version 3.12 \
+          --python-platform aarch64-apple-darwin --prerelease explicit \
+          --exclude-newer 2026-08-20 --build-constraint build-constraints.txt \
+          --generate-hashes requirements-macos-arm64-py311.in -o <temp>
+
+    The result was BYTE-IDENTICAL to the committed lock. Both are sha256
+    5845ce4030f7a487ea8fb00d15a245d27703d59f70f1fdfe878e7fd316213278. The
+    resolved body does not depend on the flag at all for this dependency set;
+    only the header comment does, and only because
+    ``--custom-compile-command`` echoes the value verbatim. So the mutation
+    that matters -- the ACTING flag becomes a literal while
+    ``--custom-compile-command`` still expands ``$PYTHON_VERSION`` -- produces
+    a lock the drift gate accepts, ``git diff --exit-code`` exits 0, and CI is
+    green with the dependency set resolved for the wrong interpreter.
+
+    That invariance is an accident of today's dependency set, not a property
+    of the design: it holds because nothing currently resolved carries a
+    marker that flips between 3.11 and 3.12. One dependency gaining one would
+    change it, in either direction, without a commit here. A backstop that
+    happens to be inert today is not a backstop, so this check stays.
+
+    WHAT IT STILL CANNOT SEE -- here, next to the claim
+    ---------------------------------------------------
+    * The flag spelled so the characters ``--python-version`` never appear:
+      ``F=--python; uv pip compile ${F}-version 3.12``. Neither check below
+      triggers, because neither is looking for a concept -- both are looking
+      for that literal run of characters.
+    * A value that arrives from outside this block: a job-level or
+      workflow-level ``env:``, a ``$GITHUB_ENV`` write in an earlier step, or
+      an input to a reusable workflow. The word here is ``"$SOMETHING"``,
+      which is not a version token, and the block may well mention
+      ``.python-version`` for an unrelated reason and satisfy the second
+      check too.
+    * A value glued together by the shell -- ``--python-version 3"."12`` --
+      strips to ``3"."12``, which is not a version token.
+    * Any OTHER flag that selects a resolution target: ``uv pip compile -p``
+      / ``--python``, the ``UV_PYTHON`` environment variable,
+      ``requires-python`` in pyproject.toml. Only this one flag is read.
+      Adding the others is not obviously wrong, but ``--python`` is a prefix
+      of both ``--python-version`` and ``--python-platform``, so it cannot be
+      matched as a substring without firing on the correct line, and that is
+      the false positive that gets a check deleted.
+    """
+    problems = []
+
+    if UV_PYTHON_VERSION_FLAG not in run:
+        return problems
+
+    literals = literal_python_versions_passed_to_uv(run)
+    if literals:
+        problems.append(
+            f"{where} passes a literal Python version to "
+            f"{UV_PYTHON_VERSION_FLAG}: "
+            + ", ".join(repr(v) for v in literals)
+            + f". uv resolves the dependency set FOR that version, so a "
+            "literal here is a second source of truth that never announces "
+            "itself -- and the lock-drift gate does not catch it either (the "
+            "recompile at 3.12 is byte-identical today; see this function's "
+            f"docstring). Read {VERSION_FILE_NAME} in the shell and pass the "
+            "result instead."
+        )
+
+    if VERSION_FILE_NAME not in run:
+        problems.append(
+            f"{where} uses {UV_PYTHON_VERSION_FLAG} but never mentions "
+            f"{VERSION_FILE_NAME}, so whatever it passes is not derived from "
+            "the one file that states the version. Set it from "
+            f'\'PYTHON_VERSION="$(cat {VERSION_FILE_NAME})"\' in the same '
+            "block."
+        )
+
+    return problems
+
+
 @pytest.mark.parametrize("workflow", workflow_files(), ids=lambda p: p.name)
 def test_no_run_block_passes_a_literal_python_version(workflow):
     """``uv pip compile --python-version`` chooses the interpreter uv resolves
@@ -670,6 +810,7 @@ def test_no_run_block_passes_a_literal_python_version(workflow):
     generated lock stays byte-identical.
     """
     document = _parse(workflow)
+    problems = []
 
     for job_name, job in _jobs_of(workflow.name, document):
         for index, step in _steps_of(workflow.name, job_name, job):
@@ -678,24 +819,107 @@ def test_no_run_block_passes_a_literal_python_version(workflow):
                 continue
 
             where = _where(workflow.name, job_name, index, step)
-            literals = [
-                value
-                for value in UV_PYTHON_VERSION_FLAG.findall(run)
-                if VERSION_TOKEN.match(value.strip("'\""))
-            ]
-            assert not literals, (
-                f"{where} passes a literal Python version to "
-                "--python-version: " + ", ".join(repr(v) for v in literals)
-                + f". Read {VERSION_FILE_NAME} in the shell instead, so the "
-                "flag cannot disagree with the interpreter the job installed."
-            )
+            problems.extend(uv_python_version_problems(where, run))
 
-            if UV_PYTHON_VERSION_FLAG.search(run):
-                assert VERSION_FILE_NAME in run, (
-                    f"{where} uses --python-version but never mentions "
-                    f"{VERSION_FILE_NAME}, so whatever it passes is not "
-                    "derived from the one file that states the version."
-                )
+    assert not problems, "\n".join(problems)
+
+
+# The branches of assertion 4, driven through the real functions.
+#
+# test-macos.yml is written correctly, so on this repository
+# :func:`uv_python_version_problems` only ever walks its happy path. Every
+# reporting branch below was unreachable from the real workflows, and the
+# quoting shape in the parametrised test walked straight past the regex that
+# used to live here.
+
+_DERIVED_RUN = (
+    'PYTHON_VERSION="$(cat .python-version)"\n'
+    'uv pip compile --python-version "$PYTHON_VERSION" reqs.in -o reqs.lock\n'
+)
+
+
+def test_the_shape_test_macos_actually_uses_is_accepted():
+    """Not a check that rejects everything: the real derived spelling passes."""
+    assert uv_python_version_problems("w::j step 0", _DERIVED_RUN) == []
+
+
+def test_a_run_block_that_never_mentions_the_flag_is_left_alone():
+    assert uv_python_version_problems("w::j step 0", "python -m pytest -q") == []
+
+
+@pytest.mark.parametrize(
+    "fragment",
+    [
+        "--python-version 3.12",
+        '--python-version "3.12"',
+        "--python-version '3.12'",
+        '"--python-version" 3.12',          # the reviewer's mutation
+        "'--python-version' 3.12",
+        '"--python-version" "3.12"',
+        "--python-version=3.12",
+        '"--python-version=3.12"',
+        '--python-version\t3.12',
+        "--python-version  3.12",
+    ],
+    ids=lambda f: f.replace(" ", "_"),
+)
+def test_a_literal_is_found_however_the_shell_quotes_it(fragment):
+    """The repair for the third green mutant.
+
+    The previous regex demanded a space or ``=`` immediately after the flag
+    name, so a quote character there hid the literal completely. Quotes come
+    off the words first now, which costs no understanding of the shell: the
+    literal is either the next word or glued on with ``=``.
+    """
+    assert literal_python_versions_passed_to_uv(
+        f"uv pip compile {fragment} reqs.in"
+    ) == ["3.12"]
+
+
+def test_the_quoted_flag_mutation_is_reported_and_names_the_literal():
+    run = 'PYTHON_VERSION="$(cat .python-version)"\nuv pip compile "--python-version" 3.12 reqs.in'
+    problems = uv_python_version_problems("w::j step 0", run)
+
+    assert len(problems) == 1, problems
+    assert "'3.12'" in problems[0]
+
+
+def test_a_flag_that_never_references_the_version_file_is_reported():
+    problems = uv_python_version_problems(
+        "w::j step 0", 'uv pip compile --python-version "$SOMETHING" reqs.in'
+    )
+
+    assert len(problems) == 1, problems
+    assert VERSION_FILE_NAME in problems[0]
+
+
+def test_a_variable_is_never_resolved_to_a_literal():
+    """This function does not try to work out what a variable holds, and this
+    pins that it does not start: ``$PYTHON_VERSION`` is not a version token."""
+    assert literal_python_versions_passed_to_uv(_DERIVED_RUN) == []
+
+
+# The two shapes below are PINNED AS MISSES, not fixed. They are the first two
+# entries of the blind-spot list in :func:`uv_python_version_problems`, kept
+# here as executable statements so the prose cannot quietly drift from the
+# code. If a later change makes either visible, the test reddens and whoever
+# made the change corrects that list in the same commit.
+
+
+def test_a_flag_assembled_from_fragments_is_not_seen():
+    run = "F=--python\nuv pip compile ${F}-version 3.12 reqs.in"
+
+    assert uv_python_version_problems("w::j step 0", run) == []
+
+
+def test_a_value_arriving_from_outside_the_block_is_not_seen():
+    run = (
+        'echo "resolving for $PYTHON_VERSION"  # a job-level env: sets this,\n'
+        "# and nothing here compares it against .python-version\n"
+        'uv pip compile --python-version "$PYTHON_VERSION" reqs.in'
+    )
+
+    assert uv_python_version_problems("w::j step 0", run) == []
 
 
 # ---------------------------------------------------------------------------
