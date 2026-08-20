@@ -2032,7 +2032,15 @@ shipped interpreter, in membership or in value" is checked against the RUNNING
 interpreter — exactly, over every code point there is, in both directions and
 with the values
 (`tests/web/test_integer_parsing_matches_python.py::test_the_helper_accepts_exactly_the_shipped_interpreters_digits`).
-That check runs on every CI run.
+
+That check is not unconditional, and saying "it runs on every CI run" would be
+the comfortable version. It drives the real `format.js` through a `node`
+script, and its file SKIPS rather than fails when `node` is missing or older
+than 18 — measured, on 3.11 with `node` off `PATH`: 2 passed, 6 skipped, and
+this check is one of the six. `.github/workflows/test-macos.yml` sets up Python
+and has no `setup-node` step, so what makes the ship-blocking comparison
+actually happen on CI is the macOS runner image carrying `node` — which is true
+today and is stated by nothing in this repository.
 
 *And what is NOT pinned, stated plainly.* That the interpreter the app is BUILT
 on is the one the tests run on is **not** verified — not by that test, and not
@@ -2043,11 +2051,36 @@ answered confidently and wrongly four times, most recently on a `setup-python`
 step taking its version from `python-version-file:` while an unrelated step
 carried a literal `python-version`, and each round's fix taught it one more
 GitHub Actions shape without converging. It was deleted outright rather than
-skipped, because a skip exits zero and reads exactly like a pass. The uncovered
-case is exact: changing `build-macos.yml`'s Python without changing
+skipped, because a skip exits zero and reads exactly like a pass. The case that
+MOTIVATED the removal: changing `build-macos.yml`'s Python without changing
 `test-macos.yml`'s would leave the table proved for an interpreter the app no
 longer ships on, with nothing to report it. Today both name 3.11, so every CI
 run does prove the table correct for the shipped interpreter.
+
+*That was not the whole cost, and an earlier draft of this section implied it
+was.* The deleted test —
+`test_every_workflow_names_exactly_one_python_this_file_can_resolve` — enforced
+five further properties, and nothing in this repository enforces any of them
+now:
+
+1. `.github/workflows/test-macos.yml` exists and names exactly one resolvable
+   Python. Renaming it was a failure; it is now silence.
+2. At least one `build-*` workflow exists at all.
+3. No workflow the shipped-interpreter answer depends on names several
+   different Pythons.
+4. Every `python-version` anywhere under `.github/workflows/` resolves to a
+   literal CPython version — not a matrix expression, not an `env` lookup, and
+   not an unquoted `3.10`, which YAML reads as the float `3.1`.
+5. Every `.yml`/`.yaml` in that directory parses as YAML at all.
+
+Reproduced rather than recalled: with the deleted test restored beside the
+current one in a copy of the tree, each of those five mutations turns it red
+and the clean tree passes before and after each, which is what proves the
+mutation applied. All five at once leave the surviving parity file at exactly
+its unmutated result — 8 passed on 3.11 — because nothing in it opens
+`.github/workflows/` at all. So malformed YAML in a workflow, a renamed test
+workflow, or a build naming two interpreters are now things this suite goes
+green over.
 
 There is no allowance for running the suite on an older interpreter, and the
 absence is the design rather than an omission. One lived there for two rounds
