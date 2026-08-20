@@ -130,11 +130,14 @@ SETUP_PYTHON_SHA = "a26af69be951a213d495a4c3e4e4022e16d87065"
 
 # Inputs that state a version inline. setup-python takes ``python-version``;
 # the other spellings never reach it, but a step carrying one is a shape this
-# guard does not understand, so it fails rather than guessing.
+# guard does not understand, so it fails rather than guessing. Compared through
+# :func:`runner_input_name`, which is what makes each entry stand for every
+# casing of itself -- and which keeps these three DISTINCT, because the runner
+# folds case and spaces and nothing else.
 INLINE_VERSION_KEYS = ("python-version", "python_version", "pythonVersion")
 
-# The input a setup-python step here configures the version with. Named so the
-# two checks below and the tests that drive them compare the same literal.
+# The one input a setup-python step here is allowed to configure the version
+# with. Also compared through :func:`runner_input_name`.
 VERSION_FILE_INPUT = "python-version-file"
 
 # Deliberately permissive about *form* (3.11, 3.11.9, 3.13) and strict about
@@ -293,6 +296,87 @@ def _where(name, job_name, index, step):
     return f"{name}::{job_name} step {index} ({step.get('name', 'unnamed')})"
 
 
+# ---------------------------------------------------------------------------
+# Comparing a name the way the thing that consumes it compares it.
+# ---------------------------------------------------------------------------
+#
+# Every comparison in this file is against a fixed ASCII literal, so the only
+# question a comparison can get wrong is WHICH SPELLINGS THE CONSUMER TREATS AS
+# EQUAL TO THAT LITERAL. Python's ``==`` and ``in`` are case sensitive. Neither
+# of the two consumers below is, and this file shipped a green mutant for each:
+# ``Python-Version: "3.12"`` added to a correct setup-python step left the whole
+# guard at 79 passed, and a second step spelled ``uses: Actions/Setup-Python``
+# is not a setup-python step to any check here.
+#
+# These are the two fixes of the species that has worked twice on this file --
+# make the comparison equivalent to the real consumer's -- as opposed to
+# enumerating another spelling, which has failed six times.
+
+
+def runner_input_name(key):
+    """The single input name a ``with:`` key reaches the action under.
+
+    THE MIRRORED NORMALISATION IS ``replace(' ', '_')`` THEN UPPERCASE, and it
+    is read off both ends of the wire rather than guessed:
+
+    * actions/runner ``src/Runner.Worker/Handlers/Handler.cs`` L185 writes each
+      step input into the action's environment as
+      ``$"INPUT_{pair.Key?.Replace(' ', '_').ToUpperInvariant()}"``;
+    * the ``getInput`` BUNDLED INTO THE PINNED ACTION ITSELF --
+      ``dist/setup/index.js`` at :data:`SETUP_PYTHON_SHA`, L6034 -- reads
+      ``process.env[`INPUT_${name.replace(/ /g, '_').toUpperCase()}`]``;
+    * actions/runner's ``src/Sdk/WorkflowParser/workflow-v1.0.json`` says the
+      same thing in prose on the ``step-with`` definition -- "The variable
+      created converts input names to uppercase letters and replaces spaces
+      with ``_``".
+
+    Two earlier stages agree with it and are subsumed by it: the runner stores
+    step inputs in a ``Dictionary<String, String>(StringComparer.
+    OrdinalIgnoreCase)`` (``WorkflowTemplateConverter.ConvertToStepInputs``,
+    L805) and checks input names against the action manifest through
+    ``HashSet<string>(StringComparer.OrdinalIgnoreCase)`` (``ActionRunner.cs``
+    L187 and L198) -- so a cased spelling is a VALID declared input of
+    setup-python and does not even draw the "Unexpected input(s)" warning.
+
+    That is the whole rule. There is NO trimming, so a padded key stays a
+    different input; no other separator is folded, so ``python_version`` and
+    ``python-version`` stay two inputs -- which is why
+    :data:`INLINE_VERSION_KEYS` still lists both and still fails rather than
+    guessing about either.
+
+    Python's ``str.upper`` is Unicode FULL case mapping and
+    ``ToUpperInvariant`` is the simple one; where the two differ Python folds
+    MORE spellings together, never fewer. Against an ASCII literal that can
+    only over-report, which is the direction this file errs in everywhere else.
+    """
+    return key.replace(" ", "_").upper()
+
+
+def github_action_path(action_path):
+    """An ``owner/repo[/subpath]`` reference, folded the way GitHub resolves it.
+
+    MEASURED, not read, because this resolution is GitHub's rather than the
+    runner's: on 2026-08-21 ``gh api repos/Actions/Setup-Python`` and
+    ``gh api repos/ACTIONS/SETUP-PYTHON`` both answered
+    ``"full_name": "actions/setup-python"``. So ``uses: Actions/Setup-Python@``
+    runs this action, and a segment comparison that is case sensitive does not
+    see it: a SECOND step spelled that way, carrying an inline version, is not
+    a setup-python step to assertions 2 or 3, while assertion 1 stays satisfied
+    by the correctly spelled first one.
+
+    ``str.lower`` rather than :func:`runner_input_name`, because this is a
+    different consumer with a different rule -- there are no spaces in a
+    repository name and no uppercase in the literals compared against. GitHub
+    draws owner and repository names from ASCII, so nothing here turns on
+    Python's Unicode case mapping.
+
+    The ``@ref`` is deliberately NOT folded. Assertion 3 compares it to one
+    reviewed commit for equality, so an unexpected casing reddens; folding it
+    would only widen what passes.
+    """
+    return action_path.lower()
+
+
 def _uses_ref(where, step):
     """``(action_path, ref)`` from ``uses``, or ``None`` for a run step."""
     if "uses" not in step:
@@ -322,12 +406,17 @@ def _is_setup_python(where, resolved):
     directory's own action.yml, which this guard has never read. Under the
     prefix comparison it was accepted as the real thing for four rounds and the
     whole suite stayed green.
+
+    Both comparisons are made on :func:`github_action_path`, so they are as
+    case blind as GitHub's own repository lookup. Case sensitively,
+    ``Actions/Setup-Python`` was neither the action nor a look-alike worth
+    failing on -- it fell out of both branches and returned False.
     """
     if resolved is None:
         return False
 
     action_path, _ref = resolved
-    segments = tuple(action_path.split("/"))
+    segments = tuple(github_action_path(action_path).split("/"))
     if segments[:2] == SETUP_PYTHON:
         assert len(segments) == 2, (
             f"{where} uses {action_path!r}, a sub-path under the "
@@ -347,18 +436,55 @@ def _is_setup_python(where, resolved):
 
 
 def step_inputs(where, step):
-    """One step's ``with:`` inputs, or fail naming the step.
+    """``{input name: (key as written, value)}`` for one step's ``with:``.
 
-    Split out so the two checks below take the inputs as an ARGUMENT and are
-    therefore reachable with a step this repository does not have; the reason
-    that matters is on :func:`inline_version_inputs`.
+    Keyed by :func:`runner_input_name`, so every lookup made on the result asks
+    the question the action asks rather than the question Python's ``in`` asks.
+
+    A COLLISION FAILS rather than resolving to one of the two, and both kinds
+    of collision are real:
+
+    * two keys differing only in case never run at all -- the template reader
+      gathers mapping keys into ``HashSet<String>(StringComparer.
+      OrdinalIgnoreCase)`` and reports ``ValueAlreadyDefined``
+      (actions/runner ``TemplateReader.cs``, both ``HandleMappingWith*``
+      paths), so the workflow is rejected before a job starts;
+    * two keys differing by a space against an underscore are NOT duplicates
+      to that reader and DO collide at ``Handler.cs`` L185, where the input
+      the dictionary happens to yield last is the one the action sees. Which
+      one that is, this file will not guess.
+
+    A NON-STRING KEY FAILS for the same reason. The runner stringifies one
+    (``TemplateReader`` rebuilds a non-string scalar key with
+    ``nextKeyScalar.ToString()``), but .NET and PyYAML do not agree on what
+    ``on:`` or ``3.11:`` becomes, and a guess here is a guess about which input
+    the action received.
     """
     with_block = step.get("with")
     assert isinstance(with_block, dict), (
         f"{where} has no 'with:' mapping, so it cannot be pointing at "
         f"{VERSION_FILE_NAME}"
     )
-    return with_block
+
+    inputs = {}
+    for key, value in with_block.items():
+        assert isinstance(key, str), (
+            f"{where} has a non-string 'with:' key ({key!r}); this guard "
+            "compares input names as text and cannot say what the runner "
+            "would call this one, so it fails rather than passing over it"
+        )
+
+        name = runner_input_name(key)
+        assert name not in inputs, (
+            f"{where} writes both {inputs[name][0]!r} and {key!r} in one "
+            f"'with:' block. They are the single input {name!r} to the "
+            "runner, so at most one of the two values reaches the action and "
+            "this guard will not guess which. Delete the one that is not "
+            "intended."
+        )
+        inputs[name] = (key, value)
+
+    return inputs
 
 
 def inline_version_inputs(where, inputs):
@@ -371,14 +497,17 @@ def inline_version_inputs(where, inputs):
     assertion with the tautology ``assert stated is not None`` left this guard
     at 79 passed, sha256 617261a1 -> 4ccad9a8, measured 2026-08-21.
     """
-    stated = [(key, inputs[key]) for key in INLINE_VERSION_KEYS if key in inputs]
+    wanted = [runner_input_name(key) for key in INLINE_VERSION_KEYS]
+    stated = [inputs[name] for name in wanted if name in inputs]
 
     assert not stated, (
         f"{where} states a Python version inline: "
         + ", ".join(f"{key}: {value!r}" for key, value in stated)
         + f". Every workflow must read {VERSION_FILE_NAME} instead, so "
         "that no two setup-python steps can disagree about the "
-        "interpreter they install."
+        "interpreter they install. Spelling the key differently does not "
+        "help: the runner folds case and spaces before the action reads it, "
+        "so 'Python-Version' and 'python-version' are one input."
     )
     return stated
 
@@ -390,13 +519,15 @@ def version_file_input(where, inputs):
     :func:`inline_version_inputs`; both rejecting branches here were reachable
     only through the real workflows, which are correct.
     """
-    assert VERSION_FILE_INPUT in inputs, (
+    name = runner_input_name(VERSION_FILE_INPUT)
+
+    assert name in inputs, (
         f"{where} does not set {VERSION_FILE_INPUT}. Omitting it makes "
         "setup-python fall back to the runner's default Python with only "
         "a warning, which is the original defect arriving quietly."
     )
 
-    target = inputs[VERSION_FILE_INPUT]
+    _key, target = inputs[name]
     assert isinstance(target, str) and target.strip() == VERSION_FILE_NAME, (
         f"{where} points {VERSION_FILE_INPUT} at {target!r}; it must be "
         f"exactly {VERSION_FILE_NAME}, or there is more than one file "
@@ -752,6 +883,26 @@ def test_an_unrelated_action_is_not_setup_python():
     assert _is_setup_python("w::j step 0", None) is False
 
 
+def test_a_cased_action_reference_is_the_same_action():
+    """GitHub resolves the repository case blind -- MEASURED against the API,
+    see :func:`github_action_path`.
+
+    Case sensitively, ``Actions/Setup-Python`` fell out of both branches and
+    returned False: not the action, and not a look-alike worth failing on. So a
+    SECOND step spelled that way, carrying an inline version beside a correctly
+    spelled first step, was checked by nothing -- assertion 1 was satisfied by
+    the first step and assertions 2 and 3 never saw the second.
+    """
+    assert _is_setup_python("w::j step 0", ("Actions/Setup-Python", "0" * 40)) is True
+    assert _is_setup_python("w::j step 0", ("ACTIONS/SETUP-PYTHON", "0" * 40)) is True
+
+    with pytest.raises(AssertionError, match="sub-path"):
+        _is_setup_python("w::j step 0", ("Actions/Setup-Python/Sub", "0" * 40))
+
+    with pytest.raises(AssertionError, match="looks like setup-python"):
+        _is_setup_python("w::j step 0", ("Someone-Else/Setup-Python", "0" * 40))
+
+
 # Every branch of assertions 2 and 3 that this repository does not exercise.
 # Its own setup-python steps are correct, so both comparisons were reachable
 # only through the real workflows: replacing the inline-version rejection with
@@ -760,13 +911,99 @@ def test_an_unrelated_action_is_not_setup_python():
 
 _WHERE = "w.yml::j step 0"
 
+# Spellings the runner delivers as one of INLINE_VERSION_KEYS and Python's
+# ``in`` did not. Rows, not a rule: the rule is :func:`runner_input_name`, and
+# each row is checked below to be a consequence of it rather than a new case.
+CASED_INLINE_VERSION_KEYS = [
+    "Python-Version",
+    "PYTHON-VERSION",
+    "pYtHoN-vErSiOn",
+    "Python_Version",
+    "python version",
+    "PythonVersion",
+]
+
+
+@pytest.mark.parametrize("key", CASED_INLINE_VERSION_KEYS)
+def test_a_cased_inline_version_input_is_refused(key):
+    """The reviewer's green mutant, driven through the real comparison.
+
+    ``Python-Version: "3.12"`` added to build-macos.yml's correct
+    setup-python step left all 79 tests passing (sha256 e65d779e -> 3f0422c4,
+    the parsed step genuinely carrying both that and python-version-file).
+    setup-python reads ``python-version`` FIRST and gives it precedence over
+    ``python-version-file`` -- ``resolveVersionInput`` at
+    :data:`SETUP_PYTHON_SHA` warns and uses ``python-version`` when both are
+    supplied -- so the build resolved 3.12 while this guard certified 3.11.
+
+    Each row is checked to BE the thing it is here for before it is used,
+    because a row refused for an unrelated reason passes this test while
+    pinning nothing: it must NOT be one of :data:`INLINE_VERSION_KEYS`
+    verbatim, or the comparison this replaced already refused it; and it must
+    normalise to one of them, or refusing it is this guard inventing a rule
+    instead of mirroring one. Those two together are exactly "green before,
+    red now".
+    """
+    refused = {runner_input_name(k) for k in INLINE_VERSION_KEYS}
+
+    assert key not in INLINE_VERSION_KEYS, (
+        f"{key!r} is in INLINE_VERSION_KEYS verbatim, so the case-sensitive "
+        "``in`` this replaced refused it too and the row pins nothing"
+    )
+    assert runner_input_name(key) in refused, (
+        f"{key!r} does not reach the action as any of {INLINE_VERSION_KEYS}, "
+        "so refusing it would be a rule this guard invented rather than one it "
+        "mirrors"
+    )
+
+    step = {"with": {key: "3.12", VERSION_FILE_INPUT: VERSION_FILE_NAME}}
+
+    with pytest.raises(AssertionError, match="states a Python version inline"):
+        inline_version_inputs(_WHERE, step_inputs(_WHERE, step))
+
 
 @pytest.mark.parametrize("key", INLINE_VERSION_KEYS)
 def test_each_inline_version_spelling_is_refused(key):
-    """Driven with a constructed step, because every step in this repository
-    is correct and the comparison is never reached with anything else."""
+    """The plain spellings, so the parametrised rows above are measured against
+    a comparison that is doing something."""
     with pytest.raises(AssertionError, match="states a Python version inline"):
         inline_version_inputs(_WHERE, step_inputs(_WHERE, {"with": {key: "3.12"}}))
+
+
+def test_a_cased_version_file_input_still_points_at_the_version_file():
+    """The mirror image, and the half that keeps the fold honest: folding must
+    not only ADD failures.
+
+    ``Python-Version-File`` reaches setup-python as python-version-file, so a
+    step spelled that way IS configured from the file and must pass. Under the
+    case-sensitive lookup it failed as "does not set python-version-file" -- a
+    guard crying wolf at a workflow that works, which is the mechanism that
+    gets a guard weakened or deleted.
+    """
+    step = {"with": {"Python-Version-File": VERSION_FILE_NAME}}
+
+    assert version_file_input(_WHERE, step_inputs(_WHERE, step)) == VERSION_FILE_NAME
+
+
+def test_two_with_keys_that_are_one_input_to_the_runner_are_reported():
+    """Both kinds of collision, and neither is a document to read a version
+    out of: the case-only pair never runs at all (the template reader rejects
+    the duplicate case blind), and the space-against-underscore pair DOES run,
+    with one of the two values discarded at ``Handler.cs`` L185."""
+    with pytest.raises(AssertionError, match="single input"):
+        step_inputs(_WHERE, {"with": {VERSION_FILE_INPUT: VERSION_FILE_NAME,
+                                      "PYTHON-VERSION-FILE": "/etc/elsewhere"}})
+
+    with pytest.raises(AssertionError, match="single input"):
+        step_inputs(_WHERE, {"with": {"python_version": "3.11",
+                                      "python version": "3.12"}})
+
+
+def test_a_non_string_with_key_is_reported():
+    """PyYAML resolves a bare ``on:`` key to ``True``; the runner would call it
+    "true". Rather than model that disagreement, this fails."""
+    with pytest.raises(AssertionError, match="non-string 'with:' key"):
+        step_inputs(_WHERE, {"with": {True: "3.12"}})
 
 
 def test_a_step_with_no_with_block_is_reported():
