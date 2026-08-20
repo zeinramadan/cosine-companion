@@ -278,10 +278,11 @@ dependency that CI does not install, and a module-level import there breaks the 
 suite at collection time. Import it lazily, inside the function that needs it.
 
 Before opening a PR, verify in an environment that matches CI, not just your dev env.
-CI installs only `numpy pandas pyarrow lxml pytest` on **Python 3.10**:
+CI installs only `numpy pandas pyarrow lxml pytest`, on the interpreter named in
+`.python-version` (the single source of truth for it, currently **3.11**):
 
 ```bash
-# Must be a 3.10+ interpreter. On macOS, bare `python3` is often 3.9 and will fail
+# Must match .python-version. On macOS, bare `python3` is often 3.9 and will fail
 # at collection with: TypeError: unsupported operand type(s) for |: 'type' and 'NoneType'
 conda run -n dj-companion python -m venv /tmp/ci-check
 /tmp/ci-check/bin/pip install numpy pandas pyarrow lxml "pytest>=7.0"
