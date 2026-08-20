@@ -66,11 +66,25 @@ of them states -- which is the defect described next, and is the one thing
 here that is actually mechanised. They can still disagree about a version
 either of them states in ``run:`` text; see KNOWN BLIND SPOTS.
 
-For months CI tested 3.10 while ``.github/workflows/build-*.yml`` froze the
-app on 3.11. Nothing detected it. It surfaced only because a compiled-in
-Unicode digit table generated from the *test* interpreter disagreed with the
-*shipped* one. Both are 3.11 today, so that bug is dormant -- but nothing
-prevented it, because each workflow independently stated its own version.
+The defect this exists to prevent is measured, not remembered, and the
+measurement is sharper than the "for months" framing this paragraph used to
+carry. ``build-macos.yml`` has stated 3.11 since 2025-10-05. There was no
+test workflow at all until 2026-08-18, when ``test-macos.yml`` was created
+stating 3.10 (47d8152) -- the day this repository got its first tests. It was
+corrected to 3.11 two days later (8c1c0be). So CI and the build disagreed for
+TWO DAYS, and that is the stronger fact rather than the weaker one: the
+divergence arrived in the same commit as the CI that was supposed to notice
+it, and nothing noticed. It surfaced only because a compiled-in Unicode digit
+table generated from the *test* interpreter disagreed with the *shipped* one.
+
+``environment.yml`` is where the same defect ran long. It has pinned
+``python=3.10`` since 2026-01-02 (ab5be5b) while the app shipped 3.11 that
+entire time -- seven and a half months in which a contributor's conda
+environment was a different interpreter from the one anything was verified
+on, and nothing compared the two. This PR is the commit that changes it.
+
+All three planes agree today, so both bugs are dormant -- but nothing
+prevented either, because every file independently stated its own version.
 
 Four earlier rounds tried to *detect* divergence by working out which Python
 each workflow uses. Every one shipped a confident wrong answer on a
@@ -1418,9 +1432,12 @@ def conda_python_pin(expected, entries):
 def test_the_conda_environment_pins_the_same_python():
     """``environment.yml`` builds the interpreter contributors actually run.
 
-    It pinned 3.10 while the app shipped and CI tested 3.11 -- the same defect
-    as the original, relocated to the local-development plane, and the reason
-    a contributor's own machine could redden a test that is green in CI.
+    It has pinned 3.10 since 2026-01-02 (ab5be5b) while the app shipped 3.11
+    the whole time -- seven and a half months, against the two days CI and the
+    build disagreed. Same defect as the original, relocated to the
+    local-development plane, running far longer because no plane compared
+    them, and the reason a contributor's own machine could redden a test that
+    is green in CI.
     """
     stated = stated_version_text().strip()
 

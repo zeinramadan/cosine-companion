@@ -21,9 +21,10 @@ dependencies:
   # this cannot drift without reddening the suite; an UNCHECKED second
   # statement of the version is what is ruled out, not a second statement.
   #
-  # This pinned 3.10 while CI tested and the app shipped 3.11, so a
-  # contributor's conda environment was a different interpreter from the one
-  # anything was verified on. Nothing compared them then.
+  # This pinned 3.10 from 2026-01-02 (ab5be5b) while build-macos.yml shipped
+  # the app on 3.11, which it has stated since 2025-10-05. Seven and a half
+  # months in which a contributor's conda environment was a different
+  # interpreter from the one anything was verified on. Nothing compared them.
   #
   # The guard accepts exactly one spelling -- `python=<version>`, here at the
   # top level, no channel prefix and no build string -- and rejects every
