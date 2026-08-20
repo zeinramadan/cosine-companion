@@ -30,6 +30,9 @@ jobs:
       - name: Install locked build and test dependencies
         run: python -m pip install --require-hashes -r requirements-macos-arm64-py311.lock
 
+      - name: Verify build dependency imports
+        run: python -c "import build_app; assert build_app.check_dependencies()"
+
       - name: Run tests
         run: python -m pytest -q
 
@@ -55,6 +58,9 @@ jobs:
         run: |
           python -m pip install -r requirements.txt
           python -m pip install pytest==9.1.1
+
+      - name: Verify current build dependency imports
+        run: python -c "import build_app; assert build_app.check_dependencies()"
 
       - name: Run tests against current dependency releases
         run: python -m pytest -q
