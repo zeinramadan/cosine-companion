@@ -511,3 +511,58 @@ def test_the_table_is_pinned_to_the_test_interpreter_not_the_build_one():
         "this test records has changed shape; re-measure it."
     )
     assert build_versions != ["3.10"], "unreachable while the assertion above holds"
+
+
+def test_no_digit_this_runtime_knows_sits_just_below_a_run_the_helper_accepts(
+    digit_survey,
+):
+    """THE PREMISE THAT MADE THE OLD WALK-BACK SAFE, pinned so its expiry shows.
+
+    ``decimalValue`` used to find the start of a digit's run by walking back
+    over the RUNTIME's ``\\p{Nd}``; it now finds it in ``PYTHON_DECIMAL_RUNS``.
+    That change cannot be caught by any behavioural test on this node, and this
+    test exists to say so rather than to hide it: restoring the walk-back leaves
+    every suite green, because on node 20 the two agree about the value of all
+    650 accepted code points.
+
+    They agree only because of an accident of layout - no code point node calls
+    a decimal digit sits immediately below the start of a run the helper
+    accepts, so the walk can never leave its own run. The commit that removed
+    the walk called that luck rather than design. This is the luck, written
+    down: if a future runtime learns a digit block that abuts one of these runs,
+    the walk-back would start returning a wrong VALUE for an ordinary digit, and
+    this goes red on the day that becomes possible instead of on the day someone
+    reintroduces the walk.
+
+    What it does NOT pin: the current implementation. A rule that read the table
+    and then computed the offset some other way passes here and fails
+    ``test_the_helper_accepts_exactly_the_digits_this_python_calls_decimal``,
+    which is the test that owns values.
+    """
+    accepted = set(digit_survey["accepted"])
+    assert accepted, "the survey accepted nothing, so this checks no boundaries"
+
+    # Derived from what the helper ACCEPTS, not from a copy of the table: the
+    # walk-back walks over contiguous digits, so the boundary that matters is
+    # the edge of a maximal contiguous accepted block.
+    starts = sorted(code for code in accepted if code - 1 not in accepted)
+
+    assert len(starts) > 50, (
+        f"only {len(starts)} run starts derived from {len(accepted)} accepted "
+        "code points; the survey has collapsed and this boundary check would "
+        "pass over almost nothing"
+    )
+    assert 0x0030 in starts, "the ASCII run start is missing from the derivation"
+
+    abutting = [code for code in starts if code > 0 and code - 1 in digit_survey["node_nd"]]
+
+    assert abutting == [], (
+        "this runtime calls "
+        + ", ".join(f"U+{code - 1:04X}" for code in abutting[:20])
+        + " a decimal digit, and it sits immediately below the accepted run "
+        "starting at "
+        + ", ".join(f"U+{code:04X}" for code in abutting[:20])
+        + ". Walking back over the runtime's \\p{Nd} to find a run start would "
+        "now leave the run and return a wrong place value, so the table lookup "
+        "in decimalValue is load-bearing rather than merely tidier."
+    )
