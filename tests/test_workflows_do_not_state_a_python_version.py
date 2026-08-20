@@ -83,8 +83,11 @@ entire time -- seven and a half months in which a contributor's conda
 environment was a different interpreter from the one anything was verified
 on, and nothing compared the two. This PR is the commit that changes it.
 
-All three planes agree today, so both bugs are dormant -- but nothing
-prevented either, because every file independently stated its own version.
+All three agree as of this commit -- ``.python-version``, the workflows that
+point at it, and ``environment.yml``. So both bugs are dormant. Neither was
+PREVENTED, though, and that is the difference this file is about: each of
+those files independently stated its own version, and no check compared any
+two of them.
 
 Four earlier rounds tried to *detect* divergence by working out which Python
 each workflow uses. Every one shipped a confident wrong answer on a
@@ -1623,12 +1626,17 @@ def test_the_version_file_holds_exactly_one_version():
     into a workflow, where refusing a spelling the consumer accepts is a check
     crying wolf -- and a check that cries wolf gets weakened or deleted, which
     is the mechanism that produced this whole defect family. Here it is a file
-    with one job and one correct content, which every tool that writes it
-    already writes as the version plus a newline: ``pyenv local`` does, and so
-    does an editor saving a one-line file. Accepting a second spelling buys
-    nothing and costs the gap between what this test's name says and what it
-    checks. That gap is what the reviewer found, so it is closed by making the
-    check match the name rather than by softening the name.
+    with one job and one correct content, and what that content is is not a
+    matter of taste: ``echo 3.11 > .python-version`` produces it and this
+    repository's file already is it, byte for byte. Whether some editor
+    somewhere would write it differently is NOT claimed here and was not
+    measured -- that claim would be the same unsupported absolute this file
+    keeps finding in itself. The trade does not need it. Being wrong about an
+    editor costs one red test whose message names the expected bytes, which is
+    a one-line correction; the alternative cost a test whose name said one
+    line while it accepted three. That gap is what a reviewer found, so it is
+    closed by making the check match the name rather than by softening the
+    name.
     """
     raw = stated_version_text()
     version = raw.strip()
