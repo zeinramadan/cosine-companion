@@ -8,8 +8,26 @@ workflow states a version of its own inline", which measurement contradicts:
 ``uv python install 3.12 --default`` inside a ``run:`` block is a version
 stated inline in a workflow, it is admitted green two paragraphs below, and
 the old wording claimed it away. Workflows may state versions inline in
-``run:`` text and this file stops exactly one of those shapes -- a literal
-handed to ``uv``'s ``--python-version`` (assertion 4) -- and no others.
+``run:`` text. What this file reads out of that text is one LEXICAL
+ARRANGEMENT -- a bare version token in the word immediately adjacent to the
+characters ``--python-version`` (assertion 4) -- and nothing else.
+
+That is deliberately weaker than "a literal handed to uv", which is what this
+sentence used to say, and the difference is measurable. A block may hand uv a
+literal without ever placing one next to the flag:
+
+    PYTHON_VERSION="$(cat .python-version)"
+    ACTING_PYTHON_VERSION=3.12
+    uv pip compile --python-version "$ACTING_PYTHON_VERSION" ...
+
+uv resolves for 3.12. The word next to the flag is a variable, so assertion 4
+sees nothing; the block mentions ``.python-version``, so the second check is
+satisfied too; and the lock the mutant produces is byte-identical, so the
+drift gate accepts it. Measured, not reasoned: 73 passed. Reading that block
+correctly means knowing what ``ACTING_PYTHON_VERSION`` holds, which is the
+shell-interpretation treadmill that cost this PR family four wrong answers,
+so it is pinned as a miss rather than fixed --
+:func:`test_a_variable_assigned_a_literal_in_the_same_block_is_not_seen`.
 
 WHAT THIS DOES **NOT** ESTABLISH -- stated here, first, next to the claim,
 because the sentence that used to open this file claimed the opposite. It said
@@ -80,15 +98,22 @@ WHAT THIS FILE ASSERTS
 2. No setup-python step states a version inline.
 3. Every setup-python step is pinned to a full commit SHA, and all of them to
    the *same* one.
-4. No ``run:`` block hands a literal version to ``--python-version``, and any
-   block containing that flag also mentions ``.python-version``. uv resolves
-   the dependency set FOR that flag, so a literal there is a second source of
-   truth that only shows up as a wrong resolution. This is the one assertion
-   here that reads shell text rather than parsed structure, it is the weakest
-   of the six, and the lock-drift gate in ``test-macos.yml`` does NOT back it
-   up -- a recompile at 3.12 was measured byte-identical to the committed
-   lock. Both the measurement and the shapes this assertion still cannot see
-   are recorded on :func:`uv_python_version_problems`, next to the code.
+4. No ``run:`` block places a bare version token in the word IMMEDIATELY
+   ADJACENT to ``--python-version`` -- the next whitespace-separated word, or
+   the value glued on with ``=``, quotes stripped either way -- and any block
+   containing that flag also mentions ``.python-version``. That is the whole
+   invariant, and it is a statement about characters, not about what uv
+   receives: a literal that reaches uv through a variable, a fragment-built
+   flag, or a job-level ``env:`` satisfies it. uv resolves the dependency set
+   FOR that flag, so a literal there is a second source of truth that only
+   shows up as a wrong resolution -- this catches the shape someone writes by
+   hand, not the shape someone writes to get past it. It is the one assertion
+   here that reads shell text rather than parsed structure, it is much the
+   weakest of the six, and the lock-drift gate in ``test-macos.yml`` does NOT
+   back it up -- a recompile at 3.12 was measured byte-identical to the
+   committed lock. Both the measurement and the shapes this assertion cannot
+   see are recorded on :func:`uv_python_version_problems`, next to the code,
+   and each has an executable test pinning it green.
 5. ``environment.yml`` pins conda to the same version, in the single
    spelling ``python=<that version>`` and no other.
 6. ``.python-version`` itself holds exactly one bare version token.
@@ -769,9 +794,21 @@ def literal_python_versions_passed_to_uv(run):
 
 
 def uv_python_version_problems(where, run):
-    """Every way one ``run:`` block can hand uv a version that is not the file's.
+    """The two LEXICAL problems this guard reads out of one ``run:`` block.
 
-    Returns a list of problem descriptions; empty means this block is clean.
+    Not "every way this block can hand uv a wrong version" -- that is what
+    this line used to claim, and a reviewer's mutant disproved it (see the
+    variable-indirection entry below). These are the two things checked, and
+    they are the whole of it:
+
+    1. a bare version token in the word immediately adjacent to
+       ``--python-version``;
+    2. the flag appearing in a block that never names ``.python-version``.
+
+    Returns a list of problem descriptions. EMPTY MEANS NEITHER OF THOSE TWO
+    FIRED -- it does not mean the block resolves for the version in the file,
+    and the blind-spot list below is the list of ways it can be empty and
+    wrong.
 
     THE STRUCTURAL BACKSTOP FOR THIS ASSERTION DOES NOT EXIST -- MEASURED
     --------------------------------------------------------------------
@@ -816,6 +853,21 @@ def uv_python_version_problems(where, run):
       which is not a version token, and the block may well mention
       ``.python-version`` for an unrelated reason and satisfy the second
       check too.
+    * A value assigned a literal INSIDE THIS SAME BLOCK, a few words away::
+
+          PYTHON_VERSION="$(cat .python-version)"
+          ACTING_PYTHON_VERSION=3.12
+          uv pip compile --python-version "$ACTING_PYTHON_VERSION" ...
+
+      This is the sharpest of the misses, because everything that would make
+      a reader trust the block is present and honest-looking: the file IS
+      read, the flag IS derived from a variable, and ``.python-version`` IS
+      mentioned. uv resolves for 3.12. Applied to ``test-macos.yml`` this was
+      measured green -- 73 passed -- and the recompiled lock was
+      byte-identical, so the drift gate accepted it too. Closing it means
+      tracking assignments, which is a shell interpreter; the deliberate
+      choice is to miss it and say so. Pinned by
+      :func:`test_a_variable_assigned_a_literal_in_the_same_block_is_not_seen`.
     * A value glued together by the shell -- ``--python-version 3"."12`` --
       strips to ``3"."12``, which is not a version token.
     * Any OTHER flag that selects a resolution target: ``uv pip compile -p``
@@ -858,11 +910,17 @@ def uv_python_version_problems(where, run):
 
 
 @pytest.mark.parametrize("workflow", workflow_files(), ids=lambda p: p.name)
-def test_no_run_block_passes_a_literal_python_version(workflow):
+def test_no_run_block_puts_a_literal_version_next_to_the_uv_flag(workflow):
     """``uv pip compile --python-version`` chooses the interpreter uv resolves
     *for*, so a literal there is a second source of truth whose divergence
     never announces itself: a bump of ``.python-version`` would leave the
     dependency set resolved for the old Python and installed on the new one.
+
+    The name is deliberately about ADJACENCY and not about "passing a
+    literal". It used to be ``test_no_run_block_passes_a_literal_python_version``
+    and that name was a claim the function does not make: a block can pass uv
+    a literal through a variable assigned two lines above and this test stays
+    green. See :func:`uv_python_version_problems` for the measured list.
 
     Both occurrences in ``test-macos.yml`` matter -- the flag uv acts on and
     the copy inside ``--custom-compile-command`` that is written verbatim into
@@ -977,6 +1035,34 @@ def test_a_value_arriving_from_outside_the_block_is_not_seen():
         'echo "resolving for $PYTHON_VERSION"  # a job-level env: sets this,\n'
         "# and nothing here compares it against .python-version\n"
         'uv pip compile --python-version "$PYTHON_VERSION" reqs.in'
+    )
+
+    assert uv_python_version_problems("w::j step 0", run) == []
+
+
+def test_a_variable_assigned_a_literal_in_the_same_block_is_not_seen():
+    """The reviewer's round-5 mutant, pinned as a MISS.
+
+    Every signal a reader would use to trust this block is present: the file
+    is read, the flag takes a variable rather than a literal, and
+    ``.python-version`` appears. uv still resolves for 3.12, because the
+    variable next to the flag is a DIFFERENT one, assigned a literal two
+    lines up. Applied to the real ``test-macos.yml`` this was measured green
+    at 73 passed, and the lock it produces is byte-identical, so the
+    drift gate does not catch it either.
+
+    Seeing it requires tracking what an assignment put in a variable -- a
+    shell interpreter, which is exactly the apparatus that shipped four
+    confident wrong answers in earlier rounds of this PR. So it is admitted,
+    here, executably. If a later change makes this visible, this test reddens
+    and whoever made the change updates assertion 4's wording, the blind-spot
+    list in :func:`uv_python_version_problems`, and the module docstring in
+    the same commit -- which is the entire point of pinning it.
+    """
+    run = (
+        'PYTHON_VERSION="$(cat .python-version)"\n'
+        "ACTING_PYTHON_VERSION=3.12\n"
+        'uv pip compile --python-version "$ACTING_PYTHON_VERSION" reqs.in'
     )
 
     assert uv_python_version_problems("w::j step 0", run) == []
