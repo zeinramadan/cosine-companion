@@ -272,14 +272,27 @@ python -m pytest -q
 `pytest.ini` sets `pythonpath = src`, so no `PYTHONPATH` export or editable install
 of the package itself is needed.
 
-The suite deliberately runs without the heavy audio stack. **Nothing under `src/services/`
+The suite must run without the heavy audio stack. **Nothing under `src/services/`
 or the test suite may import `essentia` at module scope** — it is a ~480 MB TensorFlow
-dependency that CI does not install, and a module-level import there breaks the entire
-suite at collection time. Import it lazily, inside the function that needs it.
+dependency, and a module-level import there breaks the entire suite at collection time
+for anyone who does not have it. Import it lazily, inside the function that needs it.
 
-Before opening a PR, verify in an environment that matches CI, not just your dev env.
-CI installs only `numpy pandas pyarrow lxml pytest`, on the interpreter named in
-`.python-version` (the single source of truth for it, currently **3.11**):
+The reason given here used to be "CI does not install it". That is no longer true and
+has not been since the test job moved to the lock: `test-macos.yml` installs
+`requirements-macos-arm64-py311.lock` with `--require-hashes` — all 40 pinned packages,
+`essentia-tensorflow` included — and `dependency-canary.yml` installs `requirements.txt`,
+which also lists it. The rule stands on the two environments below instead, both of
+which lack it: `pip install "pytest>=7.0"` above, and the minimal venv below.
+
+Both CI jobs that run the suite *install* their interpreter from `.python-version`
+(the authoritative source for it, currently **3.11**; `environment.yml` restates it for
+conda and `tests/test_workflows_do_not_state_a_python_version.py` checks the two match).
+"Installs from" is deliberately weaker than "runs on": that guard asserts the
+`setup-python` step, not which interpreter a later `run:` step ends up using — see its
+KNOWN BLIND SPOTS. Nothing in the workflows currently overrides it. CI does
+**not** run the suite on a five-package environment, so the check below is not CI
+parity — it is the narrower and still worthwhile question of whether the suite holds up
+with the heavy stack absent:
 
 ```bash
 # Must match .python-version. On macOS, bare `python3` is often 3.9 and will fail
@@ -289,8 +302,14 @@ conda run -n dj-companion python -m venv /tmp/ci-check
 /tmp/ci-check/bin/python -m pytest -q
 ```
 
-A suite that passes in a full conda environment can still fail in CI, and a test that
-silently *skips* there looks identical to one that passes.
+To reproduce what the CI test job actually installs, use the lock itself:
+
+```bash
+python -m pip install --require-hashes -r requirements-macos-arm64-py311.lock
+```
+
+A suite that passes in a full conda environment can still fail in a lean one, and a test
+that silently *skips* there looks identical to one that passes.
 
 > **Python 3.10 is a hard floor**, not a recommendation. The codebase uses PEP 604
 > union syntax (`X | None`), which is a syntax error on 3.9. Note that `setup.py`
