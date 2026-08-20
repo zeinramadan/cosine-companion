@@ -261,6 +261,23 @@ export function mountExplore({ store, onPickSeed, onShowDetail }) {
     });
   }
 
+  /* Library §2.7 sets current_id directly: it does not push Explore history.
+   * It also clears the current seed if that track is deleted, without clearing
+   * the history entries that may still name it. */
+  function setCurrent(trackId) {
+    loadFor(trackId);
+  }
+
+  function clearCurrent() {
+    inFlight += 1;
+    store.setState({
+      seed: null,
+      recommendations: [],
+      exploreStatus: 'idle',
+      exploreError: null,
+    });
+  }
+
   // -- rendering ----------------------------------------------------------
 
   function renderSeedCard(state) {
@@ -530,5 +547,5 @@ export function mountExplore({ store, onPickSeed, onShowDetail }) {
   store.subscribe(render);
   render(store.getState());
 
-  return { seed, goBack };
+  return { seed, goBack, setCurrent, clearCurrent };
 }

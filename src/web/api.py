@@ -270,6 +270,7 @@ class CocoApi:
         )
 
         self._settings_write_lock = threading.Lock()
+        self._library_write_lock = threading.Lock()
 
     # -- routing -----------------------------------------------------------
     #
@@ -281,6 +282,12 @@ class CocoApi:
     ROUTES = [
         ("GET", re.compile(r"^/api/health$"), "_health"),
         ("GET", re.compile(r"^/api/library$"), "_library"),
+        ("GET", re.compile(r"^/api/library/tracks$"), "_library_tracks"),
+        (
+            "POST",
+            re.compile(r"^/api/library/tracks/delete$"),
+            "_delete_library_tracks",
+        ),
         ("GET", re.compile(r"^/api/settings$"), "_settings"),
         ("POST", re.compile(r"^/api/settings$"), "_update_settings"),
         ("GET", re.compile(r"^/api/tracks$"), "_browse"),
@@ -338,6 +345,67 @@ class CocoApi:
                 "xml_path": self.settings.xml_path,
             }
         )
+
+    def _library_tracks(self, query):
+        """Every row the Library destination filters and sorts in the browser."""
+        snapshot = self.library.snapshot()
+        if snapshot.meta_ix is None:
+            return 200, {"tracks": [], "total": 0}
+
+        tracks = []
+        for track_id, row in snapshot.meta_ix.iterrows():
+            tracks.append(
+                {
+                    "track_id": str(track_id),
+                    "artist": row.get("artist", ""),
+                    "title": row.get("title", ""),
+                    "album": row.get("album", ""),
+                    "key": row.get("key", ""),
+                    "bpm": row.get("bpm", ""),
+                    "path_local": row.get("path_local", ""),
+                }
+            )
+        return 200, _jsonable({"tracks": tracks, "total": len(tracks)})
+
+    def _delete_library_tracks(self, query, body):
+        """Delete one selection through LibrarySession's atomic mutation.
+
+        IDs are newline-delimited inside one JSON string. The real collection's
+        full 1,532-ID selection is 14.7 KiB in that representation and therefore
+        still fits the server's fixed 16 KiB request-body ceiling; a JSON array
+        of the same IDs does not.
+        """
+        if not isinstance(body, dict) or set(body) != {"track_ids"}:
+            raise bad_request(
+                "The JSON body must contain exactly one field: track_ids."
+            )
+
+        encoded_ids = body["track_ids"]
+        if not isinstance(encoded_ids, str) or not encoded_ids:
+            raise bad_request("track_ids must be a non-empty newline-delimited string.")
+        track_ids = encoded_ids.split("\n")
+        if any(not track_id for track_id in track_ids):
+            raise bad_request("track_ids must not contain blank track IDs.")
+        if len(set(track_ids)) != len(track_ids):
+            raise bad_request("track_ids must not contain duplicates.")
+
+        # Serialise validation with the mutation so two simultaneous requests
+        # cannot both validate one ID and let the second silently delete zero.
+        with self._library_write_lock:
+            for track_id in track_ids:
+                if self.library.get_track(track_id) is None:
+                    raise unknown_track(track_id)
+            deleted = self.library.delete_tracks(track_ids)
+            return 200, _jsonable(
+                {
+                    "deleted": deleted,
+                    "track_ids": track_ids,
+                    "library": {
+                        "track_count": self.library.track_count,
+                        "is_empty": self.library.is_empty,
+                    },
+                }
+            )
 
     def _settings(self, query):
         return 200, self._settings_document()

@@ -421,7 +421,7 @@ def test_the_shell_uses_real_landmarks():
 
 
 def test_all_five_destinations_are_present():
-    """Settings is the one addition; the three placeholders stay explicit."""
+    """Explore, Library and Settings ship; two placeholders stay explicit."""
     body = read(INDEX_HTML)
 
     for destination in ("explore", "set-creator", "library", "export", "settings"):
@@ -431,7 +431,7 @@ def test_all_five_destinations_are_present():
 def test_the_unimplemented_destinations_say_so():
     body = read(INDEX_HTML)
 
-    assert body.count("Coming in the next PR") == 3
+    assert body.count("Coming in the next PR") == 2
 
 
 def test_the_drawer_renders_playlists_from_the_field_it_is_given():

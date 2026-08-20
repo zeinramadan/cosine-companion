@@ -6,32 +6,33 @@ mixins (``meta``, ``meta_ix``, ``emb_ix``, ``idx``, ``V``, ``ids``;
 ``ui/app.py:46``), plus the deletion logic that lived in
 ``ui/library_tab.py:213-273``.
 
-The logic here was **moved**, not rewritten. In particular these quirks are
-preserved deliberately and are pinned by tests
+The web Library destination is the point where the characterised deletion
+defects are retired:
+
+* all four files are written as an immutable generation and published by one
+  atomically replaced manifest;
+* deleting the final track writes a real ``(0, dimension)`` matrix, so restart
+  preserves an empty, consistent library; and
+* ``meta`` is published with the other rebuilt objects, so every consumer sees
+  the deletion immediately.
+
+Every in-memory object is still rebound rather than mutated.  A running export
+that already captured ``snapshot()`` therefore finishes against its start-of-
+run generation, while a later export captures the newly published one.
+
+The following search quirk remains deliberately preserved and pinned by tests
 (``tests/services/test_library_session.py``):
 
-* Deleting every track leaves ``index`` as ``None`` and ``vectors`` as a 0-d
-  empty array, and ``index.npy`` is **not** rewritten - so it keeps the old
-  vectors beside an empty ``ids.json`` (inventory defect #3).
-* The four data files are rewritten in sequence with no temp-file-and-rename
-  and no rollback, so a failure partway through leaves them mutually
-  inconsistent (inventory defect #2, spec 3.2).
 * ``search_tracks`` exposes ``recommendations.search.search_tracks`` - the
   implementation the two selector dialogs call - and therefore returns ``[]``
   for a blank query (inventory defect #9). The regex variant in
   ``pick_current`` and the album/key variant in ``filter_library`` are
   documented in the inventory and deliberately NOT unified here.
-* ``delete_tracks`` updates ``meta_ix``/``emb_ix``/``index``/``ids`` but leaves
-  ``meta`` STALE until ``reload()``, because the Library tab's deletion code
-  never rebuilt ``App.meta`` either. Consumers that read ``meta`` - Explore's
-  track picker and the Playlist Export all-tracks count and id list - therefore
-  keep showing deleted tracks until restart (inventory defect #14).
-
 This module must never depend on a UI toolkit; see
 tests/test_services_are_ui_free.py, which enforces that with an AST walk.
 """
 
-import json
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -42,7 +43,8 @@ import pandas as pd
 from config import DATA
 from core.deleted_tracks import add_deleted_tracks_with_metadata
 from core.index_builder import NumpyCosIndex
-from core.loader import index_file_paths, load_all
+from core.index_store import write_index_generation
+from core.loader import load_all
 from recommendations.search import search_tracks
 
 
@@ -85,6 +87,7 @@ class LibrarySession:
         self._index: Optional[NumpyCosIndex] = None
         self._vectors: Optional[np.ndarray] = None
         self._ids: Optional[List[str]] = None
+        self._lock = threading.RLock()
 
     @classmethod
     def load(cls, data_dir: Optional[Path] = None) -> "LibrarySession":
@@ -95,14 +98,16 @@ class LibrarySession:
 
     def reload(self) -> None:
         """Re-read all four data files from disk, replacing the in-memory state."""
-        (
-            self._meta,
-            self._meta_ix,
-            self._emb_ix,
-            self._index,
-            self._vectors,
-            self._ids,
-        ) = load_all(self.data_dir)
+        loaded = load_all(self.data_dir)
+        with self._lock:
+            (
+                self._meta,
+                self._meta_ix,
+                self._emb_ix,
+                self._index,
+                self._vectors,
+                self._ids,
+            ) = loaded
 
     # -- read accessors ----------------------------------------------------
 
@@ -149,95 +154,104 @@ class LibrarySession:
     def snapshot(self) -> LibrarySnapshot:
         """Capture the current library objects for the duration of one operation.
 
-        The capture itself is a plain sequence of attribute reads, so a delete
-        landing between two of them can still be observed half-applied - the
-        legacy export worker had precisely the same window when it evaluated
-        ``self.meta_ix, self.emb_ix, self.idx`` as call arguments. What matters
-        is that there is exactly ONE such window per run instead of one per
-        seed.
+        Deletion holds the same lock while publishing all six new references,
+        so this capture is wholly before or wholly after that publication.
+        Objects from the old generation remain alive for readers that already
+        captured them; deletion never mutates those objects in place.
         """
-        return LibrarySnapshot(
-            meta=self._meta,
-            meta_ix=self._meta_ix,
-            emb_ix=self._emb_ix,
-            index=self._index,
-            vectors=self._vectors,
-            ids=self._ids,
-        )
+        with self._lock:
+            return LibrarySnapshot(
+                meta=self._meta,
+                meta_ix=self._meta_ix,
+                emb_ix=self._emb_ix,
+                index=self._index,
+                vectors=self._vectors,
+                ids=self._ids,
+            )
 
     def get_track(self, track_id: str) -> Optional[Dict[str, Any]]:
         """Return one track's metadata as a dict, or ``None`` if it is unknown."""
-        if self._meta_ix is None or track_id not in self._meta_ix.index:
+        with self._lock:
+            meta_ix = self._meta_ix
+        if meta_ix is None or track_id not in meta_ix.index:
             return None
-        row = self._meta_ix.loc[track_id]
+        row = meta_ix.loc[track_id]
         track = row.to_dict()
         track["track_id"] = track_id
         return track
 
     def search_tracks(self, query: str, limit: int = 20) -> List[Dict[str, str]]:
         """Search artist/title, delegating to the implementation the UI dialogs use."""
-        return search_tracks(query, self._meta_ix, limit=limit)
+        with self._lock:
+            return search_tracks(query, self._meta_ix, limit=limit)
 
     # -- mutation ----------------------------------------------------------
 
     def delete_tracks(self, track_ids: Iterable[str]) -> int:
         """Remove tracks from the library and persist the four data files.
 
-        Moved verbatim from ``ui/library_tab.py:213-273``, including its
-        non-atomic write sequence and its empty-collection handling. Returns the
-        number of metadata rows removed, which the Library tab uses to decide
-        which status message to show.
+        The replacement generation is built privately, persisted, and only
+        then published to readers. Returns the number of metadata rows removed,
+        which the Library tab uses to decide which status message to show.
         """
         track_ids_to_delete = set(track_ids)
+        if not track_ids_to_delete:
+            return 0
 
-        # Record these tracks as deleted with their metadata so we can display
-        # them later. The Library tab used to hand over the dicts it had already
-        # built from meta_ix; looking them up here yields the same values, and
-        # an unknown id falls back to the same "Unknown" defaults.
-        add_deleted_tracks_with_metadata(
-            [self._deleted_track_record(tid) for tid in track_ids_to_delete]
-        )
+        with self._lock:
+            original_meta_count = len(self._meta_ix)
+            new_meta_ix = self._meta_ix[
+                ~self._meta_ix.index.isin(track_ids_to_delete)
+            ]
+            deleted_count = original_meta_count - len(new_meta_ix)
+            if deleted_count == 0:
+                return 0
 
-        # Update metadata
-        original_meta_count = len(self._meta_ix)
-        self._meta_ix = self._meta_ix[~self._meta_ix.index.isin(track_ids_to_delete)]
+            records = [
+                self._deleted_track_record(track_id)
+                for track_id in track_ids_to_delete
+                if track_id in self._meta_ix.index
+            ]
+            new_emb_ix = self._emb_ix[
+                ~self._emb_ix.index.isin(track_ids_to_delete)
+            ]
 
-        # Update embeddings
-        self._emb_ix = self._emb_ix[~self._emb_ix.index.isin(track_ids_to_delete)]
+            remaining_positions = [
+                position
+                for position, track_id in enumerate(self._ids)
+                if track_id not in track_ids_to_delete
+            ]
+            new_ids = [self._ids[position] for position in remaining_positions]
+            if remaining_positions:
+                new_vectors = self._vectors[remaining_positions].copy()
+                new_index = NumpyCosIndex(new_vectors.shape[1])
+                for track_id, vector in zip(new_ids, new_vectors):
+                    new_index.add(track_id, vector)
+            else:
+                dimension = self._vectors.shape[1]
+                new_vectors = np.empty((0, dimension), dtype=self._vectors.dtype)
+                new_index = None
 
-        # Update cosine index and vectors: rebuild without the deleted tracks
-        remaining_track_ids = []
-        remaining_vectors = []
+            new_meta = new_meta_ix.reset_index()
+            new_embeddings = new_emb_ix.reset_index()
 
-        for i, track_id in enumerate(self._ids):
-            if track_id not in track_ids_to_delete:
-                remaining_track_ids.append(track_id)
-                remaining_vectors.append(self._vectors[i])
+            # Preserve the DeletedTracksDialog contract, but bind it to this
+            # session's data directory. A fixture session must never write the
+            # configured application library's deleted_tracks.json.
+            add_deleted_tracks_with_metadata(
+                records, path=self.data_dir / "deleted_tracks.json"
+            )
+            self._persist(new_meta, new_embeddings, new_vectors, new_ids)
 
-        if remaining_vectors:
-            self._vectors = np.vstack(remaining_vectors)
-            self._ids = remaining_track_ids
-
-            self._index = NumpyCosIndex(self._vectors.shape[1])
-            for tid, v in zip(self._ids, self._vectors):
-                self._index.add(tid, v)
-        else:
-            # No tracks remaining
-            self._vectors = np.array([])
-            self._ids = []
-            self._index = None
-
-        # NOT rebuilt: ``self._meta``. The Library tab's perform_track_deletion
-        # never touched App.meta, so the full metadata table stayed STALE until
-        # the app was restarted - which is why a deleted track still appears in
-        # Explore's "Set Current Track" picker and in the Playlist Export tab's
-        # all-tracks count and export list. Rebuilding it here would silently
-        # repair that, and a baseline that quietly improves behaviour cannot
-        # prove the next PR preserved anything. Inventory defect #14; fixing it
-        # is PR 3 work.
-        self._persist()
-
-        return original_meta_count - len(self._meta_ix)
+            # One short publication region. snapshot() takes this same lock,
+            # so an export begins wholly before or wholly after these rebinds.
+            self._meta = new_meta
+            self._meta_ix = new_meta_ix
+            self._emb_ix = new_emb_ix
+            self._vectors = new_vectors
+            self._ids = new_ids
+            self._index = new_index
+            return deleted_count
 
     def _deleted_track_record(self, track_id: str) -> Dict[str, str]:
         track = self.get_track(track_id)
@@ -251,18 +265,6 @@ class LibrarySession:
             "title": track.get("title", ""),
         }
 
-    def _persist(self) -> None:
-        """Write the four data files, in the original order and without atomicity."""
-        meta_pq, emb_pq, idx_npy, ids_json = index_file_paths(self.data_dir)
-
-        # Convert meta_ix back to a regular DataFrame for saving
-        self._meta_ix.reset_index().to_parquet(meta_pq, index=False)
-
-        # Convert emb_ix back to a regular DataFrame for saving
-        self._emb_ix.reset_index().to_parquet(emb_pq, index=False)
-
-        # Save vectors and IDs
-        if len(self._vectors) > 0:
-            np.save(idx_npy, self._vectors)
-        with open(ids_json, "w") as f:
-            json.dump(self._ids, f)
+    def _persist(self, meta, embeddings, vectors, ids) -> None:
+        """Commit one immutable four-file generation behind one pointer."""
+        write_index_generation(self.data_dir, meta, embeddings, vectors, ids)

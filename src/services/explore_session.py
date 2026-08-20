@@ -70,19 +70,24 @@ class ExploreSession:
         playlist exporter uses the same configuration and then truncates to the
         user's per-track count.
         """
+        library = self.library.snapshot()
         results = ranked_recommendations(
             track_id,
-            self.library.meta_ix,
-            self.library.emb_ix,
-            self.library.index,
+            library.meta_ix,
+            library.emb_ix,
+            library.index,
             topk=topk,
             final_top=final_top,
         )
 
-        return [self._to_recommendation(r) for r in results]
+        return [self._to_recommendation(r, library.meta_ix) for r in results]
 
-    def _to_recommendation(self, raw: dict) -> Recommendation:
-        track = self.library.get_track(raw["track_id"]) or {}
+    def _to_recommendation(self, raw: dict, meta_ix) -> Recommendation:
+        track = (
+            meta_ix.loc[raw["track_id"]].to_dict()
+            if raw["track_id"] in meta_ix.index
+            else {}
+        )
         return Recommendation(
             track_id=raw["track_id"],
             artist=raw["artist"],

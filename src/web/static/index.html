@@ -31,7 +31,6 @@
         <button class="nav__item" type="button" data-destination="library">
           <span class="nav__glyph" aria-hidden="true">▤</span>
           <span>Library</span>
-          <span class="nav__soon">Soon</span>
         </button>
         <button class="nav__item" type="button" data-destination="export">
           <span class="nav__glyph" aria-hidden="true">↥</span>
@@ -74,13 +73,36 @@
         </section>
 
         <section class="view" id="view-library" hidden aria-label="Library">
-          <div class="placeholder">
-            <p class="placeholder__eyebrow">Coming in the next PR</p>
-            <h2 class="placeholder__title">Library</h2>
-            <p class="placeholder__body">
-              Browse, filter and prune the indexed collection. Use ⌘K to find a track
-              in the meantime.
-            </p>
+          <div class="library">
+            <div class="library__search">
+              <label class="library__label" for="library-search">Search:</label>
+              <input
+                class="library__input"
+                id="library-search"
+                type="search"
+                autocomplete="off"
+                spellcheck="false">
+              <button class="button" id="library-clear" type="button">Clear</button>
+              <button class="button" id="library-refresh" type="button">Refresh</button>
+            </div>
+
+            <div class="library__controls">
+              <button class="button button--danger" id="library-delete" type="button">
+                Delete Selected
+              </button>
+              <button class="button" id="library-set-current" type="button">
+                Set as Current
+              </button>
+              <p class="library__stats" id="library-stats">0 tracks</p>
+            </div>
+
+            <p class="library__status" id="library-status" role="status" aria-live="polite"></p>
+            <ul
+              class="library__tracks"
+              id="library-tracks"
+              role="listbox"
+              aria-label="Library tracks"
+              aria-multiselectable="true"></ul>
           </div>
         </section>
 
