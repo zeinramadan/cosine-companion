@@ -131,7 +131,10 @@ WHAT THIS FILE ASSERTS
    entries in the code and renders both sentences from that count.
 5. ``environment.yml`` pins conda to the same version, in the single
    spelling ``python=<that version>`` and no other.
-6. ``.python-version`` itself holds exactly one bare version token.
+6. ``.python-version`` holds exactly one bare version token AND NOTHING
+   ELSE: its content must equal that token plus one newline, byte for byte.
+   That is stricter than either consumer requires, deliberately; the argument
+   is at :func:`test_the_version_file_holds_exactly_one_version`.
 
 Assertion 1 is per **job**, not per repository, and that distinction is the
 whole point. A previous revision asserted only "at least one setup-python step
@@ -315,12 +318,24 @@ def stated_version_text():
     Every reader goes through here so that a missing file fails by name in
     all of them, rather than one of them reporting a bare FileNotFoundError
     traceback that says nothing about what the file is for.
+
+    DECODED FROM BYTES, not ``read_text``, and that is not a style choice.
+    ``read_text`` opens in text mode, so Python's universal-newline
+    translation turns a CRLF file into ``"3.11\n"`` before any caller sees
+    it. :func:`test_the_version_file_holds_exactly_one_version` compares this
+    string against the one accepted content byte for byte; through
+    ``read_text`` that comparison cannot see a CRLF file at all, and a claim
+    about bytes that is checked against a translated copy is exactly the
+    species of overclaim this file keeps finding in itself. Measured: with
+    ``read_text``, ``3.11\r\n`` on disk passed. It reddens now. pyenv would
+    read the version name as ``3.11\r``; setup-python trims the ``\r`` away.
+    Two consumers, two answers, from one file.
     """
     assert VERSION_FILE.is_file(), (
         f"{VERSION_FILE_NAME} is missing. Every workflow points at it, so "
         "every job would fail -- but this guard says so first, and by name."
     )
-    return VERSION_FILE.read_text(encoding="utf-8")
+    return VERSION_FILE.read_bytes().decode("utf-8")
 
 
 def _parse(path):
@@ -1561,7 +1576,14 @@ def test_the_version_file_exists():
 
 
 def test_the_version_file_holds_exactly_one_version():
-    """One version, one line, no comments.
+    """One version, one line -- and as of round 6 the test means it literally.
+
+    It did not. It filtered blank lines out before counting them, so
+    ``"\n3.11\n\n"`` -- three physical lines -- passed a check whose name and
+    whose first docstring line both said one line. A reviewer found it by
+    reading the claim against the assertion. The whole file content is
+    compared now, so exactly one byte string is accepted: the version token
+    and one newline.
 
     pyenv reads every line of this file as a version name, so a second line or
     a trailing comment is not a note -- it is a second source of truth.
@@ -1575,23 +1597,38 @@ def test_the_version_file_holds_exactly_one_version():
     ``"3.11\n3.12"``. pyenv, meanwhile, would read two. Neither is what anyone
     meant, and both are refused here.
 
-    The ``.strip()`` calls below therefore mirror their consumer exactly --
-    the same rule argued at length in
-    :func:`test_every_setup_python_step_points_at_the_version_file`: a padded
-    ``" 3.11 "`` is trimmed by setup-python before it is used, so accepting it
-    here matches what actually happens.
+    THIS IS STRICTER THAN EITHER CONSUMER, and that is a deliberate departure
+    from the rule argued at length in
+    :func:`test_every_setup_python_step_points_at_the_version_file` -- STRIP
+    WHERE THE CONSUMER STRIPS. Both consumers trim, so both would accept
+    ``" 3.11 "`` and ``"\n3.11\n\n"``; this refuses them anyway. The
+    difference is what is being judged. There, it is a value a human typed
+    into a workflow, where refusing a spelling the consumer accepts is a check
+    crying wolf -- and a check that cries wolf gets weakened or deleted, which
+    is the mechanism that produced this whole defect family. Here it is a file
+    with one job and one correct content, which every tool that writes it
+    already writes as the version plus a newline: ``pyenv local`` does, and so
+    does an editor saving a one-line file. Accepting a second spelling buys
+    nothing and costs the gap between what this test's name says and what it
+    checks. That gap is what the reviewer found, so it is closed by making the
+    check match the name rather than by softening the name.
     """
     raw = stated_version_text()
-    lines = [line for line in raw.splitlines() if line.strip()]
+    version = raw.strip()
 
-    assert len(lines) == 1, (
-        f"{VERSION_FILE_NAME} holds {len(lines)} non-empty lines ({lines!r}); "
-        "it must hold exactly one version"
+    assert VERSION_TOKEN.match(version), (
+        f"{VERSION_FILE_NAME} holds {raw!r}, which trims to {version!r} -- not "
+        "a bare version token. A second line, a comment or any other extra "
+        "text is not a note: pyenv would read every line here as a version "
+        "name while setup-python reads the whole trimmed file as ONE version "
+        "string, so the two consumers would not even agree on what this file "
+        "says."
     )
 
-    version = lines[0].strip()
-    assert VERSION_TOKEN.match(version), (
-        f"{VERSION_FILE_NAME} contains {version!r}, which is not a bare "
-        "version token. Comments and extra text are not allowed: pyenv reads "
-        "every line here as a version name."
+    assert raw == f"{version}\n", (
+        f"{VERSION_FILE_NAME} holds {raw!r}; the one accepted content is "
+        f"{version + chr(10)!r} -- the version token and a single newline, "
+        "nothing before it and nothing after it. Both consumers trim, so this "
+        "is stricter than either requires; see this test's docstring for why "
+        "that is the right trade for this particular file."
     )
