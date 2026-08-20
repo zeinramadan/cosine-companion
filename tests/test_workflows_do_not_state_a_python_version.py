@@ -1905,7 +1905,23 @@ def test_a_version_written_in_non_ascii_digits_is_refused(version, script):
     what Python's ``\d`` means and is not what any consumer of this file
     means. The mixed rows matter too: ``coerce("3.١١")`` is not null, it is
     ``3.0.0``, so that spelling does not even fail honestly.
+
+    Each row is checked to BE the thing it is here to be before it is used,
+    because a row that is refused for some unrelated reason -- a stray letter,
+    a typo -- passes this test while pinning nothing at all, and it passes
+    silently. So: the row must be a version to the ``\d`` this replaced, and
+    must not be ASCII. Those two together are exactly "green before, red now".
     """
+    assert re.match(r"\A\d+(?:\.\d+)*\Z", version), (
+        f"the {script} row is not a version even to the Unicode-aware ``\\d`` "
+        "this fix replaced, so it would have been refused before the fix too "
+        "and pins nothing"
+    )
+    assert not version.isascii(), (
+        f"the {script} row is written in ASCII, so it is not the thing this "
+        "test is named for"
+    )
+
     with pytest.raises(AssertionError, match="not a bare version token"):
         one_version_token(f"{version}\n")
 
