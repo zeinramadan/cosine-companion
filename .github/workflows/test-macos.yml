@@ -32,6 +32,8 @@ jobs:
       # uv has no non-mutating compile --check flag. Recompile with the exact
       # recorded command, then fail if the committed lock changed.
       - name: Check lock matches dependency input
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "15.2"
         run: |
           uv pip compile \
             --python-version 3.11 \
@@ -40,6 +42,7 @@ jobs:
             --exclude-newer 2026-08-20 \
             --build-constraint build-constraints.txt \
             --generate-hashes \
+            --custom-compile-command "MACOSX_DEPLOYMENT_TARGET=15.2 uv pip compile --python-version 3.11 --python-platform aarch64-apple-darwin --prerelease explicit --exclude-newer 2026-08-20 --build-constraint build-constraints.txt --generate-hashes requirements-macos-arm64-py311.in -o requirements-macos-arm64-py311.lock" \
             requirements-macos-arm64-py311.in \
             -o requirements-macos-arm64-py311.lock
           git diff --exit-code -- requirements-macos-arm64-py311.lock
