@@ -113,6 +113,32 @@ def summary(xml, data_dir):
     return import_playlists(xml, data_dir=data_dir, now=FIXED_CLOCK)
 
 
+@pytest.fixture
+def parquet_string_dtype(tmp_path):
+    """The dtype THIS pandas gives a string column read back from parquet.
+
+    Measured rather than named. pandas 2 answers ``object`` and pandas 3
+    answers ``str``; writing either literal into the assertions below would
+    pin the version of pandas instead of the shape of the data, and the tests
+    would go red on an upgrade that changed nothing about the tables. What has
+    to hold on every version is that ``track_id`` comes back as *the string
+    dtype*, whatever this pandas calls it, and never as an inferred ``int64``.
+
+    Guard the guard: a probe that stopped yielding ``str`` values would make
+    every assertion built on it vacuous, so that is checked here rather than
+    assumed.
+    """
+    probe = tmp_path / "dtype-probe.parquet"
+    pd.DataFrame({"probe": ["a", "b"]}).to_parquet(probe, index=False)
+    column = pd.read_parquet(probe)["probe"]
+
+    assert all(isinstance(value, str) for value in column), (
+        "the probe column is not holding Python str, so it does not describe "
+        "the dtype the track_id assertions are about"
+    )
+    return column.dtype
+
+
 # ---------------------------------------------------------------------------
 # The tables
 # ---------------------------------------------------------------------------
@@ -203,20 +229,31 @@ def test_every_membership_pair_is_persisted_including_the_unresolvable_one(
 # ---------------------------------------------------------------------------
 
 
-def test_membership_track_id_is_the_same_dtype_as_meta_parquets(summary, data_dir):
+def test_membership_track_id_is_the_same_dtype_as_meta_parquets(
+    summary, data_dir, parquet_string_dtype
+):
     """The whole feature is worthless if these drift. Rekordbox TrackIDs look
     like integers - ``192072736`` - so any inference step would happily make
     one column int64 and the other object, and the join would match nothing
-    while raising nothing."""
+    while raising nothing.
+
+    The dtype is compared against ``parquet_string_dtype`` - what this pandas
+    calls a string column off parquet - rather than the literal ``object``.
+    On pandas 2 that IS ``object`` and this assertion is unchanged; on pandas
+    3 the same column reads back as ``str``. Neither is a change to the data,
+    and pinning the older spelling would have this file fail an upgrade while
+    the join it protects was still exact."""
     membership = pd.read_parquet(membership_pq(data_dir))
     meta = pd.read_parquet(data_dir / "meta.parquet")
 
-    assert membership["track_id"].dtype == meta["track_id"].dtype == object
+    # They must not drift APART, and neither may be a number.
+    assert membership["track_id"].dtype == meta["track_id"].dtype
+    assert membership["track_id"].dtype == parquet_string_dtype
     assert all(isinstance(value, str) for value in membership["track_id"])
     assert all(isinstance(value, str) for value in meta["track_id"])
 
 
-def test_numeric_looking_track_ids_survive_as_strings(tmp_path):
+def test_numeric_looking_track_ids_survive_as_strings(tmp_path, parquet_string_dtype):
     """The fixture ids are ``t1``..``t4``, which cannot be inferred as numbers.
     The REAL ones can, so the case is covered explicitly."""
     numeric = (
@@ -231,17 +268,29 @@ def test_numeric_looking_track_ids_survive_as_strings(tmp_path):
     import_playlists(xml, data_dir=data_dir, now=FIXED_CLOCK)
 
     membership = pd.read_parquet(membership_pq(data_dir))
-    assert membership["track_id"].dtype == object
+    assert membership["track_id"].dtype == parquet_string_dtype
     assert "192072736" in set(membership["track_id"])
     assert 192072736 not in set(membership["track_id"])
 
 
-def test_playlist_ids_join_the_two_tables(summary, data_dir):
+def test_playlist_ids_join_the_two_tables(summary, data_dir, parquet_string_dtype):
+    """The join itself, stated as the join rate rather than as a dtype.
+
+    A dtype equality is a proxy for "these two tables still join"; the merge
+    below is that property directly, and it is the one that has to survive a
+    pandas upgrade. The dtypes are still asserted underneath it, because a
+    mismatch is how the join would fail *silently* - matching nothing and
+    raising nothing - which is the failure this pair exists to rule out."""
     playlists = pd.read_parquet(playlists_pq(data_dir))
     membership = pd.read_parquet(membership_pq(data_dir))
 
+    # Every membership row finds its playlist: a 100% join rate.
+    joined = membership.merge(playlists, on="playlist_id", how="inner")
+    assert len(joined) == len(membership) == FIXTURE_MEMBERSHIP_COUNT
+
     assert set(membership["playlist_id"]) <= set(playlists["playlist_id"])
-    assert membership["playlist_id"].dtype == playlists["playlist_id"].dtype == object
+    assert membership["playlist_id"].dtype == playlists["playlist_id"].dtype
+    assert membership["playlist_id"].dtype == parquet_string_dtype
 
 
 # ---------------------------------------------------------------------------
