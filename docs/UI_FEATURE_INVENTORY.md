@@ -1999,9 +1999,11 @@ running interpreter, in both directions.
 *Which CPython, which is the part that was wrong.* A compiled-in table is
 exactly one Unicode version, so "CPython's table" does not finish the sentence
 until it names an interpreter. The first version of it was generated from the
-one that runs the TESTS, and the app ships on a different one —
-`.github/workflows/test-macos.yml` sets up 3.10 and every `build-*.yml` freezes
-3.11. Measured on real interpreters:
+one that runs the TESTS, and at that time the app shipped on a different one —
+`.github/workflows/test-macos.yml` set up 3.10 while every `build-*.yml` froze
+3.11. PR #21 has since aligned the test workflow to 3.11, so both now name the
+same interpreter; the divergence below is what made the defect possible.
+Measured on real interpreters:
 
 | CPython | `unicodedata` | `Nd` | `int("𖫁𖫀")` (Tangsa ten) |
 | --- | --- | --- | --- |
@@ -2041,9 +2043,10 @@ never their VALUES, so a table whose Tangsa run was split in two answered `0`
 for a Tangsa ten and passed everything. The first half now FAILS on any
 interpreter whose `unicodedata` is not the version the table declares, with a
 message saying that parity with the shipped interpreter was not proved there.
-Until `.github/workflows/test-macos.yml` names the interpreter `build-*.yml`
-freezes, that is one red test on CI; aligning them makes every run a total
-proof and requires no change to the test file.
+That cost one red test on CI until `.github/workflows/test-macos.yml` named the
+interpreter `build-*.yml` freezes. PR #21 aligned them, so every CI run is now a
+total proof, and it required no change to this test file. Running the suite on
+3.10 locally still fails that one test, by design and with the message above.
 
 *The other limit, unchanged:* magnitude. Python's integers are unbounded and
 these arrive as a float64, so a value past `Number.MAX_SAFE_INTEGER` loses
@@ -2206,10 +2209,10 @@ It cannot be closed from the frontend as the API stands. `POST /api/set` returns
 `track_count` but no revision — and a count is not a revision, since a delete
 followed by a reindex restores it.
 
-*The fix, for both halves: atomic publish in `LibrarySession`.* One immutable
-snapshot object rebound as a unit, so a reader's single attribute read is atomic
-by construction and the object it gets can carry the revision the response needs
-to echo. This codebase has used that shape three times already — PR #15 (the
+*The approach originally proposed for both halves — NOT what happened.* Atomic
+publish in `LibrarySession`: one immutable snapshot object rebound as a unit, so
+a reader's single attribute read is atomic by construction and the object it
+gets can carry the revision the response needs to echo. This codebase has used that shape three times already — PR #15 (the
 transitions vector cache, built privately and published by rebinding an
 immutable tuple), PR #17 (`_Generation` + `MappingProxyType`) and PR #19
 (generation files behind a manifest pointer).
