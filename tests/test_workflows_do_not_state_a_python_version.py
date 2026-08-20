@@ -23,7 +23,8 @@ literal without ever placing one next to the flag:
 uv resolves for 3.12. The word next to the flag is a variable, so assertion 4
 sees nothing; the block mentions ``.python-version``, so the second check is
 satisfied too; and the lock the mutant produces is byte-identical, so the
-drift gate accepts it. Measured, not reasoned: 73 passed. Reading that block
+drift gate accepts it. Measured, not reasoned: applied to the real
+``test-macos.yml``, every test in this file passed. Reading that block
 correctly means knowing what ``ACTING_PYTHON_VERSION`` holds, which is the
 shell-interpretation treadmill that cost this PR family four wrong answers,
 so it is pinned as a miss rather than fixed --
@@ -875,8 +876,9 @@ def uv_python_version_problems(where, run):
       a reader trust the block is present and honest-looking: the file IS
       read, the flag IS derived from a variable, and ``.python-version`` IS
       mentioned. uv resolves for 3.12. Applied to ``test-macos.yml`` this was
-      measured green -- 73 passed -- and the recompiled lock was
-      byte-identical, so the drift gate accepted it too. Closing it means
+      measured green -- every test in this file passed, mutation proved
+      applied by sha and reverted byte-identical -- and the recompiled lock
+      was byte-identical too, so the drift gate accepted it as well. Closing it means
       tracking assignments, which is a shell interpreter; the deliberate
       choice is to miss it and say so. Pinned by
       :func:`test_a_variable_assigned_a_literal_in_the_same_block_is_not_seen`.
@@ -1060,8 +1062,8 @@ def test_a_variable_assigned_a_literal_in_the_same_block_is_not_seen():
     ``.python-version`` appears. uv still resolves for 3.12, because the
     variable next to the flag is a DIFFERENT one, assigned a literal two
     lines up. Applied to the real ``test-macos.yml`` this was measured green
-    at 73 passed, and the lock it produces is byte-identical, so the
-    drift gate does not catch it either.
+    -- the whole file passed -- and the lock it produces is byte-identical,
+    so the drift gate does not catch it either.
 
     Seeing it requires tracking what an assignment put in a variable -- a
     shell interpreter, which is exactly the apparatus that shipped four
