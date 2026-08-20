@@ -896,6 +896,16 @@ def test_the_shipped_version_is_read_from_the_build_workflows(tmp_path, monkeypa
     commented-out line counted as a setting. Each of those is a way for this
     file to be confidently wrong about which interpreter the app ships on,
     which is round 3's defect exactly.
+
+    ROUND 5'S TWO MODES NEEDED NO EXOTIC VALUE, only ordinary YAML, and they
+    are the last four cases below. Anchoring the key to the start of a line
+    made ``with: {python-version: "3.10"}`` INVISIBLE, and made a heredoc line
+    inside ``run: |`` VISIBLE as though it were a setting. Either alone is
+    caught by the guards above - two versions in one file is "sets several
+    Pythons". Together they are not: the real setting cannot be seen and the
+    shell script answers in its place, leaving no ambiguity to notice. That
+    combination was reproduced on the real ``build-macos.yml``, where it made
+    all eleven tests pass while the build used 3.10.
     """
     workflows = tmp_path / "workflows"
     workflows.mkdir()
