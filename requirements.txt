@@ -1,5 +1,10 @@
 # Cosine Companion - Python Dependencies
 
+# This is the human-facing declaration of supported dependency ranges. The
+# macOS app build and its test job install requirements-macos-arm64-py311.lock
+# instead so release inputs are fully reproducible. Update and validate that
+# lock whenever a direct requirement changes here.
+
 # Core data processing
 numpy>=1.20.0
 pandas>=1.3.0
