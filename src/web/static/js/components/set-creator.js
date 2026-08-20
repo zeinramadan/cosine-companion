@@ -74,6 +74,14 @@ const statusGenerated = (count) => `✅ Generated ${count}-track set successfull
  * catalogued rule is about the name. */
 const UNFILLABLE_MARKER = 'No suitable track found';
 
+/* What a row says once the build has told us its track is gone.
+ *
+ * The row is kept rather than removed - see `droppedAnchorPositions` for why -
+ * so it has to stop reading as a live anchor. Without this an anchor row saying
+ * "track X is anchored at position 4" sits directly above a set with an
+ * ordinary generated track at position 4, and the row is simply false. */
+const DROPPED_ANCHOR_NOTE = '⚠️ no longer in the library — this anchor was not used';
+
 /**
  * The score suffix, or `''`.
  *
@@ -184,6 +192,62 @@ export function mountSetCreator({ store }) {
       anchorPositions().map((position) => [position, anchors[position].track_id]),
       parseIntegerStrictly(totalTracks),
     ]);
+  }
+
+  /* Which of the anchors we ASKED for the build did not honour.
+   *
+   * THE TWO CASES ARE DISTINGUISHABLE FROM THE RESPONSE AS IT STANDS, and an
+   * earlier version of this destination said they were not. It declined to
+   * touch the row on the grounds that a deleted anchor and :967's
+   * duplicate-anchor case "produce the identical shape", so any frontend rule
+   * would remove the wrong row. Probed against the real endpoint on the
+   * twelve-track fixture, over five tracks, they are not identical at all:
+   *
+   *   duplicate {1: f01, 4: f01} -> 4 tracks, positions [1, 2, 3, 5]
+   *                                 position 4 ABSENT
+   *   deleted   {1: f06, 4: f01} -> 5 tracks, positions [1, 2, 3, 4, 5]
+   *                                 position 1 PRESENT, f02, is_anchor false
+   *
+   * `generate_set` drops a deleted anchor and lets an ordinary pick FILL the
+   * slot, while its de-duplication pass filters the assembled list and takes
+   * the slot away with the row (`set_generator.py:176-187`). So a requested
+   * position that came back OCCUPIED BY SOMETHING ELSE is a dropped anchor, and
+   * a requested position that is MISSING ENTIRELY is the duplicate. The two
+   * differ in the response length as well, which is a second, independent
+   * signal; the position rule alone is enough and is the one used here.
+   *
+   * No new API field, and no guessing.
+   */
+  function droppedAnchorPositions(request, tracks) {
+    const filledPositions = new Set(tracks.map((track) => Number(track.position)));
+    const anchoredIds = new Set(
+      tracks.filter((track) => track.is_anchor).map((track) => track.track_id),
+    );
+    const dropped = [];
+    for (const [position, trackId] of Object.entries(request)) {
+      if (!filledPositions.has(Number(position))) {
+        // The slot is GONE, not reassigned: the de-duplication case, which
+        // filters the assembled list instead of refilling the position. The
+        // track is still in the library and the row is still true.
+        continue;
+      }
+      if (anchoredIds.has(trackId)) {
+        // PLACED - either at the position we asked for, which is the ordinary
+        // case, or at the one occurrence de-duplication kept, which is :967's.
+        // Both mean the library still has the track, so the row is still true.
+        //
+        // This one check covers both because a deleted track is dropped at
+        // EVERY position at once (`set_generator.py:55` tests `meta_ix.index`
+        // once per anchor), so an id anchored anywhere in the answer cannot be
+        // a deleted one. A separate `row is exactly our anchor` fast path was
+        // written here first and removed: it is strictly subsumed by this, and
+        // a mutation disabling it survived the whole suite - a branch no test
+        // can reach is a branch that will be wrong silently.
+        continue;
+      }
+      dropped.push(Number(position));
+    }
+    return dropped;
   }
 
   async function addAnchor() {
@@ -307,6 +371,20 @@ export function mountSetCreator({ store }) {
       return;
     }
     generatedSet = body.tracks;
+
+    // Only here. A failed build and an abandoned one say nothing about which
+    // anchors the library still has, so neither may mark a row - and a mark
+    // already on a row survives until a build that HONOURS that anchor clears
+    // it, which re-adding the track at the same position also does, because
+    // `addAnchor` writes a fresh anchor object.
+    const dropped = new Set(droppedAnchorPositions(request, body.tracks));
+    anchors = Object.fromEntries(
+      Object.entries(anchors).map(([position, anchor]) => [
+        position,
+        { ...anchor, dropped: dropped.has(Number(position)) },
+      ]),
+    );
+
     status = statusGenerated(generatedSet.length);
     render();
   }
@@ -438,6 +516,15 @@ export function mountSetCreator({ store }) {
         element('span', 'anchors__position', `${position}.`),
         element('span', 'anchors__name', anchorName(anchor)),
       );
+      if (anchor.dropped) {
+        // Marked, not removed and not disabled. Removing it would take away the
+        // only record of what the user had chosen, and disabling it would take
+        // away the `Remove` that clears it; the note is in the row text, so it
+        // reaches a screen reader through the option's accessible name rather
+        // than through colour alone.
+        row.dataset.dropped = 'true';
+        row.append(element('span', 'anchors__dropped', DROPPED_ANCHOR_NOTE));
+      }
       row.addEventListener('click', () => {
         // Clicking the selected row deselects it, so `Remove` can be put back
         // into its no-selection state without removing anything.

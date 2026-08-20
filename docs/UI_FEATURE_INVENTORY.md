@@ -1915,7 +1915,9 @@ longer in `meta_ix`", and that is what `update_anchor_listbox` does: it holds a
 bare `Dict[int, str]` and looks the artist and title up at render time
 (`ui/set_creator_tab.py:88-90`), so a row it cannot look up is not drawn. This
 destination captures the artist and title from the search result the anchor was
-chosen from, so its row survives a delete and reads exactly as it did before it.
+chosen from, so nothing a delete does can reach the row. It therefore survives —
+but it does not survive UNCHANGED: the next accepted build marks it, for the
+reasons set out further down this section.
 
 This PR shipped saying the case was unreachable, which is not true any more. The
 sibling Library destination adds a reachable DELETE, and `delete_tracks`
@@ -1934,15 +1936,49 @@ of the two answers: a row on screen is a row that can be selected and `Remove`d,
 where Tk's vanishes without a word and leaves the dead id in `self.anchors` to
 be dropped again on every subsequent build.
 
-Not done, and deliberately. The response is NOT made to report which anchors
-were dropped, and the rows are not self-healed from it, because the drop cannot
-be inferred from what comes back: :967's duplicate anchor produces the identical
-shape — a requested position with no anchor on it, for a track the library still
-has — so a frontend rule keyed on that shape would remove the wrong row. Telling
-the two apart means new response surface on an endpoint this PR is not otherwise
-changing. Pinned as it stands by `tests/web/test_api_set.py`, through a real
-`delete_tracks` rather than an invented id, and by
-`tests/web/js/set_creator.test.mjs` for the row that stays.
+**The row is MARKED, and the previous entry here was wrong about why it could
+not be.** Round 2 declined to touch the stale row, on the stated grounds that
+the drop could not be inferred from what comes back — that :967's duplicate
+anchor "produces the identical shape — a requested position with no anchor on
+it, for a track the library still has — so a frontend rule keyed on that shape
+would remove the wrong row", and that telling them apart would need new response
+surface.
+
+That is false, and this document already contained the two facts that make it
+false, four paragraphs apart. Probed against the real endpoint on the
+twelve-track fixture, five tracks:
+
+| request | response | the requested position |
+| --- | --- | --- |
+| duplicate `{1: f01, 4: f01}` | 4 tracks, positions `[1, 2, 3, 5]` | **absent** — de-duplication filters the assembled list, so the slot goes with the row (`set_generator.py:176-187`) |
+| deleted `{1: f06, 4: f01}` | 5 tracks, positions `[1, 2, 3, 4, 5]` | **present**, `f02`, `is_anchor: false` — the anchor is dropped before placement (`set_generator.py:55`) and an ordinary pick fills the slot |
+
+Two independent signals, both already in the response: the requested position is
+absent for a duplicate and reassigned for a deletion, and the duplicated id is
+still anchored at its surviving position where a deleted id is anchored nowhere.
+`set-creator.js` keys on both, in that order. No new API field.
+
+*The treatment: marked, not removed.* The row keeps its position and its name
+and gains `⚠️ no longer in the library — this anchor was not used`, with
+`data-dropped="true"` for the stylesheet. Removing it would take away the only
+record of what the user had chosen and the `Remove` that clears it; leaving it
+alone means a row asserting "this track is anchored at position 4" directly
+above a set with an ordinary generated track at position 4, which is worse than
+either. The note is in the row text, so it reaches a screen reader through the
+option's accessible name rather than through colour alone. The mark is a
+statement about the LAST accepted build: a build that honours the anchor again
+clears it, and neither a failed build nor one the screen has moved on from sets
+it, because neither carries information about what the library has.
+
+Tk still differs, and the divergence is now smaller rather than larger: Tk drops
+the row (:473) and this keeps it, marked.
+
+*What pins it.* `tests/web/test_api_set.py::test_a_dropped_anchor_and_a_duplicate_anchor_are_different_response_shapes`
+pins the premise against the real service — a change that renumbered the
+duplicate's rows to close :967's gap turns it red — and five cases in
+`tests/web/js/set_creator.test.mjs` pin the treatment, including the duplicate
+answered in a shape the service does not currently produce, which is the only
+case that reaches the second signal.
 
 **Found along the way.** Two things the code does that §2.5 and §2.12 do not
 say, reported rather than changed.

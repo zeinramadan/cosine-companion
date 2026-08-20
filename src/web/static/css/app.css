@@ -508,6 +508,19 @@ button {
   font-size: var(--text-md);
 }
 
+/* An anchor whose track the library no longer has. The build drops it and
+   fills the slot with an ordinary pick, so the row above the set would
+   otherwise claim a position the set does not give it. The note carries the
+   meaning on its own - colour is the second signal, not the only one. */
+.anchors__row[data-dropped="true"] {
+  border-color: var(--danger);
+}
+
+.anchors__dropped {
+  color: var(--danger);
+  font-size: var(--text-sm);
+}
+
 /* ---- generated set -------------------------------------------------------
    Inventory :479 - `[{position:2d}] {icon} {display_name}{score_text}`. The
    fields are laid out in columns rather than padded into one string: the

@@ -305,6 +305,69 @@ def test_an_anchor_deleted_after_it_was_chosen_takes_the_same_path(
     )
 
 
+def test_a_dropped_anchor_and_a_duplicate_anchor_are_different_response_shapes(
+    api, fixture_library, isolated_deleted_tracks
+):
+    """THE PREMISE THE FRONTEND'S STALE-ROW RULE STANDS ON.
+
+    Round 2 declined to touch a stale anchor row, on the stated grounds that a
+    deleted anchor and :967's duplicate anchor "produce the identical shape - a
+    requested position with no anchor on it, for a track the library still has -
+    so a frontend rule keyed on that shape would remove the wrong row". That is
+    false, and this is the probe that says so, run against the same service the
+    endpoint calls rather than against a description of it.
+
+    The two differ in two independent ways:
+
+    * the DUPLICATE loses the position entirely, because the de-duplication pass
+      filters the assembled list (``set_generator.py:176-187``), so the response
+      is SHORT and the requested position is ABSENT;
+    * the DELETED anchor is dropped before placement (``set_generator.py:55``)
+      and an ordinary pick fills the slot, so the response is FULL LENGTH and
+      the requested position is PRESENT with ``is_anchor`` false.
+
+    And the duplicated id is still anchored at its surviving position, where a
+    deleted id is anchored nowhere - which is the signal ``set-creator.js``
+    actually keys on, because it is the one that cannot be confused by a set
+    that is short for some other reason.
+
+    This test exists so that a service change which collapsed the two shapes
+    would fail HERE, next to the behaviour, rather than silently making the
+    frontend mark the wrong row.
+    """
+    duplicate_status, duplicate = generate(api, {"1": "f01", "4": "f01"}, 5)
+
+    assert duplicate_status == 200
+    assert [t["position"] for t in duplicate["tracks"]] == [1, 2, 3, 5]
+    assert 4 not in [t["position"] for t in duplicate["tracks"]], (
+        "the duplicate's lost position is present, so it is no longer "
+        "distinguishable from a deleted anchor by position"
+    )
+    assert "f01" in [t["track_id"] for t in duplicate["tracks"] if t["is_anchor"]], (
+        "the surviving occurrence is not anchored, so the second signal is gone"
+    )
+
+    # The same request shape, with one anchor whose track genuinely went away.
+    assert fixture_library.delete_tracks(["f06"]) == 1
+    deleted_status, deleted = generate(api, {"1": "f06", "4": "f01"}, 5)
+
+    assert deleted_status == 200
+    assert [t["position"] for t in deleted["tracks"]] == [1, 2, 3, 4, 5], (
+        "the deleted anchor's slot was not refilled, so the response now looks "
+        "like the duplicate case"
+    )
+    dropped_slot = next(t for t in deleted["tracks"] if t["position"] == 1)
+    assert dropped_slot["track_id"] != "f06"
+    assert dropped_slot["is_anchor"] is False
+    assert "f06" not in [t["track_id"] for t in deleted["tracks"] if t["is_anchor"]]
+
+    # The live anchor in the same request is untouched, which is what stops the
+    # frontend marking every row whenever any one of them is dropped.
+    surviving = next(t for t in deleted["tracks"] if t["position"] == 4)
+    assert surviving["track_id"] == "f01"
+    assert surviving["is_anchor"] is True
+
+
 def test_an_empty_library_is_a_409_before_anything_else_is_looked_at(tmp_path):
     """Same ordering and same code as ``_recommendations``: a library with no
     index cannot answer, and saying so beats blaming the anchors. The body here

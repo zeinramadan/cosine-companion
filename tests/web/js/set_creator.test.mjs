@@ -115,6 +115,18 @@ function anchorTexts() {
   );
 }
 
+/** The `no longer in the library` note on each anchor row, or undefined. */
+function anchorNotes() {
+  return anchorRows().map((row) => textsByClass(row, 'anchors__dropped')[0]);
+}
+
+/** `data-dropped` on each anchor row, as the stylesheet keys off it. */
+function anchorDroppedFlags() {
+  return anchorRows().map((row) => row.dataset.dropped);
+}
+
+const DROPPED_NOTE = '⚠️ no longer in the library — this anchor was not used';
+
 function setRows() {
   return byClass(dom.root, 'setlist__row');
 }
@@ -550,14 +562,19 @@ const SET_WITHOUT_THE_DELETED_ANCHOR = SET.map((track) =>
     : track,
 );
 
-test('an anchor deleted on another destination keeps its row, and the set is where the loss shows', async () => {
+test('an anchor deleted on another destination keeps its row, MARKED, and the set is where the loss shows', async () => {
   /* §6.6. The anchor row is a capture taken when the anchor was CHOSEN - the
    * artist and title ride along in `anchors` rather than being looked up in
    * `meta_ix` at render time the way set_creator_tab.py:88-90 looks them up -
    * so a DELETE on the Library destination cannot reach it. Tk's row vanishes
    * (:473, "skipped entirely if its track_id is no longer in meta_ix") and this
-   * one does not. Declared, not fixed: the drop cannot be inferred from the
-   * response, because :967's duplicate anchor produces the identical shape.
+   * one does not.
+   *
+   * An earlier version of this test asserted the row survived UNCHANGED, on the
+   * stated grounds that the drop could not be inferred from the response
+   * because :967's duplicate anchor "produces the identical shape". That is
+   * false - see the next test, which is the duplicate case and is visibly a
+   * different shape - so the row is now marked instead of quietly lying.
    */
   const { view } = mount();
   await addAnchor(ALPHA, 1);
@@ -566,9 +583,13 @@ test('an anchor deleted on another destination keeps its row, and the set is whe
   fetches.deliver(SET_KEY, { tracks: SET_WITHOUT_THE_DELETED_ANCHOR });
   await settle();
 
-  // The row stays, unchanged, and stays selectable - which is what makes it
-  // removable, and is the reason this is the better of the two behaviours.
+  // The row stays, and stays selectable - which is what makes it removable, and
+  // is the reason marking beats removing. What it no longer does is claim the
+  // position: the note says the track is gone and the anchor was not used.
   assert.deepEqual(anchorTexts(), ['1. Blawan – Why They Hide']);
+  assert.deepEqual(anchorNotes(), [DROPPED_NOTE]);
+  assert.deepEqual(anchorDroppedFlags(), ['true']);
+  assert.equal(view.state().anchors['1'].dropped, true);
   assert.deepEqual(Object.keys(view.state().anchors), ['1']);
 
   // And the set is where the loss is visible: nothing is locked, and the track
@@ -586,6 +607,183 @@ test('an anchor deleted on another destination keeps its row, and the set is whe
   );
   // Nothing says so, in either implementation.
   assert.equal(statusLine(), '✅ Generated 3-track set successfully!');
+});
+
+/* The duplicate-anchor answer, in the shape the real endpoint produces.
+ * Probed against `POST /api/set` on the twelve-track fixture library:
+ * `{1: f01, 4: f01}` over five tracks comes back as FOUR tracks at positions
+ * 1, 2, 3, 5 - the de-duplication pass (`set_generator.py:176-187`) filters the
+ * assembled list, so the second occurrence takes its whole slot with it. The
+ * first occurrence is still anchored, which is the signal that says the library
+ * still has the track. */
+const SET_WITH_A_DUPLICATE_ANCHOR = [
+  generatedRow({
+    track_id: ALPHA.track_id,
+    position: 1,
+    is_anchor: true,
+    score: 1.0,
+    artist: ALPHA.artist,
+    title: ALPHA.title,
+    display_name: 'Blawan – Why They Hide',
+    icon: '🔒',
+  }),
+  generatedRow({ track_id: 'g2', position: 2 }),
+  generatedRow({ track_id: 'g3', position: 3 }),
+  generatedRow({ track_id: 'g5', position: 5 }),
+];
+
+test('the same track anchored twice leaves both rows unmarked, because that is not a deletion', async () => {
+  /* THE TEST THE OLD JUSTIFICATION WAS AFRAID OF. Round 2 declined to touch the
+   * stale row because a frontend rule "would remove the wrong row" - meaning
+   * this row, whose track the library still has. So the rule has to be shown
+   * not to.
+   *
+   * Two signals separate the cases and both are in the response already:
+   * the duplicate's lost position is ABSENT (position 4 here), where a deleted
+   * anchor's position is PRESENT and reassigned; and the duplicated id is still
+   * anchored at its surviving position, where a deleted id is anchored nowhere.
+   */
+  const { view } = mount();
+  await addAnchor(ALPHA, 1);
+  await addAnchor(ALPHA, 4);
+  await typeTotal('5');
+
+  await pressGenerate();
+  fetches.deliver(SET_KEY, { tracks: SET_WITH_A_DUPLICATE_ANCHOR });
+  await settle();
+
+  assert.deepEqual(
+    anchorNotes(),
+    [undefined, undefined],
+    'a duplicate anchor was marked as deleted; the rule removed the wrong row',
+  );
+  assert.deepEqual(anchorDroppedFlags(), [undefined, undefined]);
+  assert.equal(view.state().anchors['1'].dropped, false);
+  assert.equal(view.state().anchors['4'].dropped, false);
+  // :967's gap is still there and is still the only thing that shows it.
+  assert.deepEqual(
+    setRows().map((row) => setRowFields(row).position),
+    ['1', '2', '3', '5'],
+  );
+});
+
+/* The same duplicate request, answered the way the service does NOT answer it
+ * today: the lost slot REFILLED with an ordinary pick instead of removed.
+ * `tests/web/test_api_set.py::test_a_dropped_anchor_and_a_duplicate_anchor_are_different_response_shapes`
+ * pins that the real endpoint produces the gap, so this shape is hypothetical -
+ * which is exactly why it is worth a test. It is the shape round 2 was afraid
+ * of: a requested position occupied by an ordinary track, for a track the
+ * library still has. Under the position rule ALONE it is indistinguishable from
+ * a deletion. */
+const SET_WITH_A_DUPLICATE_SLOT_REFILLED = [
+  generatedRow({
+    track_id: ALPHA.track_id,
+    position: 1,
+    is_anchor: true,
+    score: 1.0,
+    artist: ALPHA.artist,
+    title: ALPHA.title,
+    display_name: 'Blawan – Why They Hide',
+    icon: '🔒',
+  }),
+  generatedRow({ track_id: 'g2', position: 2 }),
+  generatedRow({ track_id: 'g3', position: 3 }),
+  generatedRow({ track_id: 'g4', position: 4 }),
+  generatedRow({ track_id: 'g5', position: 5 }),
+];
+
+test('a duplicate whose slot was refilled is still not a deletion, because the id is anchored elsewhere', async () => {
+  /* WHAT THIS PINS THAT THE TEST ABOVE DOES NOT. In the shape the service
+   * actually produces, the duplicate's position is ABSENT, so the rule never
+   * reaches its second signal - the guard that asks whether the requested id is
+   * anchored anywhere in the answer was dead code, and a mutation removing it
+   * survived the whole suite.
+   *
+   * It is not dead for a service that refills the slot, and refilling is the
+   * obvious way someone would "fix" :967's visible gap. Then the position rule
+   * alone marks position 4 as deleted - the wrong row, for a track the library
+   * still has, which is precisely the failure round 2 predicted. The second
+   * signal is what makes that prediction wrong instead of right: a deleted
+   * track is dropped at EVERY position at once, so an id still anchored
+   * somewhere in the answer cannot be one.
+   */
+  const { view } = mount();
+  await addAnchor(ALPHA, 1);
+  await addAnchor(ALPHA, 4);
+  await typeTotal('5');
+
+  await pressGenerate();
+  fetches.deliver(SET_KEY, { tracks: SET_WITH_A_DUPLICATE_SLOT_REFILLED });
+  await settle();
+
+  assert.deepEqual(
+    anchorNotes(),
+    [undefined, undefined],
+    'a duplicate whose slot was refilled was marked as deleted - the rule fell ' +
+      'back to the position signal alone and marked the wrong row',
+  );
+  assert.equal(view.state().anchors['4'].dropped, false);
+});
+
+test('a build that honours the anchor again clears the mark', async () => {
+  // The mark is a statement about the last build, not a permanent condemnation:
+  // a reindex can put the track back, and the next answer says so.
+  const { view } = mount();
+  await addAnchor(ALPHA, 1);
+
+  await pressGenerate();
+  fetches.deliver(SET_KEY, { tracks: SET_WITHOUT_THE_DELETED_ANCHOR });
+  await settle();
+  assert.equal(view.state().anchors['1'].dropped, true);
+
+  await pressGenerate();
+  fetches.deliver(SET_KEY, {
+    tracks: [
+      generatedRow({
+        track_id: ALPHA.track_id,
+        position: 1,
+        is_anchor: true,
+        score: 1.0,
+        display_name: 'Blawan – Why They Hide',
+        icon: '🔒',
+      }),
+      generatedRow({ track_id: 'g2', position: 2 }),
+      generatedRow({ track_id: 'g3', position: 3 }),
+    ],
+  });
+  await settle();
+
+  assert.equal(view.state().anchors['1'].dropped, false, 'the mark outlived the drop');
+  assert.deepEqual(anchorNotes(), [undefined]);
+});
+
+test('neither a failed build nor an abandoned one marks a row', async () => {
+  /* A mark is a claim about what the library has, and only a build that came
+   * back and was ACCEPTED carries that information. A failure carries none, and
+   * an answer to a configuration the screen has moved on from carries it about
+   * the wrong configuration. */
+  const { view } = mount();
+  await addAnchor(ALPHA, 1);
+
+  await pressGenerate();
+  fetches.deliverError(SET_KEY, 400, 'set_generation_failed', 'nope');
+  await settle();
+  await answer('OK');
+  assert.equal(view.state().anchors['1'].dropped, undefined, 'a failure marked a row');
+  assert.deepEqual(anchorNotes(), [undefined]);
+
+  // And the abandoned one: generate, change the configuration, then answer.
+  await pressGenerate();
+  await addAnchor(BETA, 3, 1);
+  fetches.deliver(SET_KEY, { tracks: SET_WITHOUT_THE_DELETED_ANCHOR });
+  await settle();
+
+  assert.equal(
+    view.state().anchors['1'].dropped,
+    undefined,
+    'a set the screen had moved on from marked a row',
+  );
+  assert.deepEqual(anchorNotes(), [undefined, undefined]);
 });
 
 test('a failed regeneration leaves the previous set on screen, as Tk does', async () => {
