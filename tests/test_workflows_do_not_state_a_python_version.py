@@ -293,10 +293,17 @@ COMMIT_SHA = re.compile(r"\A[0-9a-f]{40}\Z")
 # immediately after the flag name and therefore missed
 # ``"--python-version" 3.12``: the shell strips those quotes and uv receives
 # the literal, while the regex saw a ``"`` where it demanded a separator and
-# matched nothing at all. A substring cannot be dodged by re-quoting the flag,
-# because the characters are still there. See
-# :func:`uv_python_version_problems` for what is done with it and for what it
-# still cannot see.
+# matched nothing at all. Re-quoting the flag AT ITS ENDS cannot dodge a
+# substring, because ``"--python-version"`` still contains the characters.
+# Re-quoting it in the MIDDLE does dodge it, and this said otherwise:
+# ``--pyth"on-version"`` is a different run of characters, and the shell glues
+# it back together before uv sees it. MEASURED in zsh and bash --
+# ``set -- uv pip compile --pyth"on-version"=3.12 reqs.in`` gives argv
+# ``<--python-version=3.12>`` in both, while ``in`` finds nothing. That miss is
+# deliberate and pinned; see
+# :func:`test_a_quote_inside_the_flag_name_is_not_seen`. See
+# :func:`uv_python_version_problems` for what is done with this constant and
+# for what it still cannot see.
 UV_PYTHON_VERSION_FLAG = "--python-version"
 
 
@@ -876,10 +883,35 @@ def literal_python_versions_passed_to_uv(run):
     """Every bare version literal sitting where uv reads ``--python-version``.
 
     Both spellings: ``--python-version 3.12`` (the value is the next word) and
-    ``--python-version=3.12`` (the value is glued on). Quoting either the flag
-    or the value changes nothing, because the quotes come off first -- which
-    is the whole repair, since ``"--python-version" 3.12`` is exactly the shape
-    that walked past the previous regex.
+    ``--python-version=3.12`` (the value is glued on). Quotes AT THE ENDS of
+    either half change nothing, because those come off first -- which is the
+    whole repair, since ``"--python-version" 3.12`` is exactly the shape that
+    walked past the previous regex.
+
+    ONLY AT THE ENDS. This said "quoting either the flag or the value changes
+    nothing", and that sentence is false: ``--pyth"on-version"=3.12`` carries
+    a quote in the middle of the flag NAME, and the shell hands uv
+    ``--python-version=3.12`` all the same -- measured in zsh and bash, argv
+    ``<--python-version=3.12>`` in both, and this function returns ``[]``.
+    :func:`_unquote` takes quotes off the two ends of a word and off the two
+    ends of each half of a glued word, and off nothing else, so the characters
+    it compares are simply not the flag. That miss is bullet 1 of the
+    blind-spot list on :func:`uv_python_version_problems`; it is pinned twice,
+    at that function's level by
+    :func:`test_a_flag_assembled_from_fragments_is_not_seen` and at this one's
+    by :func:`test_a_quote_inside_the_flag_name_is_not_seen`.
+
+    Making the sentence true instead of narrowing it was considered and
+    rejected on measurement. Deleting EVERY quote character from a word buys
+    the interior-quote catch and costs two false positives, on the one check
+    in this file whose design note says a false positive is what gets a check
+    weakened or deleted. Measured in zsh and bash:
+    ``--python-version \"3.12\"`` hands uv ``<"3.12">``, quotes included,
+    which uv rejects -- and the repair would report it as a literal; and
+    ``"--pyth'on-version"=3.12`` hands uv ``<--pyth'on-version=3.12>``, which
+    is not this flag at all -- and the repair would report that too. Getting
+    all three right is a shell unquoter, which is the apparatus that shipped
+    four confident wrong answers in earlier rounds of this PR.
 
     BOTH HALVES OF A GLUED WORD ARE UNQUOTED, not just the value, and that is
     the round-6 repair. ``"--python-version"=3.12`` is one shell word; the
@@ -1126,13 +1158,21 @@ def test_a_run_block_that_never_mentions_the_flag_is_left_alone():
     ],
     ids=lambda f: f.replace(" ", "_"),
 )
-def test_a_literal_is_found_however_the_shell_quotes_it(fragment):
+def test_a_literal_is_found_however_the_ends_of_the_word_are_quoted(fragment):
     """The repair for the third green mutant.
+
+    The name used to be ``..._however_the_shell_quotes_it``, which claimed
+    every quoting the shell accepts and is not what any row below tests.
+    ``--pyth"on-version"=3.12`` is a quoting the shell accepts, it is glued
+    back into this exact flag before uv sees it, and it returns ``[]``. Every
+    row here quotes only the ENDS of the word, or the ends of one half of a
+    word glued with ``=``, and that is what the name says now. The boundary
+    itself is the test directly below.
 
     The previous regex demanded a space or ``=`` immediately after the flag
     name, so a quote character there hid the literal completely. Quotes come
-    off the words first now, which costs no understanding of the shell: the
-    literal is either the next word or glued on with ``=``.
+    off the ENDS of the words first now, which costs no understanding of the
+    shell: the literal is either the next word or glued on with ``=``.
 
     The four glued-and-quoted rows were added in round 6, when a reviewer
     showed that ``"--python-version"=3.12`` -- which this file's own
@@ -1143,6 +1183,47 @@ def test_a_literal_is_found_however_the_shell_quotes_it(fragment):
     assert literal_python_versions_passed_to_uv(
         f"uv pip compile {fragment} reqs.in"
     ) == ["3.12"]
+
+
+@pytest.mark.parametrize(
+    "fragment",
+    [
+        '--pyth"on-version"=3.12',
+        '--pyth"on-version" 3.12',
+        '--python-ver"sion"=3.12',
+    ],
+    ids=lambda f: f.replace(" ", "_"),
+)
+def test_a_quote_inside_the_flag_name_is_not_seen(fragment):
+    """The boundary of the test above, pinned as a MISS rather than fixed.
+
+    The shell glues each of these back into this exact flag -- MEASURED, zsh
+    and bash agree: argv is ``<--python-version=3.12>`` or
+    ``<--python-version> <3.12>``. This function returns ``[]`` for all three,
+    and :func:`uv_python_version_problems` returns no problems at all for
+    them, because its ``UV_PYTHON_VERSION_FLAG not in run`` early return fires
+    first: the characters never appear as one contiguous run, so the
+    mentions-the-version-file check does not run either.
+
+    This is bullet 1 of the blind-spot list, which
+    :data:`PINNED_BLIND_SPOTS` already declares pinned by
+    :func:`test_a_flag_assembled_from_fragments_is_not_seen`. It is restated
+    here, at the level of the function whose docstring made the false claim
+    and beside the rows that claim bounds. It is deliberately NOT a second
+    entry in that tuple: the tuple is one name per bullet, and adding a name
+    without adding a bullet is the arithmetic
+    :func:`test_the_blind_spot_accounting_is_checked_not_remembered` exists to
+    keep honest.
+
+    Only the flag NAME is interior-quoted here. A quote interior to the VALUE
+    -- ``--python-version 3".12"`` -- is a different bullet, number 4, which
+    :data:`DOCUMENTED_ONLY_BLIND_SPOTS` declares documented only. Asserting
+    that one executably would make that declaration false while the totals
+    still added up, which is exactly the shape round 6 found.
+    """
+    assert literal_python_versions_passed_to_uv(
+        f"uv pip compile {fragment} reqs.in"
+    ) == []
 
 
 def test_the_quoted_flag_mutation_is_reported_and_names_the_literal():
