@@ -258,10 +258,35 @@ INLINE_VERSION_KEYS = ("python-version", "python_version", "pythonVersion")
 
 # Deliberately permissive about *form* (3.11, 3.11.9, 3.13) and strict about
 # there being exactly one token. Judging the value is not this file's job.
-VERSION_TOKEN = re.compile(r"^\d+(?:\.\d+)*$")
+#
+# ASCII DIGITS SPELLED OUT, NEVER ``\d``. Python's ``\d`` matches every
+# character in Unicode category Nd, so it matched ``٣.١١`` -- ARABIC-INDIC THREE,
+# ONE, ONE. With that in ``.python-version`` and ``python=٣.١١`` in
+# ``environment.yml`` the entire repository suite was green: 971 passed, 25
+# skipped, both mutations proved applied by sha256. It is not a version
+# anything downstream can use. actions/setup-python's version handling is
+# JavaScript, where ``\d`` is ASCII-only with or without the ``u`` flag, so
+# ``pythonVersionToSemantic`` passes the string through untouched and semver
+# receives it raw -- MEASURED on semver 6.3.1 and 7.7.4:
+# ``coerce("٣.١١")`` is null, ``validRange("٣.١١")`` is null, and
+# ``satisfies("3.11.9", "٣.١١")`` is false, so no release in the manifest
+# matches and ``useCpythonVersion`` reaches its ``was not found`` throw. A
+# guard that accepts a version its own consumers cannot parse is not checking
+# the thing its name says. Refused by :func:`one_version_token`, pinned by
+# :func:`test_a_version_written_in_non_ascii_digits_is_refused`.
+#
+# ANCHORED ``\A``/``\Z``, NOT ``^``/``$``. ``$`` also matches immediately
+# before a trailing newline, so ``^\d+(?:\.\d+)*$`` accepted ``"3.11\n"`` as
+# a bare token -- measured. Both callers strip before they get here, so
+# nothing reaches it with one today; that is the argument for closing it now
+# rather than after a caller stops stripping.
+VERSION_TOKEN = re.compile(r"\A[0-9]+(?:\.[0-9]+)*\Z")
 
 # A full-length git commit SHA, which is the only ref that cannot move.
-COMMIT_SHA = re.compile(r"^[0-9a-f]{40}$")
+# ``\A``/``\Z`` for the reason given above: under ``^...$`` a ref of forty hex
+# characters followed by a newline matched. ``_uses_ref`` strips the ref, so
+# nothing reaches this with one today.
+COMMIT_SHA = re.compile(r"\A[0-9a-f]{40}\Z")
 
 # The flag as PLAIN TEXT, matched with ``in``. It was a regex --
 # ``--python-version[=\s]+(\S+)`` -- which required a space or an ``=``
@@ -875,6 +900,15 @@ def literal_python_versions_passed_to_uv(run):
     strips to ``$PYTHON_VERSION``, which :data:`VERSION_TOKEN` does not match,
     so it is left alone -- this function never tries to work out what a
     variable holds.
+
+    :data:`VERSION_TOKEN` is ASCII digits only, which narrows this function
+    too: ``--python-version ٣.١٢`` is no longer reported. That is not a new
+    blind spot and it is deliberately NOT in the list below, because the list
+    is ways a block can hand uv a version it will USE. uv parses this flag as
+    a PEP 440 version and will not accept a non-ASCII digit, so such a block
+    fails the step outright rather than resolving quietly for the wrong
+    interpreter. The narrowing drops a false positive, not a catch. Pinned by
+    :func:`test_a_non_ascii_digit_next_to_the_flag_is_not_reported_as_a_literal`.
     """
     literals = []
     words = _shell_words(run)
@@ -1222,7 +1256,7 @@ def _numbered_item(doc, number):
     collected = []
     for line in _docstring_section(doc, "WHAT THIS FILE ASSERTS"):
         stripped = line.strip()
-        if collected and re.match(r"^\d+\. ", stripped):
+        if collected and re.match(r"\A[0-9]+\. ", stripped):
             break
         if collected or stripped.startswith(f"{number}. "):
             collected.append(line)
@@ -1730,6 +1764,98 @@ def test_two_python_entries_fail_even_when_one_is_correct():
 # ---------------------------------------------------------------------------
 
 
+def one_version_token(raw):
+    r"""Assert ``raw`` is one bare version token and one newline; return it.
+
+    ``raw`` is passed in rather than read from disk here, for the reason
+    argued at length on :func:`conda_python_pin`: this repository's
+    ``.python-version`` is correct, so every rejecting branch below is
+    unreachable through the real file and loosening any of them reddens
+    nothing. That is not hypothetical for this particular check. With
+    :data:`VERSION_TOKEN` written as ``\d`` it accepted a version spelled in
+    ARABIC-INDIC digits, and the only test that could have caught it was this
+    one, reading a file that does not contain them.
+    """
+    version = raw.strip()
+
+    assert VERSION_TOKEN.match(version), (
+        f"{VERSION_FILE_NAME} holds {raw!r}, which trims to {version!r} -- not "
+        "a bare version token. A second line, a comment or any other extra "
+        "text is not a note: pyenv would read every line here as a version "
+        "name while setup-python reads the whole trimmed file as ONE version "
+        "string, so the two consumers would not even agree on what this file "
+        "says. Digits must be ASCII: setup-python hands this string to semver, "
+        "whose parse is ASCII-only, and a version it cannot coerce is a "
+        "version no release in the manifest matches."
+    )
+
+    assert raw == f"{version}\n", (
+        f"{VERSION_FILE_NAME} holds {raw!r}; the one accepted content is "
+        f"{version + chr(10)!r} -- the version token and a single newline, "
+        "nothing before it and nothing after it. Both consumers trim, so this "
+        "is stricter than either requires; see "
+        ":func:`test_the_version_file_holds_exactly_one_version` for why that "
+        "is the right trade for this particular file."
+    )
+    return version
+
+
+# Every one of these is a version to Python's ``\d`` and to nothing else in
+# the chain. The name of each character is spelled out because the glyphs are
+# the entire point and are not readable at a glance in a diff.
+NON_ASCII_DIGIT_VERSIONS = [
+    ("٣.١١", "ARABIC-INDIC"),
+    ("۳.۱۱", "EXTENDED-ARABIC-INDIC"),
+    ("３.１１", "FULLWIDTH"),
+    ("𝟹.𝟷𝟷", "MATHEMATICAL-MONOSPACE"),
+    ("3.١١", "ASCII-major-ARABIC-INDIC-minor"),
+    ("٣.11", "ARABIC-INDIC-major-ASCII-minor"),
+]
+
+
+@pytest.mark.parametrize("version,script", NON_ASCII_DIGIT_VERSIONS)
+def test_a_version_written_in_non_ascii_digits_is_refused(version, script):
+    r"""The reviewer's second green mutant, driven through the real check.
+
+    ``.python-version`` holding ``٣.١١`` and ``environment.yml`` holding
+    ``python=٣.١١`` left the WHOLE REPOSITORY suite green -- 971 passed, 25
+    skipped, both mutations proved applied by sha256 and reverted
+    byte-identical. Every character above is Unicode category Nd, which is
+    what Python's ``\d`` means and is not what any consumer of this file
+    means. The mixed rows matter too: ``coerce("3.١١")`` is not null, it is
+    ``3.0.0``, so that spelling does not even fail honestly.
+    """
+    with pytest.raises(AssertionError, match="not a bare version token"):
+        one_version_token(f"{version}\n")
+
+
+def test_an_ascii_version_still_passes():
+    """The other half: this must not be a check that refuses everything."""
+    assert one_version_token("3.11\n") == "3.11"
+    assert one_version_token("3.11.9\n") == "3.11.9"
+    assert one_version_token("3\n") == "3"
+
+
+def test_a_trailing_newline_is_not_itself_part_of_a_version_token():
+    r"""``^...$`` matched a token with a newline glued on, because ``$`` also
+    matches immediately before one. Both callers strip first, so nothing
+    reached it that way; it is anchored ``\A``/``\Z`` now regardless."""
+    assert VERSION_TOKEN.match("3.11")
+    assert not VERSION_TOKEN.match("3.11\n")
+    assert not COMMIT_SHA.match("0" * 40 + "\n")
+
+
+def test_a_non_ascii_digit_next_to_the_flag_is_not_reported_as_a_literal():
+    """The one place the ASCII narrowing REMOVES a report, pinned so it is a
+    decision and not a surprise. uv parses ``--python-version`` as a PEP 440
+    version and refuses a non-ASCII digit, so this shape fails the step rather
+    than resolving quietly for another interpreter -- which is why it is not
+    in the blind-spot list."""
+    assert literal_python_versions_passed_to_uv(
+        "uv pip compile --python-version ٣.١٢ reqs.in"
+    ) == []
+
+
 def test_the_version_file_exists():
     assert stated_version_text() is not None
 
@@ -1756,6 +1882,9 @@ def test_the_version_file_holds_exactly_one_version():
     ``"3.11\n3.12"``. pyenv, meanwhile, would read two. Neither is what anyone
     meant, and both are refused here.
 
+    The two assertions live on :func:`one_version_token` so that they can be
+    driven with content this repository's file does not have; see there.
+
     THIS IS STRICTER THAN EITHER CONSUMER, and that is a deliberate departure
     from the rule argued at length in
     :func:`test_every_setup_python_step_points_at_the_version_file` -- STRIP
@@ -1777,22 +1906,4 @@ def test_the_version_file_holds_exactly_one_version():
     closed by making the check match the name rather than by softening the
     name.
     """
-    raw = stated_version_text()
-    version = raw.strip()
-
-    assert VERSION_TOKEN.match(version), (
-        f"{VERSION_FILE_NAME} holds {raw!r}, which trims to {version!r} -- not "
-        "a bare version token. A second line, a comment or any other extra "
-        "text is not a note: pyenv would read every line here as a version "
-        "name while setup-python reads the whole trimmed file as ONE version "
-        "string, so the two consumers would not even agree on what this file "
-        "says."
-    )
-
-    assert raw == f"{version}\n", (
-        f"{VERSION_FILE_NAME} holds {raw!r}; the one accepted content is "
-        f"{version + chr(10)!r} -- the version token and a single newline, "
-        "nothing before it and nothing after it. Both consumers trim, so this "
-        "is stricter than either requires; see this test's docstring for why "
-        "that is the right trade for this particular file."
-    )
+    one_version_token(stated_version_text())
