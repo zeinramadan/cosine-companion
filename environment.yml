@@ -3,11 +3,27 @@ channels:
   - conda-forge
   - defaults
 dependencies:
-  # Python. Must equal .python-version, which is the one file that states the
-  # version; tests/test_workflows_do_not_state_a_python_version.py enforces
-  # it. This pinned 3.10 while CI tested and the app shipped 3.11, so a
+  # Python. .python-version is the AUTHORITATIVE SOURCE for the version; the
+  # line below is a CHECKED RESTATEMENT of it. These are the two places in
+  # this repository a TOOL SELECTS an interpreter version from -- setup-python
+  # reads the first, conda reads this one -- and this one has to restate the
+  # literal, because conda takes a literal in the spec and cannot be pointed
+  # at .python-version the way actions/setup-python can.
+  #
+  # Other files mention a version without selecting one, and they are not
+  # covered by any of this: README.md quotes the current value as prose,
+  # setup.py declares python_requires=">=3.8" (a lower bound on
+  # installability, and an inaccurate one) plus classifiers for 3.8-3.11.
+  #
+  # What makes the restatement safe is that it is compared, character for
+  # character, against the source --
+  # tests/test_workflows_do_not_state_a_python_version.py, assertion 5. So
+  # this cannot drift without reddening the suite; an UNCHECKED second
+  # statement of the version is what is ruled out, not a second statement.
+  #
+  # This pinned 3.10 while CI tested and the app shipped 3.11, so a
   # contributor's conda environment was a different interpreter from the one
-  # anything was verified on.
+  # anything was verified on. Nothing compared them then.
   #
   # The guard accepts exactly one spelling -- `python=<version>`, here at the
   # top level, no channel prefix and no build string -- and rejects every
