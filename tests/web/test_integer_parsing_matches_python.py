@@ -137,12 +137,25 @@ of bugs in it, so it is deleted rather than taught a fifth shape.
 DELETED, not skipped and not softened. A skip exits zero and reads exactly
 like a pass, which is this project's most repeated defect.
 
-This is a deliberate, temporary reduction in coverage and the gap it leaves is
-exact: if someone changes ``build-macos.yml``'s Python without changing
-``test-macos.yml``'s, the table would be proved correct for an interpreter the
-app no longer ships on and nothing here would say so. While the two agree -
-both are 3.11 today - every CI run proves the property in full. Closing the
-gap is tracked separately and is not covered by this file.
+This is a deliberate, temporary reduction in coverage. The gap that MOTIVATED
+the removal is exact: if someone changes ``build-macos.yml``'s Python without
+changing ``test-macos.yml``'s, the table would be proved correct for an
+interpreter the app no longer ships on and nothing here would say so. While the
+two agree - both are 3.11 today - every CI run proves the property in full.
+
+FOUR OTHER PROPERTIES WENT WITH IT, and they are named here rather than left to
+be rediscovered. The deleted roll call also enforced that ``test-macos.yml``
+EXISTS and names exactly one resolvable Python; that at least one ``build-*``
+workflow exists; that no relevant workflow names several different Pythons;
+that every ``python-version`` anywhere under ``.github/workflows/`` resolves to
+a version this file understands, rather than to a matrix expression; and that
+every ``.yml``/``.yaml`` there parses at all. None of those is checked now. A
+workflow with malformed YAML, or one that renames ``test-macos.yml``, passes
+this file in silence.
+
+That is a larger loss than the one sentence above suggests, and it is the
+honest accounting. Closing all of it is tracked separately and is not covered
+by this file.
 
 WHAT IT DOES NOT CHECK
 ----------------------
@@ -176,10 +189,11 @@ MINIMUM_NODE_MAJOR = 18
 #: changelog, because mis-stating exactly this mapping is how round 3 shipped a
 #: table generated from the wrong interpreter.
 #:
-#: NOTHING CONSUMES THIS MAP ANY MORE. Its one reader was the deleted check
-#: that turned a build workflow's Python into the Unicode version the table had
-#: to declare. What is left is a measured record, and the one row that can be
-#: checked on any given run is checked below.
+#: NO BUILD-PARITY ASSERTION CONSUMES THIS MAP ANY MORE. Its one such reader was
+#: the deleted check that turned a build workflow's Python into the Unicode
+#: version the table had to declare. The map is not dead code - the test below
+#: reads it, and that test is not vacuous - but it now certifies a fact about
+#: THIS interpreter only, and nothing about any build.
 MEASURED_UNICODE_VERSION = {
     "3.10": "13.0.0",  # measured: CPython 3.10.18, 650 Nd code points
     "3.11": "14.0.0",  # measured: CPython 3.11.14, 660 Nd code points
@@ -658,7 +672,8 @@ def test_the_measured_unicode_versions_are_right_about_this_interpreter():
     A minor that is not in the map is skipped rather than failed: running the
     suite on an interpreter the project does not build or test on is a
     developer's business, not a defect. The skip is about THIS map having no
-    row to check, and it is the only skip in this file.
+    row to check, and it is the only skip in this test. Two others live in this
+    file, both about node being absent, and neither is about parity.
     """
     running = "%d.%d" % sys.version_info[:2]
     if running not in MEASURED_UNICODE_VERSION:
