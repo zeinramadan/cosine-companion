@@ -1031,11 +1031,21 @@ def test_a_variable_is_never_resolved_to_a_literal():
     assert literal_python_versions_passed_to_uv(_DERIVED_RUN) == []
 
 
-# The two shapes below are PINNED AS MISSES, not fixed. They are the first two
-# entries of the blind-spot list in :func:`uv_python_version_problems`, kept
-# here as executable statements so the prose cannot quietly drift from the
-# code. If a later change makes either visible, the test reddens and whoever
-# made the change corrects that list in the same commit.
+# The three shapes below are PINNED AS MISSES, not fixed. They are the first
+# three entries of the five-entry blind-spot list in
+# :func:`uv_python_version_problems`, in that order, kept here as executable
+# statements so the prose cannot quietly drift from the code. If a later
+# change makes any of them visible, that test reddens and whoever made the
+# change corrects the list, assertion 4's wording and the module docstring in
+# the same commit.
+#
+# The remaining two entries -- a value glued together by the shell, and any
+# OTHER flag that selects a resolution target -- are documented but NOT
+# pinned. That asymmetry is not an oversight to be tidied away: they are
+# facts about which characters the check looks at, provable by reading the
+# five lines of :func:`literal_python_versions_passed_to_uv`, whereas the
+# three below each turn on a construct a reader could plausibly believe is
+# handled.
 
 
 def test_a_flag_assembled_from_fragments_is_not_seen():
