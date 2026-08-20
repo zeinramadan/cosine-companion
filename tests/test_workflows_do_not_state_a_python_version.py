@@ -133,6 +133,10 @@ SETUP_PYTHON_SHA = "a26af69be951a213d495a4c3e4e4022e16d87065"
 # guard does not understand, so it fails rather than guessing.
 INLINE_VERSION_KEYS = ("python-version", "python_version", "pythonVersion")
 
+# The input a setup-python step here configures the version with. Named so the
+# two checks below and the tests that drive them compare the same literal.
+VERSION_FILE_INPUT = "python-version-file"
+
 # Deliberately permissive about *form* (3.11, 3.11.9, 3.13) and strict about
 # there being exactly one token. Judging the value is not this file's job.
 #
@@ -342,6 +346,65 @@ def _is_setup_python(where, resolved):
     return False
 
 
+def step_inputs(where, step):
+    """One step's ``with:`` inputs, or fail naming the step.
+
+    Split out so the two checks below take the inputs as an ARGUMENT and are
+    therefore reachable with a step this repository does not have; the reason
+    that matters is on :func:`inline_version_inputs`.
+    """
+    with_block = step.get("with")
+    assert isinstance(with_block, dict), (
+        f"{where} has no 'with:' mapping, so it cannot be pointing at "
+        f"{VERSION_FILE_NAME}"
+    )
+    return with_block
+
+
+def inline_version_inputs(where, inputs):
+    """Assert no input of this step states a version inline; return them.
+
+    ``inputs`` is passed in rather than taken from a step for the reason
+    argued on :func:`conda_python_pin`: every setup-python step in this
+    repository is correct, so the rejecting branch below is reachable only
+    through mutated configuration. Not hypothetical -- replacing the whole
+    assertion with the tautology ``assert stated is not None`` left this guard
+    at 79 passed, sha256 617261a1 -> 4ccad9a8, measured 2026-08-21.
+    """
+    stated = [(key, inputs[key]) for key in INLINE_VERSION_KEYS if key in inputs]
+
+    assert not stated, (
+        f"{where} states a Python version inline: "
+        + ", ".join(f"{key}: {value!r}" for key, value in stated)
+        + f". Every workflow must read {VERSION_FILE_NAME} instead, so "
+        "that no two setup-python steps can disagree about the "
+        "interpreter they install."
+    )
+    return stated
+
+
+def version_file_input(where, inputs):
+    """Assert this step points ``python-version-file`` at the version file.
+
+    ``inputs`` is passed in for the same reason as on
+    :func:`inline_version_inputs`; both rejecting branches here were reachable
+    only through the real workflows, which are correct.
+    """
+    assert VERSION_FILE_INPUT in inputs, (
+        f"{where} does not set {VERSION_FILE_INPUT}. Omitting it makes "
+        "setup-python fall back to the runner's default Python with only "
+        "a warning, which is the original defect arriving quietly."
+    )
+
+    target = inputs[VERSION_FILE_INPUT]
+    assert isinstance(target, str) and target.strip() == VERSION_FILE_NAME, (
+        f"{where} points {VERSION_FILE_INPUT} at {target!r}; it must be "
+        f"exactly {VERSION_FILE_NAME}, or there is more than one file "
+        "claiming to hold the version"
+    )
+    return target
+
+
 def setup_python_steps_in_job(name, job_name, job):
     """``(where, step, ref)`` for each setup-python step in one job."""
     found = []
@@ -360,6 +423,68 @@ def setup_python_steps(path):
     for job_name, job in _jobs_of(path.name, document):
         found.extend(setup_python_steps_in_job(path.name, job_name, job))
     return found
+
+
+# The shape checks the helpers above make, driven with documents this
+# repository does not have. Each is reachable only through a malformed
+# workflow, so each was a rejecting branch that could be deleted outright with
+# nothing going red -- the same unexercised-branch hole this file has now found
+# in itself six times. The point of them is fail-closed: an unreadable shape
+# must be a failure and never a quiet pass.
+
+
+def test_a_workflow_with_no_jobs_mapping_is_reported():
+    with pytest.raises(AssertionError, match="unrecognised workflow shape"):
+        list(_jobs_of("w.yml", {"on": "push"}))
+
+
+def test_a_job_that_is_not_a_mapping_is_reported():
+    with pytest.raises(AssertionError, match="not a mapping; unrecognised job"):
+        list(_jobs_of("w.yml", {"jobs": {"j": ["not", "a", "mapping"]}}))
+
+
+def test_steps_that_are_not_a_list_are_reported():
+    with pytest.raises(AssertionError, match="'steps' is not a list"):
+        list(_steps_of("w.yml", "j", {"steps": {"uses": "actions/checkout@v4"}}))
+
+
+def test_a_step_that_is_not_a_mapping_is_reported():
+    with pytest.raises(AssertionError, match="is not a mapping"):
+        list(_steps_of("w.yml", "j", {"steps": ["echo hi"]}))
+
+
+def test_a_job_with_no_steps_key_yields_no_steps_rather_than_failing():
+    """The one shape :func:`_steps_of` passes over, pinned as a MISS so that it
+    is a stated decision. It is safe only because
+    :func:`jobs_missing_setup_python` sees the job anyway, which the next test
+    up the file is about."""
+    assert list(_steps_of("w.yml", "j", {"uses": "./.github/workflows/o.yml"})) == []
+
+
+@pytest.mark.parametrize("uses", [["actions/checkout@v4"], 3.11, "", "   "])
+def test_a_uses_this_guard_cannot_read_is_reported(uses):
+    with pytest.raises(AssertionError, match="non-string 'uses'"):
+        _uses_ref("w::j step 0", {"uses": uses})
+
+
+def test_a_run_step_has_no_uses_reference():
+    assert _uses_ref("w::j step 0", {"run": "echo hi"}) is None
+
+
+def test_an_unparseable_workflow_is_reported(tmp_path):
+    broken = tmp_path / "broken.yml"
+    broken.write_text("jobs: [unclosed\n", encoding="utf-8")
+
+    with pytest.raises(AssertionError, match="is not parseable YAML"):
+        _parse(broken)
+
+
+def test_a_workflow_that_is_not_a_mapping_is_reported(tmp_path):
+    scalar = tmp_path / "scalar.yml"
+    scalar.write_text("just a string\n", encoding="utf-8")
+
+    with pytest.raises(AssertionError, match="did not parse to a mapping"):
+        _parse(scalar)
 
 
 # ---------------------------------------------------------------------------
@@ -522,22 +647,15 @@ def test_there_are_workflows_to_check():
 
 @pytest.mark.parametrize("workflow", workflow_files(), ids=lambda p: p.name)
 def test_no_setup_python_step_states_a_version_inline(workflow):
-    """The whole point: a version stated here is a version that can drift."""
-    for where, step, _ref in setup_python_steps(workflow):
-        with_block = step.get("with")
-        assert isinstance(with_block, dict), (
-            f"{where} has no 'with:' mapping, so it cannot be pointing at "
-            f"{VERSION_FILE_NAME}"
-        )
+    """The whole point: a version stated here is a version that can drift.
 
-        stated = [key for key in INLINE_VERSION_KEYS if key in with_block]
-        assert not stated, (
-            f"{where} states a Python version inline: "
-            + ", ".join(f"{key}: {with_block[key]!r}" for key in stated)
-            + f". Every workflow must read {VERSION_FILE_NAME} instead, so "
-            "that no two setup-python steps can disagree about the "
-            "interpreter they install."
-        )
+    The comparison lives in :func:`inline_version_inputs` so that it is
+    reachable with a document this repository does not have; see that
+    function's docstring for the tautology that gutted it while this test
+    stayed green.
+    """
+    for where, step, _ref in setup_python_steps(workflow):
+        inline_version_inputs(where, step_inputs(where, step))
 
 
 @pytest.mark.parametrize("workflow", workflow_files(), ids=lambda p: p.name)
@@ -563,24 +681,30 @@ def test_every_setup_python_step_points_at_the_version_file(workflow):
     Python in either world.
     """
     for where, step, _ref in setup_python_steps(workflow):
-        with_block = step.get("with")
-        assert isinstance(with_block, dict), (
-            f"{where} has no 'with:' mapping, so it cannot be pointing at "
-            f"{VERSION_FILE_NAME}"
-        )
+        version_file_input(where, step_inputs(where, step))
 
-        assert "python-version-file" in with_block, (
-            f"{where} does not set python-version-file. Omitting it makes "
-            "setup-python fall back to the runner's default Python with only "
-            "a warning, which is the original defect arriving quietly."
-        )
 
-        target = with_block["python-version-file"]
-        assert isinstance(target, str) and target.strip() == VERSION_FILE_NAME, (
-            f"{where} points python-version-file at {target!r}; it must be "
-            f"exactly {VERSION_FILE_NAME}, or there is more than one file "
-            "claiming to hold the version"
-        )
+def unpinned_setup_python_steps(refs):
+    """Assert every ``{where: ref}`` is the reviewed commit; return them.
+
+    ``refs`` is passed in for the reason argued on :func:`conda_python_pin`:
+    every step in this repository is pinned correctly, so the comparison below
+    was reachable only through the real workflows and could be replaced by
+    ``ref != ref`` -- a constant False -- without anything going red.
+    """
+    assert refs, "no setup-python step found to check the pin of"
+
+    wrong = sorted(w for w, ref in refs.items() if ref != SETUP_PYTHON_SHA)
+    assert not wrong, (
+        f"setup-python must be pinned to exactly {SETUP_PYTHON_SHA} -- the "
+        "reviewed commit, with the version in a trailing comment. These are "
+        "not: " + ", ".join(f"{w} -> {refs[w]!r}" for w in wrong)
+        + ". A tag like 'v5' is mutable by GitHub's own documentation, and "
+        "any other SHA is a commit whose throw-on-missing-file behaviour "
+        "nobody here has read. To upgrade, change SETUP_PYTHON_SHA and the "
+        "workflows in the same commit, so a reviewer sees both."
+    )
+    return refs
 
 
 def test_every_setup_python_step_is_pinned_to_the_reviewed_sha():
@@ -595,18 +719,7 @@ def test_every_setup_python_step_is_pinned_to_the_reviewed_sha():
         for where, _step, ref in setup_python_steps(path):
             refs[where] = ref
 
-    assert refs, "no setup-python step found to check the pin of"
-
-    wrong = sorted(w for w, ref in refs.items() if ref != SETUP_PYTHON_SHA)
-    assert not wrong, (
-        f"setup-python must be pinned to exactly {SETUP_PYTHON_SHA} -- the "
-        "reviewed commit, with the version in a trailing comment. These are "
-        "not: " + ", ".join(f"{w} -> {refs[w]!r}" for w in wrong)
-        + ". A tag like 'v5' is mutable by GitHub's own documentation, and "
-        "any other SHA is a commit whose throw-on-missing-file behaviour "
-        "nobody here has read. To upgrade, change SETUP_PYTHON_SHA and the "
-        "workflows in the same commit, so a reviewer sees both."
-    )
+    unpinned_setup_python_steps(refs)
 
 
 # Which strings are, and are not, the action this guard is about. Every step in
@@ -637,6 +750,65 @@ def test_an_unrelated_action_is_not_setup_python():
     ``python-version`` input."""
     assert _is_setup_python("w::j step 0", ("astral-sh/setup-uv", "v7")) is False
     assert _is_setup_python("w::j step 0", None) is False
+
+
+# Every branch of assertions 2 and 3 that this repository does not exercise.
+# Its own setup-python steps are correct, so both comparisons were reachable
+# only through the real workflows: replacing the inline-version rejection with
+# the tautology ``assert stated is not None`` left this guard at 79 passed,
+# sha256 617261a1 -> 4ccad9a8, measured 2026-08-21.
+
+_WHERE = "w.yml::j step 0"
+
+
+@pytest.mark.parametrize("key", INLINE_VERSION_KEYS)
+def test_each_inline_version_spelling_is_refused(key):
+    """Driven with a constructed step, because every step in this repository
+    is correct and the comparison is never reached with anything else."""
+    with pytest.raises(AssertionError, match="states a Python version inline"):
+        inline_version_inputs(_WHERE, step_inputs(_WHERE, {"with": {key: "3.12"}}))
+
+
+def test_a_step_with_no_with_block_is_reported():
+    with pytest.raises(AssertionError, match="no 'with:' mapping"):
+        step_inputs(_WHERE, {"uses": f"actions/setup-python@{SETUP_PYTHON_SHA}"})
+
+
+def test_a_step_that_sets_no_version_file_input_is_reported():
+    with pytest.raises(AssertionError, match="does not set python-version-file"):
+        version_file_input(_WHERE, step_inputs(_WHERE, {"with": {"cache": "pip"}}))
+
+
+def test_a_version_file_input_pointing_elsewhere_is_reported():
+    step = {"with": {VERSION_FILE_INPUT: "some-other-file"}}
+
+    with pytest.raises(AssertionError, match="points python-version-file at"):
+        version_file_input(_WHERE, step_inputs(_WHERE, step))
+
+
+def test_a_correctly_configured_step_passes_both_checks():
+    """The other half: these must not be checks that refuse everything."""
+    inputs = step_inputs(_WHERE, {"with": {VERSION_FILE_INPUT: VERSION_FILE_NAME,
+                                           "cache": "pip"}})
+
+    assert inline_version_inputs(_WHERE, inputs) == []
+    assert version_file_input(_WHERE, inputs) == VERSION_FILE_NAME
+
+
+def test_a_step_pinned_to_anything_but_the_reviewed_commit_is_reported():
+    with pytest.raises(AssertionError, match="must be pinned to exactly"):
+        unpinned_setup_python_steps({_WHERE: "v5"})
+
+
+def test_no_setup_python_step_to_check_the_pin_of_is_reported():
+    with pytest.raises(AssertionError, match="no setup-python step found"):
+        unpinned_setup_python_steps({})
+
+
+def test_correctly_pinned_steps_pass():
+    refs = {_WHERE: SETUP_PYTHON_SHA}
+
+    assert unpinned_setup_python_steps(refs) == refs
 
 
 # ---------------------------------------------------------------------------
@@ -980,12 +1152,23 @@ def conda_python_entries():
     """:func:`python_entries_in` applied to the real ``environment.yml``."""
     assert CONDA_ENV_FILE.is_file(), f"{CONDA_ENV_FILE.name} is missing"
 
-    document = _parse(CONDA_ENV_FILE)
+    return python_entries_in(
+        conda_dependencies(CONDA_ENV_FILE.name, _parse(CONDA_ENV_FILE))
+    )
+
+
+def conda_dependencies(name, document):
+    """The top-level ``dependencies`` list, or fail naming the file.
+
+    Split out of :func:`conda_python_entries` so the shape check is reachable
+    with a document this repository does not have; ``environment.yml`` is
+    correct, so ``assert True`` here reddened nothing.
+    """
     dependencies = document.get("dependencies")
     assert isinstance(dependencies, list) and dependencies, (
-        f"{CONDA_ENV_FILE.name} has no 'dependencies' list; unrecognised shape"
+        f"{name} has no 'dependencies' list; unrecognised shape"
     )
-    return python_entries_in(dependencies)
+    return dependencies
 
 
 def conda_python_pin(expected, entries):
@@ -1082,6 +1265,26 @@ def test_a_channel_prefixed_python_is_recognised_as_python():
     at zero-plus-a-decoy instead of one."""
     assert _conda_package_name("conda-forge::python=3.12") == "python"
     assert python_entries_in(["conda-forge::python=3.12"]) == ["conda-forge::python=3.12"]
+
+
+def test_a_conda_dependency_this_guard_cannot_read_is_reported():
+    """A nested list, a number: not a spec string and not the ``pip:`` mapping.
+    Reachable only through an environment.yml this repository does not have."""
+    with pytest.raises(AssertionError, match="does not recognise this shape"):
+        python_entries_in(["python=3.11", ["nested", "list"]])
+
+    with pytest.raises(AssertionError, match="does not recognise this shape"):
+        python_entries_in([3.11])
+
+
+@pytest.mark.parametrize(
+    "document",
+    [{"name": "coco"}, {"dependencies": []}, {"dependencies": "python=3.11"}],
+    ids=["absent", "empty", "not-a-list"],
+)
+def test_a_conda_document_with_no_dependencies_list_is_reported(document):
+    with pytest.raises(AssertionError, match="no 'dependencies' list"):
+        conda_dependencies("environment.yml", document)
 
 
 def test_a_package_merely_starting_with_python_is_not_the_python_pin():
@@ -1347,6 +1550,14 @@ def test_a_trailing_newline_is_not_itself_part_of_a_version_token():
     it that way; it is anchored ``\A``/``\Z`` now regardless."""
     assert VERSION_TOKEN.match("3.11")
     assert not VERSION_TOKEN.match("3.11\n")
+
+
+def test_a_missing_version_file_is_reported_by_name(tmp_path):
+    """:func:`stated_version_text` exists so this fails by name rather than as
+    a bare FileNotFoundError, and that branch is unreachable through the real
+    file -- which is there."""
+    with pytest.raises(AssertionError, match="is missing"):
+        stated_version_text(tmp_path / VERSION_FILE_NAME)
 
 
 def test_the_version_file_is_read_as_raw_bytes(tmp_path):
