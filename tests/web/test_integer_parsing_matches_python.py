@@ -659,6 +659,48 @@ def _shipped_python_version(versions):
     return build[0]
 
 
+def test_the_shipped_version_is_read_from_the_build_workflows(tmp_path, monkeypatch):
+    """The reader under the test below, on workflows written here.
+
+    Without this, ``test_the_digit_table_targets_the_interpreter_the_app_ships_on``
+    proves only that the declaration equals SOME value that happens to be
+    "3.11"'s Unicode version - a hardcoded constant would satisfy it just as
+    well. The honest way to show it reads `.github/workflows/build-*.yml` is to
+    point it at workflows this test wrote, which
+    `.github/workflows/` itself cannot be used for: the parallel PR that aligns
+    the test interpreter with the build one owns those files.
+
+    Three things, because they are three ways for the reader to be wrong: the
+    BUILD workflows are what it reads, `test-macos.yml` is not allowed to
+    influence the answer, and builds that disagree with each other are a failure
+    rather than a silent pick.
+    """
+    workflows = tmp_path / "workflows"
+    workflows.mkdir()
+    (workflows / "test-macos.yml").write_text('        python-version: "3.10"\n')
+    (workflows / "build-macos.yml").write_text("        python-version: '3.12'\n")
+    (workflows / "build-windows.yml").write_text("        python-version: '3.12'\n")
+    monkeypatch.setattr(
+        sys.modules[__name__], "WORKFLOWS", workflows, raising=True
+    )
+
+    versions = _workflow_python_versions()
+    assert versions == {
+        "build-macos.yml": ["3.12"],
+        "build-windows.yml": ["3.12"],
+        "test-macos.yml": ["3.10"],
+    }, f"the workflow reader did not read what was written: {versions}"
+
+    assert _shipped_python_version(versions) == "3.12", (
+        "the shipped version was not taken from the build workflows; "
+        "3.10 is what test-macos.yml says and it must not reach the answer"
+    )
+
+    (workflows / "build-macos-intel.yml").write_text("        python-version: '3.13'\n")
+    with pytest.raises(AssertionError, match="no longer agree on one interpreter"):
+        _shipped_python_version(_workflow_python_versions())
+
+
 def test_the_digit_table_targets_the_interpreter_the_app_ships_on(digit_survey):
     """THE SHIP-BLOCKING PROPERTY, half one: the table is FOR the built Python.
 
