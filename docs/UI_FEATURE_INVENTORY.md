@@ -2032,8 +2032,14 @@ shipped interpreter, in membership or in value" is checked as two halves,
 because they fail separately: the parser matches the running interpreter
 exactly, in both directions and with the values
 (`tests/web/test_integer_parsing_matches_python.py::test_the_helper_accepts_exactly_the_shipped_interpreters_digits`),
-and the table is declared for the interpreter the build workflows freeze
-(`tests/web/test_integer_parsing_matches_python.py::test_the_digit_table_targets_the_interpreter_the_app_ships_on`).
+and every build workflow sets up the interpreter that runs that suite, so the
+one it measured is the one the app is frozen on
+(`tests/web/test_integer_parsing_matches_python.py::test_the_workflows_agree_on_the_interpreter_the_digit_table_targets`).
+That second half asks whether the workflow files AGREE, as text, rather than
+reading a version out of them: a hand-written YAML subset gave a confident
+wrong answer three rounds running, and the shapes that defeated it are pinned
+by
+`tests/web/test_integer_parsing_matches_python.py::test_the_shapes_that_made_the_old_reader_confidently_wrong_are_refused`.
 
 There is no allowance for running the suite on an older interpreter, and the
 absence is the design rather than an omission. One lived there for two rounds
