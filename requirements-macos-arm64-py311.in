@@ -2,11 +2,14 @@
 # direct dependencies to the versions exercised by the macOS Python 3.11 job.
 -r requirements.txt
 
-# Core/tested runtime dependencies. NumPy stays on the final 1.x release
-# because Essentia's macOS 11 arm64 wheel was built against the NumPy 1.x ABI.
-# Its NumPy-2-compatible arm64 successor requires macOS 15, which would raise
-# the app's effective minimum OS without changing its bundle metadata.
-numpy==1.26.4
+# Embedding provenance is an index-compatibility requirement. The pinned
+# essentia-tensorflow 2.1b6.dev1389 wheel bundles TensorFlow 2.19.0, matching
+# the runtime that produced the existing 2560-dimensional user index, and it
+# imports cleanly with NumPy 2.2.6. Inspection of every bundled native binary
+# found a real maximum LC_BUILD_VERSION minos of macOS 15.2. The app spec still
+# declares LSMinimumSystemVersion 10.13, which is false under this dependency
+# set; correcting that bundle metadata is intentionally out of scope here.
+numpy==2.2.6
 pandas==2.3.2
 pyarrow==21.0.0
 lxml==6.1.2
@@ -16,7 +19,7 @@ typer==0.27.1
 # Build/audio/UI dependencies. These capture what the previously unpinned
 # build resolved on 2026-08-20 instead of speculating about older releases.
 soundfile==0.14.0
-essentia-tensorflow==2.1b6.dev1177
+essentia-tensorflow==2.1b6.dev1389
 Pillow==12.3.0
 pyobjc-framework-Cocoa==12.2.2
 pyinstaller==6.22.2

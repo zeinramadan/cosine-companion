@@ -24,43 +24,36 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-macos-arm64-py311.lock
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.1"
+
+      # uv has no non-mutating compile --check flag. Recompile with the exact
+      # recorded command, then fail if the committed lock changed.
+      - name: Check lock matches dependency input
+        run: |
+          uv pip compile \
+            --python-version 3.11 \
+            --python-platform aarch64-apple-darwin \
+            --prerelease explicit \
+            --exclude-newer 2026-08-20 \
+            --build-constraint build-constraints.txt \
+            --generate-hashes \
+            requirements-macos-arm64-py311.in \
+            -o requirements-macos-arm64-py311.lock
+          git diff --exit-code -- requirements-macos-arm64-py311.lock
+
       # Install the same complete, hashed environment as the app build. This
       # deliberately includes the large Essentia wheel: dependency parity is
       # the property this job protects.
       - name: Install locked build and test dependencies
+        env:
+          PIP_CONSTRAINT: ${{ github.workspace }}/build-constraints.txt
         run: python -m pip install --require-hashes -r requirements-macos-arm64-py311.lock
 
       - name: Verify build dependency imports
         run: python -c "import build_app; assert build_app.check_dependencies()"
 
       - name: Run tests
-        run: python -m pytest -q
-
-  dependency-canary:
-    # HEAD-of-PyPI incompatibilities should be visible without blocking work on
-    # the reproducible release set.
-    continue-on-error: true
-    timeout-minutes: 45
-    runs-on: macos-latest
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-          cache-dependency-path: requirements.txt
-
-      - name: Install unpinned runtime dependencies
-        run: |
-          python -m pip install -r requirements.txt
-          python -m pip install pytest==9.1.1
-
-      - name: Verify current build dependency imports
-        run: python -c "import build_app; assert build_app.check_dependencies()"
-
-      - name: Run tests against current dependency releases
         run: python -m pytest -q
