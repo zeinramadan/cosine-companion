@@ -2098,9 +2098,23 @@ of every mutation so a probe that silently failed to apply could not be read as
 a finding. Under every one of them the surviving parity file stays at exactly
 its unmutated result — 8 passed on 3.11, and 1 failed / 7 passed on 3.10 where
 the failure is the version refusal below — because nothing in it imports `yaml`
-or names a path under `.github/` at all. So malformed YAML in a workflow, a
-renamed test workflow, a build naming two interpreters, and a build naming
-none are now things this suite goes green over.
+and no code in it opens or reads anything under `.github/`. So malformed YAML
+in a workflow, a renamed test workflow, a build naming two interpreters, and a
+build naming none are now things this suite goes green over.
+
+*What went is the apparatus, not the mentions, and the distinction is the
+whole claim.* An earlier draft of the sentence above said the parity file does
+not "name a path under `.github/` at all", and the file refutes it: parse
+`tests/web/test_integer_parsing_matches_python.py`, strip the docstrings, and
+one string literal survives — the failure message inside
+`test_the_helper_accepts_exactly_the_shipped_interpreters_digits`, which tells
+a reader on the wrong interpreter that `.github/workflows/test-macos.yml`
+naming the shipped one is what makes the suite green on CI. The docstrings
+name that directory throughout besides — twelve times as the file stands. What
+is actually gone is every way of READING it: the module has no `yaml` import
+and zero `open`/`read_text`/`glob`/`iterdir`/`safe_load` call sites, which is
+the mechanical reason the workflow mutations above cannot reach it. A printed
+path is not a path anything opens.
 
 *Property 3 is the one the two earlier drafts missed, and it hides for a
 reason.* Removing only `build-macos.yml`'s `python-version` line leaves the
@@ -2118,11 +2132,35 @@ detected — produces a tree in which every workflow "sets no python-version at
 all". The deleted roll call would have gone **red** on it: restored from
 `tests/web/test_integer_parsing_matches_python.py` at `d5b358f^` beside the
 current one, over a copy of the tree with that shape applied, it fails with
-`build-macos-intel.yml sets no python-version at all`. A check whose purpose was catching build/test
-interpreter divergence would have blocked the structural fix for that exact
-divergence, because the property it enforced — every workflow names its own
-interpreter — is precisely the one such a fix removes. That is a better reason
-for the deletion than four wrong answers, and it is the one worth keeping.
+`build-macos-intel.yml sets no python-version at all`. A check whose purpose
+was catching build/test interpreter divergence would have blocked the
+structural fix for that exact divergence, because the property it enforced —
+property 3, that every workflow **the answer depends on** names its own
+interpreter — is precisely the one such a fix removes.
+
+*That scope is narrower than "every workflow", and the deleted code says so
+itself.* Beside the wider check, at lines 1135-1138 of `d5b358f^`, sits the
+comment: "A workflow with no python-version is fine - not every workflow needs
+one - but one that sets an unresolvable value would be a form this file would
+have to be taught before it appeared in a build." The two scopes are two
+different assert sites. 816 lives in `_the_one_python_it_sets`, reached only
+for the workflows named `build-*` plus `TEST_WORKFLOW`, and it demands a
+version exists. 1145 is the wide one: it ranges over every workflow parsed and
+constrains only the form of a version already set, never requires one. (822 is
+that same form constraint at the narrow scope — which is why property 5 states
+1145's wider one.) The property that reached every workflow is therefore
+satisfied by a workflow that sets nothing.
+
+Measured rather than read off the comment: `dependency-canary.yml` is neither
+a build nor the test workflow, and it sets `python-version: "3.11"` today
+without ever having been required to. Delete that line in a copy of the tree
+and the restored roll call still passes; delete `build-macos.yml`'s instead
+and it fails at 816. Same edit, two files, opposite verdicts, with the
+workflow directory's sha proving each mutation applied — which is the scope
+distinction reproduced rather than asserted.
+
+That is a better reason for the deletion than four wrong answers, and it is
+the one worth keeping.
 
 
 There is no allowance for running the suite on an older interpreter, and the

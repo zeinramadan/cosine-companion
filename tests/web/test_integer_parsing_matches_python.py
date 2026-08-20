@@ -209,8 +209,21 @@ exactly its unmutated result: 8 passed on 3.11, and 1 failed / 7 passed on
 The six that can coexist, applied at once, leave it there too - property 2's
 mutation sits out that run only because deleting the builds removes the files
 3, 4 and 5 mutate. That is structural rather than lucky: nothing below imports
-``yaml`` or names a path under ``.github/``, so there is no route by which it
-could notice.
+``yaml``, and no code below OPENS or READS anything under ``.github/`` - the
+apparatus that did is what went with the deleted test, and there is no route
+left by which this file could notice a workflow at all.
+
+State that as the apparatus and not as the mentions, because the mentions did
+not go. Parse this file and strip its docstrings and exactly one string
+literal still names the directory: the failure message in
+``test_the_helper_accepts_exactly_the_shipped_interpreters_digits`` (its
+``def`` at line 615), which tells a reader on the wrong interpreter that
+``.github/workflows/test-macos.yml`` naming the shipped one is what makes this
+green on CI. That path is printed, never opened. The mechanical form of the
+claim is that this module has zero
+``open``/``read_text``/``glob``/``iterdir``/``safe_load`` call sites and no
+``yaml`` import, which is what makes the workflow mutations above unable to
+reach it.
 
 Property 3 is the one this paragraph missed twice, and it is worth saying why
 it hides. Removing ``build-macos.yml``'s ``python-version`` line leaves all
@@ -230,9 +243,35 @@ restored beside this file over a copy of the tree with that shape applied, it
 fails with ``build-macos-intel.yml sets no python-version at all``. So a check
 whose whole purpose was catching build/test interpreter divergence would have
 blocked the structural fix for that exact divergence, because the property it
-enforced - every workflow names its own interpreter - is precisely the one
-such a fix removes. That is a better reason for the deletion than four wrong
-answers, and it is the one worth keeping.
+enforced - property 3, that every workflow THE ANSWER DEPENDS ON names its own
+interpreter - is precisely the one such a fix removes.
+
+That scope is narrower than "every workflow", and the deleted code is explicit
+about it. The comment sitting beside the wider check, at lines 1135-1138 of
+``d5b358f^``, reads: "And nowhere else may a python-version be set in a form
+this cannot read. A workflow with no python-version is fine - not every
+workflow needs one - but one that sets an unresolvable value would be a form
+this file would have to be taught before it appeared in a build." The two
+scopes are two different sites. 816 lives in ``_the_one_python_it_sets``,
+reached only for ``depends_on`` - the names starting ``build-`` plus
+``TEST_WORKFLOW`` - and it DEMANDS a version exists. 1145 is the wide one: it
+ranges over every workflow ``_workflow_python_versions`` parsed, and it
+constrains only the FORM of a version already set, never requires one. (822 is
+that same form constraint at the narrow scope, which is why property 5 states
+1145's wider one.) So the property that reached every workflow is satisfied by
+a workflow that sets nothing at all.
+
+Measured, not read off the comment: ``dependency-canary.yml`` is neither a
+build nor the test workflow, and it sets ``python-version: "3.11"`` today
+without ever having been required to. Delete that line in a copy of the tree
+and the restored roll call still PASSES; delete ``build-macos.yml``'s instead
+and it FAILS at 816 with ``build-macos.yml sets no python-version at all``.
+Both mutations were sha-proved applied against the workflow directory either
+side. One edit, two files, opposite verdicts - which is the scope distinction
+itself, reproduced rather than asserted.
+
+That is a better reason for the deletion than four wrong answers, and it is
+the one worth keeping.
 
 So a build workflow that stops naming a Python this file understands, a
 renamed test workflow, a build that names two interpreters, and a workflow
