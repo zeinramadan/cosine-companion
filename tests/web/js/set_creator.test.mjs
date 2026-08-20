@@ -539,6 +539,125 @@ test('the destination stops claiming it is building once the abandoned response 
   assert.equal(view.state().building, null);
 });
 
+/* -------------------------------------------------------------------------
+ * The CATCH path's staleness guard (set-creator.js:252)
+ *
+ * The three tests above are the success path. The failure path has the same
+ * guard and had NOTHING pinning it: disabling it with `if (false && ...)` left
+ * all 37 subtests and the whole 931-test suite green. So a late FAILURE could
+ * overwrite a status the user had moved on to and open a "Generation Error"
+ * dialog over a screen that has nothing to do with it, and no test said a word.
+ *
+ * Both halves are pinned below - the status line AND the dialog - because they
+ * are two separate writes after the guard and a check that only covered the
+ * status would let the dialog through.
+ * ------------------------------------------------------------------------- */
+
+test('a failure for a configuration the screen has moved on from does not overwrite the status', async () => {
+  // The case the reviewer named: `Clear Set`, then the build fails. "Set
+  // cleared." is what the user asked for and what the screen should still say.
+  const { view } = mount();
+  await addAnchor(ALPHA, 1);
+
+  await pressGenerate();
+  assert.ok(fetches.outstanding(SET_KEY), 'the generation has not been answered yet');
+
+  control('Clear Set').dispatch('click');
+  await settle();
+  assert.equal(statusLine(), '🧹 Set cleared.');
+
+  fetches.deliverError(
+    SET_KEY,
+    400,
+    'set_generation_failed',
+    'Anchor track position exceeds total tracks',
+  );
+  await settle();
+
+  assert.equal(
+    statusLine(),
+    '🧹 Set cleared.',
+    'a failed build for the cleared configuration overwrote "Set cleared."',
+  );
+  assert.equal(view.state().building, null);
+  assert.equal(control('Generate Set').disabled, false, 'Generate Set stayed disabled');
+});
+
+test('a failure for a configuration the screen has moved on from opens no dialog', async () => {
+  /* The half a status-line assertion misses. `showerror` is awaited AFTER the
+   * status is written, so a guard that let the status through would also put a
+   * modal on screen - over a destination the user has already moved on from,
+   * reporting a build they are no longer waiting for. */
+  const { view } = mount();
+  await addAnchor(ALPHA, 1);
+
+  await pressGenerate();
+  control('Clear Set').dispatch('click');
+  await settle();
+
+  fetches.deliverError(SET_KEY, 400, 'set_generation_failed', 'Anchor track position exceeds total tracks');
+  await settle();
+
+  assert.equal(
+    messageBox(),
+    null,
+    'a stale "Generation Error" dialog opened over the cleared destination',
+  );
+  assert.deepEqual(view.state().anchors, {}, 'the cleared anchors came back');
+  assert.deepEqual(view.state().generatedSet, []);
+});
+
+test('a stale failure leaves the set and the status of the configuration that replaced it', async () => {
+  /* Not `Clear Set` this time but an anchor change, and with a good set already
+   * on screen - so there is something for a stale failure to damage other than
+   * a status string. `a failed regeneration leaves the previous set on screen`
+   * is the positive control: the SAME failure, for the configuration that is
+   * still current, does write "❌ Set generation failed." and does open the
+   * dialog. */
+  const { view } = mount();
+  await addAnchor(ALPHA, 1);
+  await pressGenerate();
+  fetches.deliver(SET_KEY, { tracks: SET });
+  await settle();
+  assert.equal(setRows().length, 3);
+  assert.equal(statusLine(), '✅ Generated 3-track set successfully!');
+
+  await pressGenerate();
+  await addAnchor(BETA, 3, 1); // the configuration moves on while it is in flight
+
+  fetches.deliverError(SET_KEY, 400, 'set_generation_failed', 'Anchor track position exceeds total tracks');
+  await settle();
+
+  assert.equal(messageBox(), null, 'a stale failure opened the Generation Error dialog');
+  assert.notEqual(
+    statusLine(),
+    '❌ Set generation failed.',
+    'a stale failure claimed the current configuration had failed',
+  );
+  assert.equal(setRows().length, 3, 'a stale failure disturbed the set on screen');
+  assert.deepEqual(Object.keys(view.state().anchors).sort(), ['1', '3']);
+  assert.equal(view.state().building, null);
+});
+
+test('a stale NETWORK failure is dropped on the same guard', async () => {
+  /* `deliverError` resolves a non-2xx and `reject` fails the promise outright.
+   * They enter the catch by different routes and only one of them was covered,
+   * so a guard reinstated for ApiError alone would have looked pinned. */
+  const { view } = mount();
+  await addAnchor(ALPHA, 1);
+
+  await pressGenerate();
+  control('Clear Set').dispatch('click');
+  await settle();
+
+  fetches.reject(SET_KEY, new Error('network failure'));
+  await settle();
+
+  assert.equal(messageBox(), null, 'a stale network failure opened a dialog');
+  assert.equal(statusLine(), '🧹 Set cleared.');
+  assert.equal(view.state().building, null);
+});
+
 /* What `POST /api/set` returns once the anchored track has been deleted on
  * another destination: three tracks, none of them the anchor, and NO anchor on
  * the position that asked for one. `generate_set` places an anchor only
