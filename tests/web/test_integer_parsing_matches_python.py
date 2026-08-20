@@ -1069,7 +1069,7 @@ def test_the_shipped_version_is_read_from_the_build_workflows(tmp_path, monkeypa
         _workflow_python_versions()
     except AssertionError as failure:
         assert "PyYAML is not importable" in str(failure), failure
-    except BaseException as other:  # noqa: BLE001 - pytest.skip raises BaseException
+    except BaseException as other:  # pytest.skip raises BaseException, not Exception
         raise AssertionError(
             f"an unimportable PyYAML raised {type(other).__name__} rather than "
             "an AssertionError. `pytest.raises(AssertionError)` would not have "
