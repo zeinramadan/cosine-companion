@@ -1044,13 +1044,73 @@ def test_the_shipped_version_is_read_from_the_build_workflows(tmp_path, monkeypa
     with pytest.raises(AssertionError, match="is not valid YAML"):
         build_says("      with: {python-version: '3.11'\n")
 
+    # A RENAME MUST NOT QUIETLY STOP THE CHECK APPLYING. TEST_WORKFLOW is a
+    # literal, and a literal that no longer names a file used to mean the check
+    # simply had nothing to say about the workflow that runs this suite.
+    build_says("        python-version: '3.11'\n")
+    (workflows / "test-macos.yml").rename(workflows / "test-macos-renamed.yml")
+    with pytest.raises(AssertionError, match="is not among the workflow files"):
+        _the_interpreters_the_answer_depends_on(_workflow_python_versions())
+    (workflows / "test-macos-renamed.yml").rename(workflows / "test-macos.yml")
+
+    # AND NEITHER MAY THE BUILDS ALL VANISH, which would leave the roll call
+    # with nothing to call and the answer resting on the test workflow alone.
+    for name in ("build-macos.yml", "build-windows.yaml"):
+        (workflows / name).unlink()
+    with pytest.raises(AssertionError, match="no build-. workflow was found"):
+        _the_interpreters_the_answer_depends_on(_workflow_python_versions())
+
     # THE DEPENDENCY FAILS LOUDLY AND NEVER SKIPS. `_yaml()` is the one import
     # this section has, and if it ever stops resolving the tests here have to
     # go RED rather than green-with-a-skip - this project has had seven green
     # suites that measured nothing, and a skip is how each of them read.
     monkeypatch.setitem(sys.modules, "yaml", None)
-    with pytest.raises(AssertionError, match="PyYAML is not importable"):
+    try:
         _workflow_python_versions()
+    except AssertionError as failure:
+        assert "PyYAML is not importable" in str(failure), failure
+    except BaseException as other:  # noqa: BLE001 - pytest.skip raises BaseException
+        raise AssertionError(
+            f"an unimportable PyYAML raised {type(other).__name__} rather than "
+            "an AssertionError. `pytest.raises(AssertionError)` would not have "
+            "caught pytest's Skipped either, and the run would have been "
+            "reported as a skip - which is the one outcome this must never "
+            "have, because a skip exits zero and reads as a pass."
+        ) from other
+    else:
+        raise AssertionError(
+            "an unimportable PyYAML did not fail at all, so this section would "
+            "certify the shipped interpreter without reading a workflow"
+        )
+
+
+def _the_interpreters_the_answer_depends_on(versions):
+    """``{name: version}`` for every workflow this file's answer rests on.
+
+    Split out from the test below so the synthetic test can drive it over
+    workflows it writes - the roll call is only worth having if something
+    proves it refuses a missing file, and `.github/workflows/` cannot be used
+    to prove that.
+    """
+    assert versions, f"no workflow files were found under {WORKFLOWS}"
+
+    # `TEST_WORKFLOW` is asserted to EXIST rather than looked up with `.get`,
+    # because a rename that quietly stopped the check applying is the same
+    # fail-open shape as the rest of this section.
+    assert TEST_WORKFLOW in versions, (
+        f"{TEST_WORKFLOW} is not among the workflow files ({sorted(versions)}). "
+        "If the workflow that runs this suite was renamed, TEST_WORKFLOW has to "
+        "be renamed with it - otherwise this check silently stops applying."
+    )
+    depends_on = sorted(
+        name for name in versions if name.startswith("build-") or name == TEST_WORKFLOW
+    )
+    named = {name: _the_one_python_it_sets(name, versions[name]) for name in depends_on}
+
+    assert sum(1 for name in named if name.startswith("build-")) >= 1, (
+        f"no build-* workflow was found among {sorted(versions)}"
+    )
+    return named
 
 
 def test_every_workflow_names_exactly_one_python_this_file_can_resolve():
@@ -1070,24 +1130,7 @@ def test_every_workflow_names_exactly_one_python_this_file_can_resolve():
     printed and neither could fail.
     """
     versions = _workflow_python_versions()
-    assert versions, f"no workflow files were found under {WORKFLOWS}"
-
-    # The workflows this file's answer depends on, by role. `TEST_WORKFLOW` is
-    # asserted to EXIST rather than looked up with `.get`, because a rename
-    # that quietly stopped the check applying is the shape being removed here.
-    assert TEST_WORKFLOW in versions, (
-        f"{TEST_WORKFLOW} is not among the workflow files ({sorted(versions)}). "
-        "If the workflow that runs this suite was renamed, TEST_WORKFLOW has to "
-        "be renamed with it - otherwise this check silently stops applying."
-    )
-    depends_on = sorted(
-        name for name in versions if name.startswith("build-") or name == TEST_WORKFLOW
-    )
-    named = {name: _the_one_python_it_sets(name, versions[name]) for name in depends_on}
-
-    assert sum(1 for name in named if name.startswith("build-")) >= 1, (
-        f"no build-* workflow was found among {sorted(versions)}"
-    )
+    named = _the_interpreters_the_answer_depends_on(versions)
 
     # And nowhere else may a python-version be set in a form this cannot read.
     # A workflow with no python-version is fine - not every workflow needs one -
