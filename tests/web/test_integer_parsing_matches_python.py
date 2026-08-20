@@ -509,6 +509,23 @@ def test_the_helper_accepts_this_pythons_digits_and_the_shipped_tables_extras(
         "helper accepting them."
     )
 
+    # The extras are REQUIRED, not merely tolerated. Without this, a table that
+    # dropped them while still declaring the newer Unicode version - which is
+    # round 3's shipped defect exactly - passes every check on an interpreter
+    # too old to know the difference. Measured: it did.
+    missing_extras = sorted(extras - set(accepted))
+    assert missing_extras == [], (
+        "the table declares itself Unicode "
+        + digit_survey["unicode_version"]
+        + " and does not accept "
+        + ", ".join(f"U+{code:04X}" for code in missing_extras[:20])
+        + f" ({len(missing_extras)} code points), which that version added. "
+        "The shipped parser would refuse digits the shipped int() accepts. "
+        "Regenerate PYTHON_DECIMAL_RUNS on the interpreter the build workflows "
+        "freeze, or correct PYTHON_UNICODE_VERSION to the version the table "
+        "really is."
+    )
+
     unexpected = sorted(set(accepted) - set(python_decimal_digits) - extras)
     only_python = sorted(set(python_decimal_digits) - set(accepted))
     wrong_value = sorted(
