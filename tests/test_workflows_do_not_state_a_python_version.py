@@ -26,7 +26,8 @@ WHAT THIS FILE ASSERTS
 4. No ``run:`` block hands a literal version to ``--python-version`` (uv
    resolves against that flag, so a literal there is a second source of truth
    that only shows up as a wrong resolution).
-5. ``environment.yml`` pins conda to the same version.
+5. ``environment.yml`` pins conda to the same version, in the single
+   spelling ``python=<that version>`` and no other.
 6. ``.python-version`` itself holds exactly one bare version token.
 
 Assertion 1 is per **job**, not per repository, and that distinction is the
@@ -604,8 +605,65 @@ def test_no_run_block_passes_a_literal_python_version(workflow):
 # ---------------------------------------------------------------------------
 
 
-def conda_python_pin():
-    """The Python version ``environment.yml`` pins, or fail saying why not."""
+# A conda spec is ``[channel[/subdir]::]name[version[=build]]``. Only the
+# leading package name is parsed here -- the version syntax after it is never
+# interpreted, because interpreting it is what went wrong. conda package names
+# are drawn from ``[A-Za-z0-9_.-]``, so the name is the leading run of those,
+# and the first character outside the class ends it whatever it is (``=``,
+# ``>``, ``<``, ``!``, ``~``, ``|``, ``,`` or a space).
+CONDA_PACKAGE_NAME = re.compile(r"[A-Za-z0-9_.\-]+")
+
+
+def _conda_package_name(spec):
+    """The package a top-level conda dependency names, or ``None``.
+
+    The channel prefix is stripped before the name is read, so
+    ``conda-forge::python=3.12`` is recognised as a python pin. It was not,
+    and that was half of a wrong pass: the pin conda would actually honour
+    went unseen while a decoy elsewhere in the file was read as authoritative.
+    """
+    _channel, _sep, rest = spec.strip().rpartition("::")
+    match = CONDA_PACKAGE_NAME.match(rest)
+    return match.group(0).lower() if match else None
+
+
+def python_entries_in(dependencies):
+    """Every TOP-LEVEL conda dependency that names the python package.
+
+    Top-level only. conda's ``pip:`` block is a nested mapping, and nothing
+    inside it is a conda package spec, so nothing inside it can be the pin
+    conda honours -- pip cannot install an interpreter for the environment it
+    is running in. The previous revision flattened the nested lists into the
+    same bucket as the real dependencies, so
+
+        - conda-forge::python=3.12        # what conda actually installs
+        - pip:
+            - python==3.11                # read as authoritative
+
+    passed: the decoy matched the expected version and the real pin was not
+    recognised as python at all. Nested entries are not consulted here, not
+    even to reject them; a pin that moves into one leaves zero top-level
+    python entries, which fails below as "names Python 0 time(s)".
+    """
+    top_level = []
+    for index, entry in enumerate(dependencies):
+        if isinstance(entry, str):
+            top_level.append(entry)
+        elif isinstance(entry, dict):
+            continue  # the pip: block; see the docstring
+        else:
+            raise AssertionError(
+                f"{CONDA_ENV_FILE.name} dependency {index} is a "
+                f"{type(entry).__name__} ({entry!r}); this guard reads conda "
+                "dependencies as strings and does not recognise this shape, "
+                "so it fails rather than passing over it"
+            )
+
+    return [e for e in top_level if _conda_package_name(e) == "python"]
+
+
+def conda_python_entries():
+    """:func:`python_entries_in` applied to the real ``environment.yml``."""
     assert CONDA_ENV_FILE.is_file(), f"{CONDA_ENV_FILE.name} is missing"
 
     document = _parse(CONDA_ENV_FILE)
@@ -613,37 +671,66 @@ def conda_python_pin():
     assert isinstance(dependencies, list) and dependencies, (
         f"{CONDA_ENV_FILE.name} has no 'dependencies' list; unrecognised shape"
     )
+    return python_entries_in(dependencies)
 
-    # conda puts pip-only requirements in a nested mapping; a python pin
-    # hiding in there would be just as authoritative, so look in both.
-    entries = []
-    for entry in dependencies:
-        if isinstance(entry, str):
-            entries.append(entry)
-        elif isinstance(entry, dict):
-            for nested in entry.values():
-                if isinstance(nested, list):
-                    entries.extend(n for n in nested if isinstance(n, str))
 
-    def _name_of(entry):
-        return re.split(r"[=<>!~\s]", entry.strip(), maxsplit=1)[0]
+def conda_python_pin(expected, entries):
+    """Assert ``entries`` pins python in the ONE accepted form.
 
-    pins = [e for e in entries if _name_of(e) == "python"]
+    Returns the accepted spec; every other input raises. ``entries`` is passed
+    in rather than read here -- the same shape as
+    :func:`jobs_missing_setup_python` taking a parsed document -- because
+    otherwise the comparison below is reachable only through the real
+    ``environment.yml``, which is correct, so loosening it would redden
+    nothing. That is not hypothetical: relaxing this to a substring search
+    left the entire suite green.
+
+    EXACTLY ONE STRING PASSES: ``python=<the version in .python-version>``,
+    with nothing before it and nothing after it. Not ``python 3.11``, not
+    ``python>=3.11,<3.12``, not ``python=3.11.*``, not ``python=3.11=h1234_0``,
+    not ``conda-forge::python=3.11``, not a bare ``python``. Those are all
+    legal conda, and several of them would even install the right interpreter.
+    They fail anyway.
+
+    That is the point, and it is the fourth attempt at this function. The three
+    before it tried to UNDERSTAND conda's version syntax -- match a pin, allow
+    a wildcard, tolerate a build string -- and each was confidently wrong about
+    a shape nobody had thought to enumerate. A parser that decides what a spec
+    MEANS has to be right about every spec that exists. A parser that compares
+    against one literal has to be right about one. So this does not implement
+    MatchSpec, or any part of it: it identifies which entries are about python
+    (name only, channel stripped), demands there be exactly one, and compares
+    that one to a fixed string.
+
+    The cost is that a correct-but-differently-spelled pin fails and someone
+    has to rewrite it in the accepted form. The failure message says so. That
+    is a minute of annoyance in exchange for the property that no spec this
+    guard has not seen can pass it.
+    """
+    accepted = f"python={expected}"
+    pins = [e for e in entries if _conda_package_name(e) == "python"]
 
     assert len(pins) == 1, (
-        f"{CONDA_ENV_FILE.name} names Python {len(pins)} times ({pins!r}); "
-        "it must pin it exactly once, or it is ambiguous which one a conda "
-        "user gets"
+        f"{CONDA_ENV_FILE.name} names Python {len(pins)} time(s) at the top "
+        f"level of 'dependencies' ({pins!r}); it must name it exactly once. "
+        f"Write it as '{accepted}'. Zero means the pin is missing, was "
+        "commented out, or moved under 'pip:' where conda does not honour it; "
+        "more than one means it is ambiguous which one a conda user gets."
     )
 
-    match = re.fullmatch(r"python\s*={1,2}\s*(\d+(?:\.\d+)*)", pins[0].strip())
-    assert match, (
-        f"{CONDA_ENV_FILE.name} states {pins[0]!r}, which this guard cannot "
-        f"compare with {VERSION_FILE_NAME}. It must be an exact pin, e.g. "
-        "'python=3.11'; a range would let a conda user land on an "
-        "interpreter no CI job ever tests."
+    assert pins[0].strip() == accepted, (
+        f"{CONDA_ENV_FILE.name} pins Python as {pins[0].strip()!r}. The only "
+        f"form this guard accepts is exactly {accepted!r} -- no channel "
+        "prefix, no build string, no wildcard, no range, no spaces. This is "
+        "deliberately narrower than conda's own grammar: three earlier "
+        "revisions tried to interpret that grammar and each passed a spec it "
+        "had misread. Only one string passes now, so a spelling this guard "
+        "has never seen cannot slip through as a version it never checked. "
+        f"If the pin is correct but written differently, rewrite it as "
+        f"{accepted!r}; if the version itself differs from "
+        f"{VERSION_FILE_NAME}, that is the divergence this guard is for."
     )
-    return match.group(1)
+    return pins[0].strip()
 
 
 def test_the_conda_environment_pins_the_same_python():
@@ -654,14 +741,104 @@ def test_the_conda_environment_pins_the_same_python():
     a contributor's own machine could redden a test that is green in CI.
     """
     stated = stated_version_text().strip()
-    pinned = conda_python_pin()
 
-    assert pinned == stated, (
-        f"{CONDA_ENV_FILE.name} pins Python {pinned}, but "
-        f"{VERSION_FILE_NAME} states {stated}. Contributors following the "
-        "README would develop and test on an interpreter the shipped app "
-        "never uses, which is exactly the divergence this PR removes from CI."
-    )
+    # Every way this can fail raises inside, naming the file, the spec it
+    # found and the one spec it accepts. There is no returned value left to
+    # compare: "is it the right version" and "is it a shape this guard
+    # actually understood" are the same question here, which is what stops a
+    # misread spec from being compared against the right number and passing.
+    conda_python_pin(stated, conda_python_entries())
+
+
+# The two branches that were wrong, driven through the real helpers.
+#
+# environment.yml is correct, so on this repository python_entries_in() only
+# ever sees one plain top-level string and never reaches either branch. Both
+# were wrong for four rounds without anything going red, which is what an
+# unexercised branch buys you. These call the real functions -- not a copy of
+# their logic -- with the documents that defeated the previous revision.
+
+
+def test_a_pip_block_is_not_read_as_a_conda_python_pin():
+    """The decoy half of the reviewer's mutation, in isolation."""
+    dependencies = ["numpy>=1.20.0", {"pip": ["python==3.11", "essentia-tensorflow"]}]
+
+    assert python_entries_in(dependencies) == []
+
+
+def test_a_channel_prefixed_python_is_recognised_as_python():
+    """The unseen-real-pin half. Before this, the entry conda would actually
+    honour was not recognised as a python entry at all, so the count came out
+    at zero-plus-a-decoy instead of one."""
+    assert _conda_package_name("conda-forge::python=3.12") == "python"
+    assert python_entries_in(["conda-forge::python=3.12"]) == ["conda-forge::python=3.12"]
+
+
+def test_a_package_merely_starting_with_python_is_not_the_python_pin():
+    """The false positive that would get this deleted: real conda environments
+    carry python-dateutil, pythonocc-core and friends."""
+    dependencies = ["python-dateutil>=2.8", "pythonocc-core", "python.app"]
+
+    assert python_entries_in(dependencies) == []
+
+
+def test_both_halves_of_the_reviewer_mutation_together_leave_one_wrong_pin():
+    """End to end on the exact document that passed: one recognised entry,
+    and it is the one conda honours -- so the comparison below it is made
+    against 3.12 and fails, instead of being made against the decoy's 3.11."""
+    dependencies = ["conda-forge::python=3.12", {"pip": ["python==3.11"]}]
+
+    assert python_entries_in(dependencies) == ["conda-forge::python=3.12"]
+
+
+# Every spec below names python and several install the right interpreter.
+# Exactly one of them passes. This is the property the whole rewrite rests on,
+# and it needs its own test: environment.yml is spelled correctly, so the
+# comparison is never reached with anything else, and relaxing it to a
+# substring search left the suite green.
+
+REJECTED_PYTHON_SPECS = [
+    "python 3.11",              # space-separated, legal conda
+    "python>=3.11,<3.12",       # range
+    "python=3.11.*",            # wildcard
+    "python=3.11=h1234_0",      # build string
+    "python",                   # bare
+    "python==3.11",             # pip spelling
+    "python =3.11",             # space before the operator
+    "conda-forge::python=3.11", # right version, channel prefix
+    "python=3.12",              # right FORM, wrong version -- the divergence
+    "python=3.1",               # a prefix of the right version
+    "python=3.11.9",            # more precise than the stated version
+]
+
+
+@pytest.mark.parametrize("spec", REJECTED_PYTHON_SPECS)
+def test_only_the_exactly_accepted_spec_passes(spec):
+    with pytest.raises(AssertionError):
+        conda_python_pin("3.11", [spec])
+
+
+def test_the_accepted_spec_passes():
+    """The other half: this must not be a check that rejects everything."""
+    assert conda_python_pin("3.11", ["python=3.11"]) == "python=3.11"
+
+
+def test_the_accepted_spec_tracks_the_stated_version():
+    """`accepted` is built from the argument, not hard-coded, so a bump of
+    .python-version moves what passes rather than needing an edit here."""
+    assert conda_python_pin("3.13", ["python=3.13"]) == "python=3.13"
+    with pytest.raises(AssertionError):
+        conda_python_pin("3.13", ["python=3.11"])
+
+
+def test_no_python_entry_at_all_fails():
+    with pytest.raises(AssertionError, match="0 time"):
+        conda_python_pin("3.11", ["numpy>=1.20.0", "pip"])
+
+
+def test_two_python_entries_fail_even_when_one_is_correct():
+    with pytest.raises(AssertionError, match="2 time"):
+        conda_python_pin("3.11", ["python=3.11", "conda-forge::python=3.12"])
 
 
 # ---------------------------------------------------------------------------
