@@ -421,7 +421,15 @@ def test_the_shell_uses_real_landmarks():
 
 
 def test_all_five_destinations_are_present():
-    """Explore, Library and Settings ship; two placeholders stay explicit."""
+    """Every catalogued destination has a nav item, built or not.
+
+    This asserted a count of what is still a placeholder, and that number is
+    wrong the moment any destination lands - the Library and Set Creator
+    branches each edited it, from opposite sides, in the same merge. Which
+    destinations are still placeholders is DERIVED from the markup by
+    ``test_the_unimplemented_destinations_say_so``; this one only asks that
+    none of the five disappeared.
+    """
     body = read(INDEX_HTML)
 
     for destination in ("explore", "set-creator", "library", "export", "settings"):
