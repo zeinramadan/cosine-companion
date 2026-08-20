@@ -635,13 +635,42 @@ WORKFLOW_SUFFIXES = (".yml", ".yaml")
 #: the check applying is the same fail-open shape as the rest of this section.
 TEST_WORKFLOW = "test-macos.yml"
 
-#: A ``python-version:`` SETTING: the key at the start of its own line, with
-#: whatever it is set to captured raw. Anchoring is what stops a commented-out
-#: line being read as a setting - ``# python-version: "3.9"`` puts a ``#`` where
-#: this allows only whitespace or a YAML sequence dash. The pattern this
-#: replaced was unanchored, and a comment satisfied it.
-_PYTHON_VERSION_SETTING = re.compile(
-    r"^[ \t]*(?:-[ \t]+)?python-version:[ \t]*(.*?)[ \t]*$", re.MULTILINE
+#: A line that OPENS a block scalar - ``run: |``, ``script: >-``, ``run: |2``.
+#: Everything indented under one is TEXT, normally a shell script, and none of
+#: it configures anything. That is half of round 5's defect: a heredoc inside a
+#: ``run: |`` can put ``python-version: 3.11`` at the start of its own line, and
+#: a reader scanning raw text read that shell script as the workflow's setting.
+#:
+#: The value has to be the block indicator and NOTHING else, so that
+#: ``cmd: echo "a | b"`` is not mistaken for one. Being wrong in that direction
+#: is the direction that matters: wrongly calling a line a block scalar deletes
+#: structure from the reader's view, which is how a setting becomes invisible.
+_BLOCK_SCALAR_HEADER = re.compile(
+    r"^(?P<prefix>[ \t]*(?:-[ \t]+)*)[^#\n]*?:[ \t]*[|>][+-]?[0-9]?[ \t]*(?:#.*)?$"
+)
+
+#: A ``python-version`` setting written as an ordinary block-mapping key: the
+#: key first on its line, optionally quoted, optionally after sequence dashes.
+#: YAML needs whitespace after the colon here, and requiring it is what keeps
+#: ``python-version:3.11`` - a plain scalar, not a mapping - out.
+_BLOCK_MAPPING_SETTING = re.compile(
+    r"""^[ \t]*(?:-[ \t]+)*(?P<quote>['"]?)python-version(?P=quote)[ \t]*:
+        (?=[ \t]|$)[ \t]*(?P<value>.*?)[ \t]*$""",
+    re.VERBOSE,
+)
+
+#: The SAME setting written inside a flow mapping - ``with: {python-version:
+#: "3.10", cache: pip}``. This is the other half of round 5's defect, and the
+#: worse half: the key is mid-line, so a reader anchored to the start of a line
+#: does not see it AT ALL. Invisible is worse than unreadable, because an
+#: unreadable value still says a version is set here, while an invisible one
+#: leaves the other build workflows to answer in this one's place and leaves no
+#: ambiguity for the reader to notice. The value ends at the ``,`` or ``}`` that
+#: ends the entry.
+_FLOW_SETTING = re.compile(
+    r"""[{,][ \t]*(?P<quote>['"]?)python-version(?P=quote)[ \t]*:[ \t]*
+        (?P<value>[^,}]*?)[ \t]*(?=[,}]|$)""",
+    re.VERBOSE,
 )
 
 #: What this reader is prepared to UNDERSTAND: a bare CPython version, quoted
@@ -670,6 +699,84 @@ def _workflow_files():
     }
 
 
+def _indentation(line):
+    """How far one line is indented, in characters."""
+    return len(line) - len(line.lstrip(" \t"))
+
+
+def _structural_lines(text):
+    """The lines of a workflow that are STRUCTURE, with block-scalar text cut.
+
+    A ``run: |`` block holds a shell script. Its contents are indented under the
+    key and are not settings, no matter what they spell - a heredoc line reading
+    ``python-version: 3.11`` configures nothing at all. The rule that ends a
+    block is YAML's own: content runs on through blank lines and any line
+    indented past the key, and stops at the first line that is not.
+
+    This is the only place the reader DISCARDS anything, so it is the only place
+    a setting could be hidden from it. That is why `_BLOCK_SCALAR_HEADER` is
+    strict about what opens a block: a line wrongly called a block scalar takes
+    every line under it out of view.
+    """
+    lines = text.splitlines()
+    structural = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        index += 1
+        structural.append(line)
+        header = _BLOCK_SCALAR_HEADER.match(line)
+        if header is None:
+            continue
+        depth = len(header.group("prefix"))
+        while index < len(lines) and (
+            not lines[index].strip() or _indentation(lines[index]) > depth
+        ):
+            index += 1
+    return structural
+
+
+def _without_comment(line):
+    """One line with any trailing YAML comment removed.
+
+    ``#`` opens a comment when it starts the line or follows whitespace, and
+    never inside a quoted scalar. Doing this here rather than on the extracted
+    value is what lets a wholly commented-out ``# python-version: "3.9"`` be
+    what it is - not a setting - while leaving the value itself untouched.
+    """
+    quote = None
+    for position, character in enumerate(line):
+        if quote is not None:
+            if character == quote:
+                quote = None
+        elif character in "'\"":
+            quote = character
+        elif character == "#" and (position == 0 or line[position - 1] in " \t"):
+            return line[:position]
+    return line
+
+
+def _python_version_settings(line):
+    """Every ``python-version`` setting one structural line makes, raw.
+
+    Two shapes are understood, the block-mapping key and the flow-mapping entry,
+    and they are the two GitHub Actions workflows are actually written in.
+
+    A line that MENTIONS the key in any third shape is returned WHOLE, as its
+    own raw "value". Nothing that contains the text ``python-version`` can match
+    `_UNDERSTOOD_VERSION`, so such a line is reported as a setting this reader
+    cannot resolve and fails loudly. "This reader did not recognise the shape"
+    and "this workflow sets nothing" must not look the same, because a reader
+    that quietly declines to answer lets the other workflows answer for it.
+    """
+    line = _without_comment(line)
+    if "python-version" not in line:
+        return []
+    found = [match.group("value") for match in _BLOCK_MAPPING_SETTING.finditer(line)]
+    found += [match.group("value") for match in _FLOW_SETTING.finditer(line)]
+    return found or [line.strip()]
+
+
 def _workflow_python_versions():
     """``{workflow name: [raw value, ...]}`` for every workflow file there is.
 
@@ -679,11 +786,21 @@ def _workflow_python_versions():
     disappear here, which is how the reader failed open: change one build to
     ``python-version: ${{ env.BUILD_PYTHON }}`` while another keeps a literal
     3.11, and the surviving workflow quietly became the answer for both.
+
+    Round 5 left two more ways for a workflow to be misread, and unlike the
+    others they did not need an exotic value - only ordinary YAML. The reader
+    was a regex over the raw bytes of the file, anchored to the start of a line,
+    so it could not see a key that was not first on its line and could not tell
+    a mapping key from a line of shell script. `_structural_lines` and
+    `_python_version_settings` are what that is replaced with: the file is cut
+    into the lines that are structure, and each is read as YAML rather than as
+    text that happens to contain a colon.
     """
     return {
         name: [
-            match.group(1)
-            for match in _PYTHON_VERSION_SETTING.finditer(path.read_text())
+            raw
+            for line in _structural_lines(path.read_text())
+            for raw in _python_version_settings(line)
         ]
         for name, path in _workflow_files().items()
     }
@@ -695,10 +812,10 @@ def _understood_version(raw):
     None is not "there is none" - it is "this reader does not understand this",
     and every caller has to turn that into a failure rather than a skip.
     """
-    # A trailing YAML comment is stripped, and only a trailing one: `#` after
-    # whitespace starts a comment in YAML and never appears inside a version.
-    stripped = re.sub(r"[ \t]+#.*$", "", raw).strip()
-    matched = _UNDERSTOOD_VERSION.match(stripped)
+    # Comments are already gone: `_without_comment` removes them from the line
+    # before the value is cut out of it, so there is one place that knows what
+    # a YAML comment is rather than two that could disagree.
+    matched = _UNDERSTOOD_VERSION.match(raw.strip())
     return matched.group("version") if matched else None
 
 
@@ -794,7 +911,7 @@ def test_the_shipped_version_is_read_from_the_build_workflows(tmp_path, monkeypa
     versions = _workflow_python_versions()
     assert versions == {
         "build-macos.yml": ["'3.12'"],
-        "build-windows.yaml": ["3.12   # unquoted, with a trailing comment"],
+        "build-windows.yaml": ["3.12"],
         "test-macos.yml": ['"3.10"'],
     }, f"the workflow reader did not read what was written: {versions}"
 
@@ -830,6 +947,72 @@ def test_the_shipped_version_is_read_from_the_build_workflows(tmp_path, monkeypa
         "        python-version: '3.12'\n        python-version: '3.13'\n"
     )
     with pytest.raises(AssertionError, match="sets several Pythons"):
+        _shipped_python_version(_workflow_python_versions())
+
+    # FLOW MAPPING STYLE, which is the same setting on one line. A reader that
+    # only looks at the START of a line cannot see this key at all, and
+    # INVISIBLE is worse than unreadable: an unreadable value at least says a
+    # version is set here, while an invisible one leaves the other builds to
+    # answer in this one's place.
+    (workflows / "build-macos.yml").write_text(
+        "      with: {python-version: '3.10', cache: pip}\n"
+    )
+    assert _workflow_python_versions()["build-macos.yml"] == ["'3.10'"], (
+        "the flow-mapping form of the setting was not read; "
+        f"got {_workflow_python_versions()['build-macos.yml']}"
+    )
+    with pytest.raises(AssertionError, match="no longer agree on one interpreter"):
+        _shipped_python_version(_workflow_python_versions())
+
+    # BLOCK SCALAR TEXT IS NOT A SETTING. `run: |` holds a shell script, and a
+    # heredoc inside it can put `python-version:` at the start of its own line.
+    # That text configures nothing; reading it as the workflow's setting is how
+    # a file can be made to name a Python it does not build on.
+    (workflows / "build-macos.yml").write_text(
+        "      with:\n"
+        "        python-version: '3.12'\n"
+        "      run: |\n"
+        "        cat <<'EOF' > note.txt\n"
+        "        python-version: 3.10\n"
+        "        EOF\n"
+    )
+    assert _workflow_python_versions()["build-macos.yml"] == ["'3.12'"], (
+        "text inside a block scalar was read as a python-version setting; "
+        f"got {_workflow_python_versions()['build-macos.yml']}"
+    )
+    assert _shipped_python_version(_workflow_python_versions()) == "3.12"
+
+    # THE TWO TOGETHER ARE ROUND 5'S DEFECT. The real setting is in flow style
+    # so the old reader could not see it, and a heredoc mentions another
+    # version at the start of a line so the old reader read THAT - one shape
+    # hiding the truth and the other supplying a confident answer in its place,
+    # with no ambiguity left for the reader to notice. Reproduced on the real
+    # `.github/workflows/build-macos.yml` at 30446b1: eleven tests passed while
+    # the build genuinely used 3.10.
+    (workflows / "build-macos.yml").write_text(
+        "      with: {python-version: '3.10'}\n"
+        "      run: |\n"
+        "        cat <<'EOF' > note.txt\n"
+        "        python-version: 3.12\n"
+        "        EOF\n"
+    )
+    assert _workflow_python_versions()["build-macos.yml"] == ["'3.10'"], (
+        "the reader answered with something other than the one real setting: "
+        f"{_workflow_python_versions()['build-macos.yml']}"
+    )
+    with pytest.raises(AssertionError, match="no longer agree on one interpreter"):
+        _shipped_python_version(_workflow_python_versions())
+
+    # AND A SHAPE THE READER DOES NOT UNDERSTAND IS LOUD, not skipped. Anything
+    # that mentions `python-version` outside the two forms above is reported as
+    # a value that cannot be resolved, because "this reader did not recognise
+    # it" and "there is nothing there" must never look the same again.
+    (workflows / "build-macos.yml").write_text(
+        "      with:\n"
+        "        python-version: '3.12'\n"
+        "      env: [python-version=3.10]\n"
+    )
+    with pytest.raises(AssertionError, match="cannot resolve to a CPython version"):
         _shipped_python_version(_workflow_python_versions())
 
 
