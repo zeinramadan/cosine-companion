@@ -3,8 +3,12 @@ channels:
   - conda-forge
   - defaults
 dependencies:
-  # Python
-  - python=3.10
+  # Python. Must equal .python-version, which is the one file that states the
+  # version; tests/test_workflows_do_not_state_a_python_version.py enforces
+  # it. This pinned 3.10 while CI tested and the app shipped 3.11, so a
+  # contributor's conda environment was a different interpreter from the one
+  # anything was verified on.
+  - python=3.11
 
   # Core data processing
   - numpy>=1.20.0
