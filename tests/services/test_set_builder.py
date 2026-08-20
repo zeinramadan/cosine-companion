@@ -330,16 +330,27 @@ def test_the_builder_takes_exactly_one_snapshot_per_build(fixture_library):
     )
 
 
-def test_the_build_never_reads_the_public_meta_ix_property(
+def test_the_build_reads_no_public_meta_ix_property_on_this_path(
     fixture_library, monkeypatch, isolated_deleted_tracks
 ):
-    """The capture route, from the other side: ``build`` reaches the library
-    ONLY through ``snapshot()``.
+    """The capture route, from the other side: one build, and no ``meta_ix``
+    read on it.
 
     ``test_the_builder_takes_exactly_one_snapshot_per_build`` counts the
-    captures; this one shows there is no second route alongside them. A build
-    that called ``snapshot()`` and ALSO read ``self.library.meta_ix`` would pass
-    the counter and fail here.
+    captures; this one shows there is no second route alongside them for the
+    property it watches. A build that called ``snapshot()`` and ALSO read
+    ``self.library.meta_ix`` would pass the counter and fail here.
+
+    THE NAME USED TO SAY "NEVER" AND THAT WAS MORE THAN THIS PROVES. The
+    harness monkeypatches exactly one property, ``meta_ix``. A build that
+    captured a snapshot and then read ``self.library.emb_ix`` or
+    ``self.library.index`` would evade this test AND the counter, because
+    neither watches those two. What is proved is what the name now says: on the
+    one build path exercised here, with this fixture, ``meta_ix`` is not read.
+    Closing the general case needs a guard over every public property, which is
+    deliberately not built - the property route that mattered went through
+    ``meta_ix`` first, and a general access guard is a lot of machinery to
+    restate one fact.
 
     WHAT IT DOES NOT PIN, SAID PLAINLY. This test was called
     ``test_a_delete_between_the_property_reads_cannot_be_observed_half_applied``
