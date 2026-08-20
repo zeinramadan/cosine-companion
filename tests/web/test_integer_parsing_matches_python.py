@@ -107,7 +107,7 @@ interpreter was not proved here and naming the interpreter that proves it. An
 interpreter that cannot see the property does not get to certify it - which is
 also why there is no ``pytest.skip`` and no ``if os.environ["CI"]`` here. A
 skip exits zero, and an environment sniff is the same fail-open shape the
-workflow check below was rewritten to stop having.
+workflow reader below was deleted for being.
 
 The cost is real and it is the smaller half: until
 ``.github/workflows/test-macos.yml`` names the interpreter the builds freeze,
@@ -116,11 +116,13 @@ mismatch. Aligning the two makes every run a total proof and requires no change
 here.
 
 The other half of the property fails separately and so is checked separately:
-that the interpreter this suite runs on is the interpreter every build workflow
-sets up -
-``test_the_workflows_agree_on_the_interpreter_the_digit_table_targets``, with
-the YAML shapes that defeated three generations of workflow READER pinned by
-``test_the_shapes_that_made_the_old_reader_confidently_wrong_are_refused``.
+that the table is DECLARED for the interpreter every build workflow freezes -
+``test_the_digit_table_targets_the_interpreter_the_app_ships_on``. What that
+reads the workflows WITH is PyYAML, after three hand-written YAML subsets in
+a row answered the question confidently and wrongly; the shapes that defeated
+them are pinned by
+``test_the_shipped_version_is_read_from_the_build_workflows`` and
+``test_every_workflow_names_exactly_one_python_this_file_can_resolve``.
 
 WHAT IT DOES NOT CHECK
 ----------------------
@@ -129,13 +131,14 @@ float64, so the corpus stops well inside ``Number.MAX_SAFE_INTEGER``. That
 limit is documented on the helper and is fifteen orders of magnitude past
 ``MAX_SET_TRACKS``; it is a real difference and it is not one this can close.
 
-Nor does it check any interpreter that neither runs the suite nor is named by
-a build workflow. A table generated for 3.11 says nothing about what 3.13 would
-do, and this file does not pretend otherwise: a build workflow that moves to
-another Python is REFUSED by the agreement check below, never read and resolved.
+Nor does it check any interpreter that neither runs the suite nor is named by a
+build workflow. A table generated for 3.11 says nothing about what 3.13 would
+do, and this file does not pretend otherwise: moving a build workflow to an
+unmeasured Python fails with an instruction to measure it.
 """
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -150,6 +153,16 @@ WORKFLOWS = Path(__file__).resolve().parents[2] / ".github" / "workflows"
 
 #: Same floor as the behavioural suites: `node --test` and ESM top-level await.
 MINIMUM_NODE_MAJOR = 18
+
+#: ``unicodedata.unidata_version`` for each CPython minor this project is built
+#: or tested with. MEASURED, one real interpreter at a time - never read off a
+#: changelog, because mis-stating exactly this mapping is the defect this
+#: section exists to stop. A minor that is not here is a hard failure with an
+#: instruction to measure it, not a guess put in its place.
+MEASURED_UNICODE_VERSION = {
+    "3.10": "13.0.0",  # measured: CPython 3.10.18, 650 Nd code points
+    "3.11": "14.0.0",  # measured: CPython 3.11.14, 660 Nd code points
+}
 
 
 
@@ -611,71 +624,104 @@ def test_every_digit_node_knows_and_the_table_refuses_is_refused_everywhere(
 # the interpreter that RUNS it; on its own that says nothing about the one the
 # app SHIPS on, and round 3 shipped a table generated from the wrong one.
 #
-# THIS USED TO ASK "WHICH PYTHON DOES THE BUILD SET UP" AND ANSWER IT. Answering
-# that means understanding YAML, and a hand-written YAML subset answered it
-# wrongly, confidently and greenly, three rounds running:
+# THE WORKFLOWS ARE PARSED BY PyYAML. They used to be read by a hand-written
+# YAML subset, and it was CONFIDENTLY WRONG three rounds running - each round
+# fixed by teaching it one more shape, and each fix followed by a shape nobody
+# had thought of:
 #
-#   round 5  a regex over raw text, so a heredoc line inside `run: |` was a
-#            setting and a key that was not first on its line was invisible;
-#   round 6  flow mappings and block scalars taught to it, so `with:
-#            {python-version: '3.10'}` was read and shell script was not;
-#   round 7  `with: {"python\x2dversion": "3.10"}`, whose key the raw bytes do
-#            not contain, above a `run: |2-` block - a valid header spelling
-#            the reader did not accept, so it never cut the block and read the
-#            script underneath as the setting. yaml.safe_load said the build
-#            used 3.10; the reader said 3.11; eleven tests passed.
+#   round 5  a regex over raw text: a heredoc line inside `run: |` was read as
+#            a setting, and a key not first on its line was invisible
+#   round 6  flow mappings and block scalars taught to it
+#   round 7  `with: {"python\x2dversion": "3.10"}` - an escaped `-` in a
+#            double-quoted key, which YAML decodes to `python-version` and the
+#            raw bytes do not contain - above a `run: |2-` block, a valid
+#            header spelling (indicator 2, chomping `-`) that the reader's
+#            `[|>][+-]?[0-9]?` did not accept, so it never cut the block and
+#            read the shell script under it instead. yaml.safe_load says that
+#            build uses 3.10. The reader said 3.11, and eleven tests passed.
 #
-# Each round's fix taught it one more shape. YAML has unboundedly many, so the
-# fixes were a generator of this defect rather than a cure for it - the same
-# signature as the playlist reaper and the digit allowance, both of which were
-# deleted rather than taught again.
+# Round 6's argument that collecting everything can only produce false
+# AMBIGUITY was wrong: it produces false CERTAINTY, in both directions. And a
+# hand-written YAML subset is a GENERATOR of that defect rather than a thing
+# with a finite number of bugs in it, because YAML's shapes are unbounded.
 #
-# THE QUESTION IS NOW A WEAKER ONE THAT NEEDS NO YAML: do the workflows AGREE
-# about python-version, as text? Nothing below resolves a version, so nothing
-# below can state a wrong one. That is enough, because the version itself is
-# pinned by measurement rather than by reading, in three links:
+# So the subset is gone and nothing here parses YAML any more. PyYAML does, and
+# `yaml.safe_load` is the same oracle that convicted each of the three readers.
 #
-#   1. format.js's declared Unicode version == `unicodedata.unidata_version` of
-#      the interpreter RUNNING this suite. Asserted by
-#      `test_the_helper_accepts_exactly_the_shipped_interpreters_digits`
-#      against a live interpreter, reading no file at all.
-#   2. the interpreter running this suite on CI == the one `TEST_WORKFLOW` sets
-#      up. True by construction: that workflow is what runs it.
-#   3. the one `TEST_WORKFLOW` sets up == the one every `build-*` sets up. THIS
-#      section, and the only link that has to look at a workflow file.
-#
-# Chained, those three say the digit table targets the interpreter the app
-# ships on, which is the sentence round 3 got wrong. Move a build to another
-# Python and link 3 fails; move both workflows together and link 1 fails on CI
-# the moment the suite runs on the new interpreter.
-#
-# Link 3 is the only one a text comparison carries, and it carries it in the
-# safe direction: a line that mentions `python-version` and is not a setting,
-# or a setting written in a shape nobody here anticipated, makes the two files
-# DIFFER, and differing is a failure. The arrangement it cannot see is written
-# down rather than claimed away - see the test below.
+# WHERE PyYAML COMES FROM, because this is the one fact worth knowing before
+# trusting the arrangement: it is not declared anywhere in this repository. It
+# reaches CI as a dependency of `essentia-tensorflow`, through
+# `requirements-macos-arm64-py311.lock` (`pyyaml==6.0.3  # via
+# essentia-tensorflow`), which `.github/workflows/test-macos.yml` installs with
+# `--require-hashes`. That is a real thread to hang this on and it could be cut
+# - trimming the 483 MB TensorFlow stack out of the test job would take PyYAML
+# with it. It is hung on anyway because the failure is LOUD: `_yaml()` raises,
+# the tests below fail and name the lock. There is deliberately no skip. A skip
+# exits zero, and this project has had seven green suites that measured
+# nothing. If that thread is ever cut, declare PyYAML directly rather than
+# going back to reading YAML with regexes.
 # ---------------------------------------------------------------------------
 
 #: Both spellings of the extension GitHub Actions runs. Globbing only ``*.yml``
 #: was one of the old reader's fail-open modes: renaming a build workflow to
 #: ``.yaml`` changes nothing about what CI does and used to remove the workflow
-#: from view entirely, leaving the surviving builds to answer in its place. The
-#: roll call here is the DIRECTORY LISTING for the same reason - a workflow can
-#: only be held to the others if something knows it exists.
+#: from view entirely, leaving the surviving builds to answer in its place.
 WORKFLOW_SUFFIXES = (".yml", ".yaml")
 
-#: The name of the workflow that runs this suite, and the file every other one
-#: is compared against. A literal, and checked to EXIST rather than looked up
-#: with ``.get`` - a rename that silently stopped the check applying is the
-#: same fail-open shape as everything else this section removes.
+#: The name of the workflow that runs this suite. A literal, and checked to
+#: exist rather than looked up with ``.get`` - a rename that silently stopped
+#: the check applying is the same fail-open shape as the rest of this section.
 TEST_WORKFLOW = "test-macos.yml"
+
+#: What this file is prepared to UNDERSTAND as a version: a bare CPython minor
+#: or patch, as a STRING. Everything else - ``${{ env.BUILD_PYTHON }}``, a
+#: matrix expression, a YAML list, a range - is a real setting this file cannot
+#: resolve, and is refused rather than skipped. Separating "understood" from
+#: "found" is the point: the round-3 reader had only "found", so a value it
+#: could not read was indistinguishable from a workflow that set nothing, and
+#: both were dropped in silence.
+#:
+#: A STRING, and that word is load-bearing now that YAML does the reading.
+#: Unquoted ``python-version: 3.10`` is a YAML FLOAT: it parses to 3.1, reaches
+#: setup-python as ``3.1``, and is the best-known way to build on a Python
+#: nobody meant. A float is not a string, so it is refused with its own name.
+_UNDERSTOOD_VERSION = re.compile(r"^\d+\.\d+(?:\.\d+)?$")
+
+
+def _yaml():
+    """PyYAML, or a LOUD failure. Never a skip.
+
+    A skip exits zero and reads exactly like a pass in every summary line and
+    every CI badge. The whole of this section is about not letting "could not
+    check" look like "checked", so the one dependency it has fails the same way
+    everything else here fails: by name, with the fix in the message.
+    """
+    try:
+        import yaml
+    except ImportError as exception:  # pragma: no cover - see the message
+        raise AssertionError(
+            "PyYAML is not importable, and this file reads .github/workflows "
+            "with it rather than with a regex - three hand-written readers "
+            "were confidently wrong about which Python the app is built on "
+            "before it did. This is a FAILURE and not a skip on purpose: a "
+            "skip exits zero and looks like a pass.\n"
+            "\n"
+            "CI gets PyYAML from requirements-macos-arm64-py311.lock "
+            "(pyyaml==6.0.3, via essentia-tensorflow), which test-macos.yml "
+            "installs with --require-hashes. Locally: python -m pip install "
+            "pyyaml==6.0.3. If the lock no longer carries it, declare it "
+            "directly - do not go back to parsing YAML by hand."
+        ) from exception
+    return yaml
 
 
 def _workflow_files():
     """Every workflow file on disk, ``{name: path}``.
 
     THE FILESYSTEM IS THE ROLL CALL, not the set of files that happened to
-    match a pattern.
+    match a pattern. That distinction is half of this section's fix: the check
+    below can only demand an answer from a build workflow it knows exists, and
+    it can only know one exists by listing the directory.
     """
     return {
         path.name: path
@@ -684,284 +730,458 @@ def _workflow_files():
     }
 
 
-def _python_version_lines(text):
-    """The set of lines in one workflow that mention ``python-version``.
+def _python_version_settings(node):
+    """Every value set for a ``python-version`` KEY anywhere in one document.
 
-    NORMALISED ONLY AS FAR AS THE REAL FILES FORCE, because every normalisation
-    is a chance to call two different things the same. Two are needed:
+    A key, in the parsed document - not a line, and not an occurrence of the
+    text. That is the whole difference between this and the three readers it
+    replaces, and it decides both directions at once:
 
-    * whitespace, leading and internal - ``build-macos.yml`` writes the key at
-      eight columns and ``test-macos.yml`` at ten;
-    * ``'`` rewritten to ``"`` - those same two files quote 3.11 differently.
-
-    Quote style is CANONICALISED, not stripped, and the difference matters.
-    Dropping quotes would call ``python-version: 3.10`` and
-    ``python-version: "3.10"`` the same line. They are not the same setting:
-    unquoted ``3.10`` is a YAML float, reaches setup-python as ``3.1``, and is
-    the best-known way to build on a Python nobody meant.
-
-    NOTHING ELSE IS UNDERSTOOD, ON PURPOSE. Comments are not stripped, block
-    scalars are not cut, flow mappings are not entered, values are not
-    extracted. Each of those is an act of parsing, and each of them, done
-    wrong, HIDES a line - which is how the last three readers were confidently
-    wrong. Here an extra line is not a wrong answer, it is a difference, and a
-    difference fails.
+    * ``with: {"python\\x2dversion": "3.10"}`` IS this key. PyYAML decoded the
+      escape; nothing here had to know that ``\\x2d`` is a hyphen.
+    * a heredoc line inside ``run: |``, a ``python-version`` inside a quoted
+      string, and ``uv pip compile --python-version 3.11`` in a shell command
+      are all part of one STRING value. A string is not a mapping, so none of
+      them is reached. Nothing here had to know what a block scalar is, which
+      is what the ``|2-`` in round 7 turned on.
     """
-    return {
-        " ".join(line.replace("'", '"').split())
-        for line in text.splitlines()
-        if "python-version" in line
-    }
+    found = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "python-version":
+                found.append(value)
+            found.extend(_python_version_settings(value))
+    elif isinstance(node, list):
+        for item in node:
+            found.extend(_python_version_settings(item))
+    return found
 
 
-def _what_each_workflow_says_about_python():
-    """``{workflow name: normalised python-version lines}``, for every file."""
-    return {
-        name: _python_version_lines(path.read_text())
-        for name, path in _workflow_files().items()
-    }
+def _workflow_python_versions():
+    """``{workflow name: [value, ...]}`` for every workflow file there is.
 
-
-def _refuse_unless_the_workflows_agree(said):
-    """Raise unless every workflow that mentions ``python-version`` says the
-    same thing about it, and every workflow that must mention it does.
-
-    Split out from the test so the test below can drive it over written files.
+    AS PARSED, in document order, and never filtered. A workflow that sets
+    nothing gets an empty list rather than vanishing, and a value this file
+    cannot resolve is carried through to be refused by name rather than
+    dropped. Both of those used to disappear here, which is how the reader
+    failed open: change one build to ``python-version: ${{ env.BUILD_PYTHON }}``
+    while another keeps a literal 3.11, and the surviving workflow quietly
+    became the answer for both.
     """
-    assert said, f"no workflow files were found at all under {WORKFLOWS}"
-
-    assert TEST_WORKFLOW in said, (
-        f"{TEST_WORKFLOW} is not among the workflow files ({sorted(said)}). It "
-        "is the file every other one is compared against, because it is the "
-        "one that runs this suite - so its interpreter is the interpreter "
-        "`test_the_helper_accepts_exactly_the_shipped_interpreters_digits` "
-        "measures. If it was renamed, rename TEST_WORKFLOW with it; otherwise "
-        "this check silently stops applying."
-    )
-    reference = said[TEST_WORKFLOW]
-    assert reference, (
-        f"{TEST_WORKFLOW} does not mention python-version anywhere, so there "
-        "is nothing for the build workflows to agree WITH. Every workflow "
-        "saying nothing would make them trivially agree, which is the "
-        "fail-open shape this whole section exists to remove."
-    )
-
-    builds = sorted(name for name in said if name.startswith("build-"))
-    assert builds, f"no build-* workflow was found at all; read {sorted(said)}"
-
-    silent = [name for name in builds if not said[name]]
-    assert silent == [], (
-        f"{', '.join(silent)} does not mention python-version anywhere. A "
-        "build workflow that sets up no Python, or that takes its version from "
-        "somewhere the text of the file does not name, cannot be held to the "
-        f"interpreter {TEST_WORKFLOW} runs this suite on - and that interpreter "
-        "is the only evidence this suite has about the shipped one."
-    )
-
-    disagree = {
-        name: sorted(lines)
-        for name, lines in sorted(said.items())
-        if lines and lines != reference
-    }
-    assert disagree == {}, (
-        f"these workflows do not say what {TEST_WORKFLOW} says about "
-        f"python-version.\n"
-        f"  {TEST_WORKFLOW}: {sorted(reference)}\n"
-        + "".join(f"  {name}: {lines}\n" for name, lines in disagree.items())
-        + "\nThis check does not read a version out of them and will not "
-        "guess which one is right. It requires the files to AGREE, because "
-        "PYTHON_DECIMAL_RUNS is generated from ONE interpreter and this suite "
-        f"can only measure the one it runs on - {TEST_WORKFLOW}'s. If a build "
-        "genuinely moved to another Python, move this suite with it and "
-        "regenerate the table; if the difference is a comment or a line of "
-        "shell script that happens to mention python-version, move it out of "
-        "the way rather than teaching this check to ignore it."
-    )
+    yaml = _yaml()
+    versions = {}
+    for name, path in _workflow_files().items():
+        try:
+            documents = list(yaml.safe_load_all(path.read_text()))
+        except yaml.YAMLError as exception:
+            raise AssertionError(
+                f"{name} is not valid YAML, so GitHub Actions cannot be "
+                f"running it either: {exception}"
+            ) from exception
+        versions[name] = [
+            value
+            for document in documents
+            for value in _python_version_settings(document)
+        ]
+    return versions
 
 
-def test_the_workflows_agree_on_the_interpreter_the_digit_table_targets():
-    """THE SHIP-BLOCKING PROPERTY, half one: the table is FOR the built Python.
+def _understood_version(value):
+    """The CPython version one parsed setting states, or None for "cannot tell".
 
-    ``test_the_helper_accepts_exactly_the_shipped_interpreters_digits``
-    compares the parser against whichever interpreter RUNS the suite. That is
-    only worth something if the app is shipped on that interpreter, and in
-    round 3 it was not: the table came from 3.10 (Unicode 13.0, 650 digits)
-    while every ``build-*`` workflow froze 3.11 (Unicode 14.0, 660). A user on
-    a shipped build could type a Tangsa ten, whose ``int()`` in that same
-    bundle returns 10, and be told it was not a valid number for total tracks.
-
-    This is link 3 of the chain in the comment above, and the only link that
-    reads a file. It does not answer "which Python"; it answers "do these files
-    say the same thing", which needs no YAML and therefore cannot be
-    confidently wrong about a version it never computes.
-
-    WHAT IT CANNOT SEE, stated rather than claimed away. The comparison is over
-    lines that contain the text ``python-version``, with indentation and quote
-    style normalised. So it is blind to two things at once, and only to both at
-    once: a real setting spelled so the text never appears (a double-quoted
-    ``"python\\x2dversion"``, a folded key), AND a decoy line planted in the
-    same file that reproduces the other file's line exactly. Either alone is
-    caught - the first leaves the file silent, the second makes it differ.
-
-    The pair is NOT caught, and that is measured rather than guessed at: on the
-    real ``build-macos.yml``, an escaped key setting 3.10 under a ``run: |2-``
-    block whose text is ``python-version: "3.11"`` leaves this green while
-    ``yaml.safe_load`` says the build uses 3.10. Both halves have to be
-    deliberate - an accident does not spell a key in hex and then reproduce
-    another file's line under it - and no check in this file defends against
-    someone with commit access writing YAML designed to mislead it. What the
-    three rounds of defect actually were is accident shapes, and those are
-    caught, one probe each, in the test below.
-
-    Red when: a build moves to another Python and this suite does not, a build
-    stops setting one up, a build's version becomes an expression or a matrix,
-    or a workflow grows a line that mentions python-version and is not a
-    setting. The last of those is a false alarm by design - a loud refusal is
-    an acceptable price for never needing to know what a block scalar is.
+    None is not "there is none" - it is "this file does not understand this",
+    and every caller has to turn that into a failure rather than a skip.
     """
-    said = _what_each_workflow_says_about_python()
-    _refuse_unless_the_workflows_agree(said)
-    print(f"\nworkflows agree on python-version: {sorted(said[TEST_WORKFLOW])}")
+    if not isinstance(value, str) or not _UNDERSTOOD_VERSION.match(value):
+        return None
+    return value
 
 
-def test_the_shapes_that_made_the_old_reader_confidently_wrong_are_refused(
-    tmp_path, monkeypatch
-):
-    """The three rounds of defect, replayed against the check that replaced it.
+def _describe(value):
+    """One unresolvable value, with the TYPE YAML gave it.
 
-    Every one of these was a GREEN suite at the time. They are pinned here
-    rather than in prose because prose does not go red, and because the point
-    is not that this check parses them correctly - it parses nothing - but that
-    each of them makes two files DIFFER, which fails.
+    The type is the message for the commonest real mistake: ``3.11`` without
+    quotes is a float, and printing it back as ``3.11`` would hide exactly the
+    thing that went wrong.
+    """
+    return f"{value!r} ({type(value).__name__})"
 
-    `.github/workflows/` itself cannot be used for this: a test that mutates
-    the real workflows to prove it catches them would have to put them back,
-    and a killed test run would leave the repository holding the mutation.
+
+def _the_one_python_it_sets(name, values):
+    """The single CPython version one workflow sets, or a loud failure.
+
+    Three failures rather than one silence, because they need different fixes:
+    the workflow sets nothing, it sets something unreadable, or it sets several.
+    """
+    assert values, (
+        f"{name} sets no python-version at all, and this file's answer depends "
+        "on it. Either it lost the `- uses: actions/setup-python` step, or the "
+        "step now takes its version from somewhere this file does not look."
+    )
+    unreadable = [value for value in values if _understood_version(value) is None]
+    assert unreadable == [], (
+        f"{name} sets python-version to "
+        + ", ".join(_describe(value) for value in unreadable)
+        + ", which is not a literal CPython version. It will not be guessed at "
+        "and it will not be skipped: skipping is what let one build workflow's "
+        "literal answer for another's expression.\n"
+        "\n"
+        "If the type above is `float`, the version is unquoted, and that is a "
+        "real defect rather than a formatting one - YAML reads `3.10` as the "
+        "number 3.1 and setup-python is handed `3.1`. Quote it.\n"
+        "\n"
+        "Otherwise either give the workflow a literal version, or teach "
+        "_understood_version to resolve this form and pin the new form in "
+        "test_the_shipped_version_is_read_from_the_build_workflows."
+    )
+    understood = sorted({_understood_version(value) for value in values})
+    assert len(understood) == 1, (
+        f"{name} sets several Pythons ({understood}), so it does not name one "
+        "interpreter. A matrix here would make 'the interpreter this workflow "
+        "uses' an ambiguous phrase."
+    )
+    return understood[0]
+
+
+def _shipped_python_version(versions):
+    """The one CPython minor every ``build-*`` workflow sets up.
+
+    The BUILD workflows, not the test one: what a user runs is what PyInstaller
+    froze, and `parseIntegerStrictly` has to answer as THAT interpreter's
+    ``int()`` answers. Insisting the builds agree with each other is part of the
+    check - three platforms on two Pythons would make "the shipped interpreter"
+    an ambiguous phrase, and the table can only be generated from one.
+
+    EVERY build workflow has to answer, and the roll call is the directory
+    listing. A build that could not be read used to be absent from ``versions``
+    and therefore absent from this set, which made every other build an
+    effective fallback for it.
+    """
+    build = sorted(name for name in versions if name.startswith("build-"))
+    assert build, f"no build-* workflow was found at all; read {sorted(versions)}"
+
+    per_workflow = {name: _the_one_python_it_sets(name, versions[name]) for name in build}
+    distinct = sorted(set(per_workflow.values()))
+    assert len(distinct) == 1, (
+        f"the build workflows no longer agree on one interpreter: {per_workflow}. "
+        "PYTHON_DECIMAL_RUNS can only be generated from one of them, so "
+        "'the shipped interpreter' has to name exactly one version."
+    )
+    return distinct[0]
+
+
+def test_the_shipped_version_is_read_from_the_build_workflows(tmp_path, monkeypatch):
+    """The reader under the test below, on workflows this test writes.
+
+    Without this, ``test_the_digit_table_targets_the_interpreter_the_app_ships_on``
+    proves only that the declaration equals SOME value that happens to be
+    "3.11"'s Unicode version - a hardcoded constant would satisfy it just as
+    well. The honest way to show it reads `.github/workflows/build-*` is to
+    point it at workflows written here, which `.github/workflows/` itself
+    cannot be used for: a test that mutated the real files would have to put
+    them back, and a killed run would leave the repository holding the mutation.
+
+    THE FAIL-OPEN MODES ARE THE POINT, and every one of them below was a GREEN
+    eleven-test suite at the time. Three of them are the shapes that convicted
+    three successive hand-written readers, and they are here to stay red on the
+    day someone decides parsing YAML by hand was fine after all.
     """
     workflows = tmp_path / "workflows"
     workflows.mkdir()
     monkeypatch.setattr(sys.modules[__name__], "WORKFLOWS", workflows, raising=True)
 
-    # The real files' own difference in style, which must NOT be a difference:
-    # eight columns and single quotes against ten columns and double quotes.
-    # A check that failed here would fail on the repository as it stands, and a
-    # check that fails on everything is not a check.
-    (workflows / TEST_WORKFLOW).write_text(
-        '        with:\n          python-version: "3.11"\n'
-    )
-    (workflows / "build-macos.yml").write_text(
-        "      with:\n        python-version: '3.11'\n"
-    )
-    # `.yaml`, because GitHub Actions runs it and the old glob did not see it.
-    (workflows / "build-windows.yaml").write_text("    python-version:    '3.11'\n")
-    _refuse_unless_the_workflows_agree(_what_each_workflow_says_about_python())
-
-    def refused(match):
-        return pytest.raises(AssertionError, match=match)
-
     def build_says(text):
         (workflows / "build-macos.yml").write_text(text)
-        return _what_each_workflow_says_about_python()
+        return _workflow_python_versions()
 
-    # ROUND 7, THE DEFECT THIS REPLACES. `python\x2dversion` is an escaped `-`
-    # in a double-quoted key: YAML decodes it to `python-version` and the raw
-    # text contains no such string, so the old reader never saw the real 3.10
-    # setting. `|2-` is a valid block scalar header - indentation indicator 2,
-    # chomping `-` - that its `[|>][+-]?[0-9]?` did not accept, so it never cut
-    # the block and read the script underneath as the setting instead.
-    # yaml.safe_load says this build uses 3.10; the reader said 3.11.
-    #
-    # Here the escaped key is simply not a mention, so the file's only mention
-    # is the block scalar's - and that line does not match what TEST_WORKFLOW
-    # says, so the two files differ. The reader had to understand both shapes
-    # to be right. This one has to understand neither.
-    with refused("do not say what"):
-        _refuse_unless_the_workflows_agree(
+    (workflows / "test-macos.yml").write_text('        python-version: "3.10"\n')
+    (workflows / "build-macos.yml").write_text("        python-version: '3.12'\n")
+    # `.yaml`, because GitHub Actions runs it and the old glob did not see it.
+    (workflows / "build-windows.yaml").write_text(
+        "# python-version: '3.9'   <- a comment, and not a setting\n"
+        "python-version: '3.12'    # quoted, with a trailing comment\n"
+    )
+    versions = _workflow_python_versions()
+    assert versions == {
+        "build-macos.yml": ["3.12"],
+        "build-windows.yaml": ["3.12"],
+        "test-macos.yml": ["3.10"],
+    }, f"the workflows were not read as written: {versions}"
+
+    assert _shipped_python_version(versions) == "3.12", (
+        "the shipped version was not taken from the build workflows; "
+        "3.10 is what test-macos.yml says and it must not reach the answer"
+    )
+
+    # A build that disagrees with the others is a failure, not a silent pick.
+    (workflows / "build-macos-intel.yml").write_text("        python-version: '3.13'\n")
+    with pytest.raises(AssertionError, match="no longer agree on one interpreter"):
+        _shipped_python_version(_workflow_python_versions())
+    (workflows / "build-macos-intel.yml").unlink()
+
+    # THE FAIL-OPEN CASE ITSELF: one build in a form that cannot be resolved,
+    # while another still carries a literal. The old reader answered "3.12"
+    # here, from the surviving workflow, and said nothing.
+    with pytest.raises(AssertionError, match="not a literal CPython version"):
+        _shipped_python_version(build_says("        python-version: ${{ env.BUILD_PYTHON }}\n"))
+
+    # And a build that sets no python-version at all, which the old reader also
+    # let the surviving workflow answer for.
+    with pytest.raises(AssertionError, match="sets no python-version at all"):
+        _shipped_python_version(build_says("        cache: pip\n"))
+
+    # A matrix inside one workflow is ambiguous in the same way two workflows
+    # disagreeing are, and is refused for the same reason.
+    with pytest.raises(AssertionError, match="sets several Pythons"):
+        _shipped_python_version(
             build_says(
-                '      with: {"python\\x2dversion": "3.10"}\n'
-                "      run: |2-\n"
-                "        python-version: 3.11\n"
+                "strategy:\n"
+                "  matrix:\n"
+                "    include:\n"
+                "      - python-version: '3.12'\n"
+                "      - python-version: '3.13'\n"
             )
         )
 
-    # And with the block scalar removed, the escaped key leaves the file with
-    # nothing to say - which is a failure too, not a workflow that agrees by
-    # having no opinion. That is the half that makes the pair the only gap.
-    with refused("does not mention python-version anywhere"):
-        _refuse_unless_the_workflows_agree(
-            build_says('      with: {"python\\x2dversion": "3.10"}\n')
-        )
+    # AN UNQUOTED VERSION IS A YAML FLOAT, not a version. `3.10` parses to the
+    # number 3.1 and setup-python is handed `3.1`. The old text reader called
+    # this a perfectly good "3.10", which is the one place reading the raw
+    # bytes was not merely blind but actively wrong about the value.
+    with pytest.raises(AssertionError, match=r"not a literal CPython version"):
+        _shipped_python_version(build_says("        python-version: 3.10\n"))
+    assert build_says("        python-version: 3.10\n")["build-macos.yml"] == [3.1], (
+        "unquoted 3.10 is the YAML float 3.1; if this ever reads as '3.10' "
+        "then something is reading the file's text again"
+    )
+
+    # ROUND 5. A `run: |` block holds a shell script, and a heredoc inside it
+    # can put `python-version:` at the start of its own line. That text
+    # configures nothing. It is a STRING here, and strings are not walked.
+    assert build_says(
+        "      with:\n"
+        "        python-version: '3.12'\n"
+        "      run: |\n"
+        "        cat <<'EOF' > note.txt\n"
+        "        python-version: 3.10\n"
+        "        EOF\n"
+    )["build-macos.yml"] == ["3.12"], "block scalar text was read as a setting"
+
+    # ROUND 5'S OTHER HALF, and round 6's probe: FLOW MAPPING STYLE. The key is
+    # mid-line, so a reader anchored to the start of a line could not see it at
+    # all - and INVISIBLE is worse than unreadable, because an unreadable value
+    # still says a version is set here while an invisible one leaves the other
+    # builds to answer in this one's place.
+    assert build_says("      with: {python-version: '3.10', cache: pip}\n")[
+        "build-macos.yml"
+    ] == ["3.10"], "the flow-mapping form of the setting was not read"
+    with pytest.raises(AssertionError, match="no longer agree on one interpreter"):
+        _shipped_python_version(_workflow_python_versions())
+
+    # ROUND 5'S TWO HALVES TOGETHER, which is what made it a defect rather than
+    # an ambiguity: the real setting invisible AND a shell script answering in
+    # its place, with nothing left for the reader to notice.
+    assert build_says(
+        "      with: {python-version: '3.10'}\n"
+        "      run: |\n"
+        "        cat <<'EOF' > note.txt\n"
+        "        python-version: 3.12\n"
+        "        EOF\n"
+    )["build-macos.yml"] == ["3.10"], "the one real setting was not the answer"
+
+    # ROUND 7, THE DEFECT THIS PARSER REPLACES. `python\x2dversion` is an
+    # escaped `-` in a double-quoted key: YAML decodes it to `python-version`
+    # and the raw bytes contain no such string, so the old reader never saw the
+    # real 3.10 setting. `|2-` is a VALID block scalar header - indentation
+    # indicator 2, chomping `-` - that its `[|>][+-]?[0-9]?` did not accept, so
+    # it never cut the block and read the script underneath instead. Reproduced
+    # on the real build-macos.yml: yaml.safe_load said 3.10, the reader said
+    # 3.11, and all eleven tests passed.
+    assert build_says(
+        '    - uses: actions/setup-python@v5\n'
+        '      with: {"python\\x2dversion": "3.10"}\n'
+        "    - run: |2-\n"
+        "        python-version: 3.11\n"
+    )["build-macos.yml"] == ["3.10"], (
+        "the escaped-key setting was not read, or the block scalar under a "
+        "`|2-` header was"
+    )
+    with pytest.raises(AssertionError, match="no longer agree on one interpreter"):
+        _shipped_python_version(_workflow_python_versions())
+
+    # AND THE SAME KEY WITH A DECOY PLANTED TO MIRROR ANOTHER FILE'S LINE. This
+    # is the arrangement a text comparison of the two files cannot see, and the
+    # reason this parses instead of comparing: `python-version` appears in the
+    # file exactly once as text, spelling 3.11, and the build uses 3.10.
+    assert build_says(
+        '    - uses: actions/setup-python@v5\n'
+        '      with: {"python\\x2dversion": "3.10"}\n'
+        "    - run: |2-\n"
+        '        python-version: "3.11"\n'
+    )["build-macos.yml"] == ["3.10"], "a mirrored decoy answered for the real setting"
 
     # A FALSE SETTING INSIDE A QUOTED STRING. The old flow-mapping regex read
-    # `{python-version: 3.11}` out of the middle of a JSON-ish string value and
-    # reported it as a setting this workflow makes. It configures nothing.
-    with refused("do not say what"):
-        _refuse_unless_the_workflows_agree(
-            build_says(
-                "      with:\n"
-                "        python-version: '3.11'\n"
-                '      env: {NOTE: "{python-version: 3.11}"}\n'
-            )
+    # `{python-version: 3.11}` out of the middle of a string value and reported
+    # it as a setting this workflow makes. It configures nothing.
+    assert build_says(
+        "      with:\n"
+        "        python-version: '3.10'\n"
+        '      env: {NOTE: "{python-version: 3.11}"}\n'
+    )["build-macos.yml"] == ["3.10"], "a quoted string was read as a setting"
+
+    # AND A SHELL COMMAND THAT NAMES A PYTHON VERSION IS NOT A SETTING EITHER.
+    # test-macos.yml really does run `uv pip compile --python-version 3.11`, so
+    # this is not hypothetical: a check that counted mentions rather than
+    # parsing keys would refuse the repository as it actually stands.
+    assert build_says(
+        "      with:\n"
+        "        python-version: '3.11'\n"
+        "      run: |\n"
+        "        uv pip compile --python-version 3.11 -o out.lock\n"
+    )["build-macos.yml"] == ["3.11"], "a --python-version flag was read as a setting"
+
+    # A WORKFLOW THAT IS NOT VALID YAML is a failure naming the file, because
+    # GitHub Actions is not running it either.
+    with pytest.raises(AssertionError, match="is not valid YAML"):
+        build_says("      with: {python-version: '3.11'\n")
+
+    # THE DEPENDENCY FAILS LOUDLY AND NEVER SKIPS. `_yaml()` is the one import
+    # this section has, and if it ever stops resolving the tests here have to
+    # go RED rather than green-with-a-skip - this project has had seven green
+    # suites that measured nothing, and a skip is how each of them read.
+    monkeypatch.setitem(sys.modules, "yaml", None)
+    with pytest.raises(AssertionError, match="PyYAML is not importable"):
+        _workflow_python_versions()
+
+
+def test_every_workflow_names_exactly_one_python_this_file_can_resolve():
+    """The parser against the REAL `.github/workflows`, which the test above
+    cannot use because it writes its own.
+
+    The test above proves the fail-open shapes are REFUSED. This proves the
+    repository does not currently contain one - that every workflow whose
+    answer this file depends on names exactly one CPython that resolves, and
+    that no workflow anywhere sets a python-version that does not. A check that
+    is strict about files nobody looked at is a check whose strictness is
+    theoretical.
+
+    This also carries the one thing worth keeping from the reporting test that
+    round 4 deleted: that `test-macos.yml` names exactly one interpreter. That
+    check was real; the test around it was not, because its two branches both
+    printed and neither could fail.
+    """
+    versions = _workflow_python_versions()
+    assert versions, f"no workflow files were found under {WORKFLOWS}"
+
+    # The workflows this file's answer depends on, by role. `TEST_WORKFLOW` is
+    # asserted to EXIST rather than looked up with `.get`, because a rename
+    # that quietly stopped the check applying is the shape being removed here.
+    assert TEST_WORKFLOW in versions, (
+        f"{TEST_WORKFLOW} is not among the workflow files ({sorted(versions)}). "
+        "If the workflow that runs this suite was renamed, TEST_WORKFLOW has to "
+        "be renamed with it - otherwise this check silently stops applying."
+    )
+    depends_on = sorted(
+        name for name in versions if name.startswith("build-") or name == TEST_WORKFLOW
+    )
+    named = {name: _the_one_python_it_sets(name, versions[name]) for name in depends_on}
+
+    assert sum(1 for name in named if name.startswith("build-")) >= 1, (
+        f"no build-* workflow was found among {sorted(versions)}"
+    )
+
+    # And nowhere else may a python-version be set in a form this cannot read.
+    # A workflow with no python-version is fine - not every workflow needs one -
+    # but one that sets an unresolvable value would be a form this file would
+    # have to be taught before it appeared in a build.
+    unreadable = sorted(
+        (name, _describe(value))
+        for name, values in versions.items()
+        for value in values
+        if _understood_version(value) is None
+    )
+    assert unreadable == [], (
+        "these workflows set a python-version this file cannot resolve: "
+        + ", ".join(f"{name} -> {shown}" for name, shown in unreadable)
+        + ". Teach _understood_version the form and pin it in "
+        "test_the_shipped_version_is_read_from_the_build_workflows, so that a "
+        "build workflow adopting it later cannot be read as setting nothing."
+    )
+
+    print(f"\nworkflow interpreters: {named}")
+
+
+def test_the_digit_table_targets_the_interpreter_the_app_ships_on(digit_survey):
+    """THE SHIP-BLOCKING PROPERTY, half one: the table is FOR the built Python.
+
+    ``test_the_helper_accepts_exactly_the_shipped_interpreters_digits``
+    compares the parser against whichever interpreter runs the suite. That is
+    only worth something if the table was generated from the interpreter the
+    app is SHIPPED on, and in round 3 it was not: the table came from 3.10
+    (Unicode 13.0, 650 digits) and every ``build-*`` workflow freezes 3.11
+    (Unicode 14.0, 660). A user on a shipped build could type a Tangsa ten,
+    whose ``int()`` in that same bundle returns 10, and be told it was not a
+    valid number for total tracks.
+
+    The version is read from the module's EXPORT through node, not grepped out
+    of the source, so it is the declaration the shipped code actually carries.
+
+    Red when: the builds move to a Python whose Unicode version differs from
+    the table's declaration, or the declaration is edited to a version the
+    builds do not use. Either way the table needs regenerating from the new
+    interpreter, and the message says which one to run.
+    """
+    shipped = _shipped_python_version(_workflow_python_versions())
+
+    assert shipped in MEASURED_UNICODE_VERSION, (
+        f"the app is built on CPython {shipped}, whose unicodedata version has "
+        "not been measured here. Run\n"
+        "  pythonX.Y -c \"import unicodedata; print(unicodedata.unidata_version)\"\n"
+        "on that exact interpreter, add the row to MEASURED_UNICODE_VERSION, "
+        "and regenerate PYTHON_DECIMAL_RUNS from it. Do not read the version "
+        "off a changelog - that is how round 3 shipped the wrong table."
+    )
+    expected = MEASURED_UNICODE_VERSION[shipped]
+
+    assert digit_survey["unicode_version"] == expected, (
+        f"format.js declares its digit table to be Unicode "
+        f"{digit_survey['unicode_version']}, and the app is built on CPython "
+        f"{shipped}, whose unicodedata is {expected}. The shipped parser and "
+        "the shipped interpreter would disagree about which characters are "
+        "digits. Regenerate the table with\n"
+        "  python -c \"import sys,unicodedata; print([c for c in "
+        "range(sys.maxunicode+1) if unicodedata.category(chr(c))=='Nd'])\"\n"
+        f"on CPython {shipped}, and update PYTHON_UNICODE_VERSION."
+    )
+
+
+def test_the_measured_unicode_versions_are_right_about_this_interpreter():
+    """The mapping above is hand-maintained, so it is checked where it can be.
+
+    Only one row is checkable per run - the row for the interpreter running
+    this test - but every interpreter the project uses runs the suite sooner or
+    later, so every row is reachable. A row that was wrong about the running
+    interpreter would make
+    ``test_the_digit_table_targets_the_interpreter_the_app_ships_on`` demand the
+    wrong table, which is round 3's defect wearing a different hat.
+
+    A minor that is not in the map is skipped rather than failed: running the
+    suite on an interpreter the project does not build or test on is a
+    developer's business, not a defect, and the test above is what refuses an
+    unmeasured BUILD version.
+    """
+    running = "%d.%d" % sys.version_info[:2]
+    if running not in MEASURED_UNICODE_VERSION:
+        pytest.skip(
+            f"CPython {running} is not a version this project builds or tests "
+            f"on ({sorted(MEASURED_UNICODE_VERSION)}), so it pins no row"
         )
 
-    # ROUND 6'S FLOW-STYLE PROBE, which must stay caught. The key is mid-line,
-    # so a reader anchored to the start of a line could not see it at all, and
-    # INVISIBLE was worse than unreadable: the other builds answered in this
-    # one's place. Nothing here is anchored, and the line differs.
-    with refused("do not say what"):
-        _refuse_unless_the_workflows_agree(
-            build_says("      with: {python-version: '3.10', cache: pip}\n")
-        )
-
-    # ROUND 5'S BLOCK-SCALAR TEXT, the same way. A heredoc inside `run: |` can
-    # put `python-version:` at the start of its own line; that text configures
-    # nothing, and the old reader read it as the workflow's setting.
-    with refused("do not say what"):
-        _refuse_unless_the_workflows_agree(
-            build_says(
-                "      with:\n"
-                "        python-version: '3.11'\n"
-                "      run: |\n"
-                "        cat <<'EOF' > note.txt\n"
-                "        python-version: 3.10\n"
-                "        EOF\n"
-            )
-        )
-
-    # AN UNQUOTED VERSION IS NOT THE QUOTED ONE, which is why quote style is
-    # canonicalised and not stripped. Unquoted `3.10` is a YAML float, reaches
-    # setup-python as `3.1`, and builds on a Python nobody meant.
-    with refused("do not say what"):
-        _refuse_unless_the_workflows_agree(build_says("        python-version: 3.11\n"))
-
-    # A VERSION THIS SUITE CANNOT MEASURE ITSELF AGAINST. `${{ env.X }}` and a
-    # matrix were both fail-open in the old reader - the first was dropped in
-    # silence, letting another build's literal answer for this one.
-    for expression in (
-        "        python-version: ${{ env.BUILD_PYTHON }}\n",
-        "        python-version: ${{ matrix.python }}\n",
-        "        python-version: ['3.11', '3.12']\n",
-    ):
-        with refused("do not say what"):
-            _refuse_unless_the_workflows_agree(build_says(expression))
-
-    # A BUILD THAT SETS UP NO PYTHON AT ALL cannot be held to this suite's
-    # interpreter, and must not pass by having no opinion.
-    with refused("does not mention python-version anywhere"):
-        _refuse_unless_the_workflows_agree(build_says("        cache: pip\n"))
-
-    # NEITHER MAY EVERYONE FALL SILENT TOGETHER. Trivial agreement is the
-    # fail-open shape this section is made of, so the reference file having
-    # nothing to say is its own failure.
-    (workflows / TEST_WORKFLOW).write_text("        cache: pip\n")
-    build_says("        cache: pip\n")
-    with refused("nothing for the build workflows to agree WITH"):
-        _refuse_unless_the_workflows_agree(_what_each_workflow_says_about_python())
-
-    # A RENAME MUST NOT QUIETLY STOP THE CHECK APPLYING.
-    (workflows / TEST_WORKFLOW).rename(workflows / "test-macos-renamed.yml")
-    with refused("is not among the workflow files"):
-        _refuse_unless_the_workflows_agree(_what_each_workflow_says_about_python())
+    assert MEASURED_UNICODE_VERSION[running] == unicodedata.unidata_version, (
+        f"MEASURED_UNICODE_VERSION says CPython {running} has unicodedata "
+        f"{MEASURED_UNICODE_VERSION[running]}, and this CPython {running} "
+        f"reports {unicodedata.unidata_version}. The map is wrong; measure it "
+        "again on each interpreter rather than editing it to taste."
+    )
 
 
 def test_no_digit_this_runtime_knows_sits_just_below_a_run_the_helper_accepts(
