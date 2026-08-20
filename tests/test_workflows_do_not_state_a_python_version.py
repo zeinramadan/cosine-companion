@@ -1091,9 +1091,9 @@ def conda_python_pin(expected, entries):
 
     The comparison is against the RAW scalar. It used to ``.strip()`` first,
     and ``- " python=3.11 "`` -- valid YAML -- therefore passed, while conda
-    refuses it: ``CondaValueError: invalid package specification:
-    python=3.11``. A guard that accepts exactly one literal has to compare the
-    literal. Identification (:func:`_conda_package_name`) still strips, on
+    refuses that spec outright: measured on conda 23.1.0, ``MatchSpec``
+    raises ``InvalidMatchSpec: no package name found in ' python=3.11 '``. A
+    guard that accepts exactly one literal has to compare the literal. Identification (:func:`_conda_package_name`) still strips, on
     purpose, so a padded pin is FOUND and reported as wrongly spelled rather
     than counted as absent. Other ``.strip()`` calls in this file are correct
     because their consumer strips too; the rule and the evidence are in
@@ -1202,16 +1202,33 @@ REJECTED_PYTHON_SPECS = [
     "python=3.1",               # a prefix of the right version
     "python=3.11.9",            # more precise than the stated version
     # Quoted in YAML so the scalar carries the padding: `- " python=3.11 "` is
-    # valid YAML and conda REJECTS it outright --
-    # `CondaValueError: invalid package specification:  python=3.11`. The
-    # comparison used to .strip() the entry before comparing, so the guard
-    # blessed an environment.yml that cannot be created. Identification still
-    # strips, so this is reported as a wrongly-spelled pin rather than as no
-    # pin at all; the comparison does not.
-    " python=3.11 ",            # surrounding whitespace inside the quotes
-    " python=3.11",             # leading whitespace only
-    "python=3.11 ",             # trailing whitespace only
-    "\tpython=3.11",            # a tab is whitespace conda will not accept
+    # valid YAML, and the comparison used to .strip() before comparing, so it
+    # passed. What conda does with these four was MEASURED (conda 23.1.0,
+    # conda.models.match_spec.MatchSpec) rather than assumed, because they do
+    # not behave alike:
+    #
+    #   ' python=3.11 '   InvalidMatchSpec: no package name found in ...
+    #   ' python=3.11'    InvalidMatchSpec: no package name found in ...
+    #   'python=3.11 '    ACCEPTED, parsed as python=3.11
+    #   '\tpython=3.11'   parsed WITHOUT error into a spec whose package name
+    #                     is "\tpython" -- no channel has that, so it fails
+    #                     later, at solve time, as a package-not-found
+    #
+    # So only leading whitespace is the outright rejection; trailing is
+    # harmless to conda and a tab is worse than a rejection, because it fails
+    # somewhere else entirely. All four are refused here anyway, and that is
+    # the case for a guard that accepts one literal instead of modelling the
+    # grammar: it did not need to know which of these conda tolerates. A
+    # revision that tried to be exactly as strict as conda would have had to
+    # get all four right, and the three before this one got fewer than that.
+    #
+    # Identification still strips, so each is reported as a wrongly-spelled
+    # pin rather than as no pin at all; the comparison does not.
+    " python=3.11 ",            # surrounding whitespace -- conda rejects
+    " python=3.11",             # leading only -- conda rejects
+    "python=3.11 ",             # trailing only -- conda ACCEPTS; refused here
+    "\tpython=3.11",            # a tab -- conda parses it into a package
+                                # named "\tpython" that does not exist
 ]
 
 
