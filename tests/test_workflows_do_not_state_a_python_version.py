@@ -145,7 +145,14 @@ WHAT THIS FILE ASSERTS
    unsupported absolutes can see, because neither is unsupported on its own.
    Neither number is remembered now:
    :func:`test_the_blind_spot_accounting_is_checked_not_remembered` counts the
-   entries in the code and renders both sentences from that count.
+   entries in the code and renders both sentences from that count. It then
+   looks for each rendered sentence AT THE SITE THAT IS SUPPOSED TO CARRY IT
+   -- this numbered item, read off the module's own ``__doc__``, and the
+   comment block located directly above ``PINNED_BLIND_SPOTS`` -- rather than
+   in the file's text as a whole. Searching the whole text was itself a
+   decoy-shaped check: a copy of either sentence in any comment, docstring or
+   string literal anywhere in these 1600 lines satisfied it while both real
+   sites said the opposite number, measured green.
 5. ``environment.yml`` pins conda to the same version, in the single
    spelling ``python=<that version>`` and no other.
 6. ``.python-version`` holds exactly one bare version token AND NOTHING
@@ -227,7 +234,10 @@ this file does not make it one, and a commit adding any of them goes green.
   that the bound is inaccurate.
 """
 
+import ast
+import io
 import re
+import tokenize
 from pathlib import Path
 
 import pytest
@@ -1157,6 +1167,125 @@ DOCUMENTED_ONLY_BLIND_SPOTS = (
 )
 
 
+def _flatten(text):
+    """``text`` as a single line: strip each line, drop the empty ones, join.
+
+    The sentences checked below are wrapped prose. Where the wrapper happened
+    to break a line is not the thing being pinned, so it is normalised away
+    before the comparison rather than being written into it.
+    """
+    return " ".join(
+        part for part in (line.strip() for line in text.splitlines()) if part
+    )
+
+
+def _docstring_section(doc, heading):
+    """The body lines of one underlined section of ``doc``.
+
+    A section is a line followed by a rule of ``-`` characters, and it runs
+    until the next such line. Scoping to a section is what stops a ``* ``
+    bullet added to some OTHER part of the same docstring from being counted
+    as a blind-spot entry -- which would let a bullet be deleted from the list
+    and re-added elsewhere with the total, and therefore this whole check,
+    unchanged.
+    """
+    lines = doc.splitlines()
+
+    def underlined(index):
+        below = lines[index + 1].strip() if index + 1 < len(lines) else ""
+        return len(below) >= 3 and set(below) == {"-"}
+
+    headings = [index for index in range(len(lines)) if underlined(index)]
+    for position, index in enumerate(headings):
+        if lines[index].strip().startswith(heading):
+            end = (
+                headings[position + 1]
+                if position + 1 < len(headings)
+                else len(lines)
+            )
+            return lines[index + 2 : end]
+
+    raise AssertionError(
+        f"the docstring being read has no {heading!r} section. It was renamed "
+        "or removed, which stops everything counted out of it from meaning "
+        "anything, so this fails rather than counting zero."
+    )
+
+
+def _numbered_item(doc, number):
+    """One numbered item of the WHAT THIS FILE ASSERTS list, as one line.
+
+    The item is delimited by the next ``N. `` at the same level, so the
+    sentence checked against it cannot be satisfied by a copy sitting in a
+    different assertion's paragraph.
+    """
+    collected = []
+    for line in _docstring_section(doc, "WHAT THIS FILE ASSERTS"):
+        stripped = line.strip()
+        if collected and re.match(r"^\d+\. ", stripped):
+            break
+        if collected or stripped.startswith(f"{number}. "):
+            collected.append(line)
+
+    assert collected, (
+        f"there is no item {number} in the WHAT THIS FILE ASSERTS list. The "
+        "sentence this test renders has nowhere to live, so it fails rather "
+        "than looking for it somewhere else."
+    )
+    return _flatten("\n".join(collected))
+
+
+def _comment_block_above(name):
+    """The ``#`` comment block directly above the assignment to ``name``.
+
+    LOCATED, not searched for. The statement is found through :mod:`ast` and
+    the comments through :mod:`tokenize` -- column 0 only, so a trailing
+    comment on a line of code is not part of a block -- and the block is the
+    contiguous run of them immediately above it, blank lines between the two
+    allowed. Nothing else in the file can answer for this comment.
+    """
+    source = Path(__file__).read_text(encoding="utf-8")
+
+    target = None
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == name for t in node.targets
+        ):
+            target = node
+            break
+
+    assert target is not None, (
+        f"there is no top-level assignment to {name} in this module, so the "
+        "comment that is supposed to sit above it cannot be located. A "
+        "renamed target stops this check finding anything, which must fail "
+        "rather than pass."
+    )
+
+    own_line = {}
+    for token in tokenize.generate_tokens(io.StringIO(source).readline):
+        if token.type == tokenize.COMMENT and token.start[1] == 0:
+            own_line[token.start[0]] = token.string.removeprefix("#").strip()
+
+    lines = source.splitlines()
+    row = target.lineno - 1
+    while row >= 1 and not lines[row - 1].strip():
+        row -= 1
+
+    block = []
+    while row in own_line:
+        block.append(own_line[row])
+        row -= 1
+    block.reverse()
+
+    assert block, (
+        f"there is no comment block directly above the assignment to {name}. "
+        "The sentence this test renders is supposed to be there; if the "
+        "comment moved, the sentence moved with it and this check no longer "
+        "knows where to look."
+    )
+    return " ".join(part for part in block if part)
+
+
 def test_the_blind_spot_accounting_is_checked_not_remembered():
     """The pinned/documented split is derived from the code, not recalled.
 
@@ -1172,27 +1301,27 @@ def test_the_blind_spot_accounting_is_checked_not_remembered():
     with each other, and neither can disagree with the number of entries in
     the list they describe.
 
+    EACH SENTENCE IS LOOKED FOR AT ITS OWN SITE, which is the round-7 repair.
+    Both were looked for in the whole file, flattened -- and a check that
+    accepts the words ANYWHERE accepts a decoy. Measured: with both real sites
+    edited to say "5 of 5 ... 0 documented only" and both true sentences
+    pasted into an unrelated comment block 460 lines away, this file was
+    green, 79 passed. So sentence one is read out of assertion 4's numbered
+    item in ``__doc__`` and sentence two out of the comment block located
+    above :data:`PINNED_BLIND_SPOTS`, and a copy anywhere else answers for
+    neither.
+
     WHAT THIS DOES NOT CATCH, said here rather than discovered later: moving
     an entry from one tuple to the other without touching the code it
     describes. The totals still add up, the sentences still render the same
     way, and this test still passes. It pins the ARITHMETIC and the names,
     not the claim that a given bullet is the one a given test pins.
     """
-    source = Path(__file__).read_text(encoding="utf-8")
-    # Both statements are prose, one inside a docstring and one inside a ``#``
-    # comment block, and both are wrapped. Flatten to a single line and drop
-    # the comment markers so the search is about the words rather than about
-    # where the wrapper happened to break.
-    prose = " ".join(
-        part
-        for part in (
-            line.strip().removeprefix("#").strip() for line in source.splitlines()
-        )
-        if part
-    )
-
     entries = [
-        line for line in uv_python_version_problems.__doc__.splitlines()
+        line
+        for line in _docstring_section(
+            uv_python_version_problems.__doc__, "WHAT IT STILL CANNOT SEE"
+        )
         if line.strip().startswith("* ")
     ]
     pinned = len(PINNED_BLIND_SPOTS)
@@ -1220,18 +1349,28 @@ def test_the_blind_spot_accounting_is_checked_not_remembered():
         )
 
     total = len(entries)
-    sentences = (
-        f"That list has {total} entries, of which {pinned} have an executable "
-        f"test pinning the miss and {documented} are documented only.",
-        f"{pinned} of the {total} blind-spot entries in "
-        f":func:`uv_python_version_problems` are PINNED AS MISSES below",
+    sited = (
+        (
+            f"That list has {total} entries, of which {pinned} have an executable "
+            f"test pinning the miss and {documented} are documented only.",
+            _numbered_item(__doc__, 4),
+            "assertion 4 in this module's docstring",
+        ),
+        (
+            f"{pinned} of the {total} blind-spot entries in "
+            f":func:`uv_python_version_problems` are PINNED AS MISSES below",
+            _comment_block_above("PINNED_BLIND_SPOTS"),
+            "the comment block directly above PINNED_BLIND_SPOTS",
+        ),
     )
-    for sentence in sentences:
-        assert sentence in prose, (
-            f"this file no longer contains, verbatim, {sentence!r}. The "
-            "module docstring and the comment above the pins both state the "
-            "split; they contradicted each other before this test existed, "
-            "so they are rendered from the same numbers now."
+    for sentence, site, where in sited:
+        assert sentence in site, (
+            f"{where} no longer contains, verbatim, {sentence!r}. It reads: "
+            f"{site!r}. The module docstring and the comment above the pins "
+            "both state the split; they contradicted each other before this "
+            "test existed, so they are rendered from the same numbers now -- "
+            "and each is checked WHERE IT LIVES, because a copy of the "
+            "sentence somewhere else in this file is not this site saying it."
         )
 
 
