@@ -55,11 +55,15 @@ that apparatus is not coming back. The same list appears once more, in full,
 under KNOWN BLIND SPOTS.
 
 What this file does buy, and the whole of it: the *declared* second sources of
-truth are gone. One file states the version; every workflow points at that
-file instead of restating it (assertions 1-3); ``environment.yml`` restates it
-in one fixed spelling and is checked to equal it (assertion 5). Two workflows
-cannot disagree about a version that neither of them states -- which is the
-defect described next, and is the one thing here that is actually mechanised.
+truth are gone. One file is the SOURCE of the version -- not the only file
+that states it, which is a different and false claim, contradicted twenty
+lines below by ``environment.yml`` and by this file's own assertion 5. Every
+workflow points at the source instead of restating it (assertions 1-3);
+``environment.yml`` restates it in one fixed spelling and is checked to equal
+it (assertion 5). Two workflows cannot disagree about a version that neither
+of them states -- which is the defect described next, and is the one thing
+here that is actually mechanised. They can still disagree about a version
+either of them states in ``run:`` text; see KNOWN BLIND SPOTS.
 
 For months CI tested 3.10 while ``.github/workflows/build-*.yml`` froze the
 app on 3.11. Nothing detected it. It surfaced only because a compiled-in
@@ -290,7 +294,12 @@ def workflow_files():
 
 
 def stated_version_text():
-    """The raw contents of the one file that states the version.
+    """The raw contents of the AUTHORITATIVE SOURCE for the version.
+
+    Not "the one file that states the version", which is what this line used
+    to say: ``environment.yml`` states it too, as ``python=3.11``, and
+    assertion 5 exists precisely because it does. This is the file the others
+    are checked against.
 
     Every reader goes through here so that a missing file fails by name in
     all of them, rather than one of them reporting a bare FileNotFoundError
@@ -610,7 +619,10 @@ def test_no_setup_python_step_states_a_version_inline(workflow):
             f"{where} states a Python version inline: "
             + ", ".join(f"{key}: {with_block[key]!r}" for key in stated)
             + f". Every workflow must read {VERSION_FILE_NAME} instead, so "
-            "that no two workflows can disagree about the interpreter."
+            "that no two setup-python steps can disagree about the "
+            "interpreter they install. (Workflows can still disagree in "
+            "'run:' text -- 'uv python install 3.12 --default' is an admitted "
+            "blind spot; see KNOWN BLIND SPOTS at the top of this file.)"
         )
 
 
@@ -901,7 +913,7 @@ def uv_python_version_problems(where, run):
         problems.append(
             f"{where} uses {UV_PYTHON_VERSION_FLAG} but never mentions "
             f"{VERSION_FILE_NAME}, so whatever it passes is not derived from "
-            "the one file that states the version. Set it from "
+            "the authoritative source for the version. Set it from "
             f'\'PYTHON_VERSION="$(cat {VERSION_FILE_NAME})"\' in the same '
             "block."
         )
