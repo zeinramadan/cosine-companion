@@ -1,6 +1,15 @@
 """Guard: every ordinary CI job contains an unconditional
 ``actions/setup-python`` step configured from ``.python-version``, and no
-workflow states a version of its own inline.
+``actions/setup-python`` step states a version of its own inline.
+
+The scope of that second clause -- SETUP-PYTHON STEPS, not workflows -- is
+load-bearing, and it is narrower than it was. This sentence used to read "no
+workflow states a version of its own inline", which measurement contradicts:
+``uv python install 3.12 --default`` inside a ``run:`` block is a version
+stated inline in a workflow, it is admitted green two paragraphs below, and
+the old wording claimed it away. Workflows may state versions inline in
+``run:`` text and this file stops exactly one of those shapes -- a literal
+handed to ``uv``'s ``--python-version`` (assertion 4) -- and no others.
 
 WHAT THIS DOES **NOT** ESTABLISH -- stated here, first, next to the claim,
 because the sentence that used to open this file claimed the opposite. It said
@@ -45,9 +54,23 @@ each workflow uses. Every one shipped a confident wrong answer on a
 counterexample (flow mappings, escaped keys, block-scalar decoys,
 ``python-version-file``), and every fix was "teach it one more Actions shape".
 That apparatus is gone. **This file does not determine which Python anything
-uses.** It asserts that exactly one file states a version and that everything
-else points at it -- no more than that, and see the second paragraph above for
-what that leaves uncovered.
+uses.**
+
+What it asserts is narrower than "exactly one file states a version and
+everything else points at it", because that sentence -- which is what this
+paragraph used to say -- is contradicted by a file in this repository.
+``environment.yml`` restates the version literally, as ``python=3.11``, and it
+has to: conda takes a literal in the spec and cannot be pointed at
+``.python-version``. Two files state the version.
+
+The accurate shape is ONE SOURCE AND ONE CHECKED RESTATEMENT.
+``.python-version`` is the source. Every setup-python step points at it rather
+than restating it (assertions 1-3). ``environment.yml`` restates it, in one
+fixed spelling, and assertion 5 compares that restatement against the source
+character for character -- so it cannot drift without reddening, which is the
+property the deleted absolute was reaching for. What is ruled out is an
+UNCHECKED second statement of the version, not a second statement. See the
+second paragraph above for what all of this leaves uncovered.
 
 WHAT THIS FILE ASSERTS
 ----------------------
@@ -57,9 +80,15 @@ WHAT THIS FILE ASSERTS
 2. No setup-python step states a version inline.
 3. Every setup-python step is pinned to a full commit SHA, and all of them to
    the *same* one.
-4. No ``run:`` block hands a literal version to ``--python-version`` (uv
-   resolves against that flag, so a literal there is a second source of truth
-   that only shows up as a wrong resolution).
+4. No ``run:`` block hands a literal version to ``--python-version``, and any
+   block containing that flag also mentions ``.python-version``. uv resolves
+   the dependency set FOR that flag, so a literal there is a second source of
+   truth that only shows up as a wrong resolution. This is the one assertion
+   here that reads shell text rather than parsed structure, it is the weakest
+   of the six, and the lock-drift gate in ``test-macos.yml`` does NOT back it
+   up -- a recompile at 3.12 was measured byte-identical to the committed
+   lock. Both the measurement and the shapes this assertion still cannot see
+   are recorded on :func:`uv_python_version_problems`, next to the code.
 5. ``environment.yml`` pins conda to the same version, in the single
    spelling ``python=<that version>`` and no other.
 6. ``.python-version`` itself holds exactly one bare version token.
@@ -85,15 +114,26 @@ FAILURE -- never a skip, never a pass by default.
 There is no code path here that reaches "no problem found" without having
 classified every job.
 
-Keyed on the *parsed step*, never on a substring. ``test-macos.yml`` contains
-the text ``python-version`` in places that are not setup-python inputs (the
-``uv pip compile`` flag and the ``--custom-compile-command`` string that
-records it). A text search reddens on a completely correct tree, and a check
-that cries wolf gets weakened or deleted -- which is the mechanism that
-produced this whole defect family. Parsing also means the shapes that defeated
-rounds 5 and 6 need no special handling at all: ``python-version:``,
+Assertions 1-3 are keyed on the *parsed step*, never on a substring.
+``test-macos.yml`` contains the text ``python-version`` in places that are not
+setup-python inputs (the ``uv pip compile`` flag and the
+``--custom-compile-command`` string that records it). A text search for a
+setup-python input reddens on a completely correct tree, and a check that
+cries wolf gets weakened or deleted -- which is the mechanism that produced
+this whole defect family. Parsing also means the shapes that defeated rounds 5
+and 6 need no special handling at all: ``python-version:``,
 ``"python-version":`` and ``{python-version: "3.10"}`` are the same dict key
 once PyYAML is done.
+
+Assertion 4 is the exception, and it is an exception because its subject is
+different: a ``run:`` block is a shell command, and PyYAML parses it to one
+opaque string. There is no structure under it to key on. So that assertion
+reads text -- deliberately as a SUBSTRING and word adjacency, never as a
+grammar. It does not decide what the shell will do; it reports which
+characters sit next to which. The distinction matters because the previous
+attempt did model the shell, badly: it required a separator immediately after
+the flag name, so ``"--python-version" 3.12`` -- which the shell unquotes and
+hands straight to uv -- matched nothing and passed.
 
 KNOWN BLIND SPOTS
 -----------------
