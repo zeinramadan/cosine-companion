@@ -105,7 +105,9 @@ WHAT THIS FILE ASSERTS
    the *same* one.
 4. No ``run:`` block places a bare version token in the word IMMEDIATELY
    ADJACENT to ``--python-version`` -- the next whitespace-separated word, or
-   the value glued on with ``=``, quotes stripped either way -- and any block
+   the value glued on with ``=``, with surrounding quotes taken off the flag
+   half and the value half independently, so ``"--python-version"=3.12`` reads
+   the same as ``--python-version 3.12`` -- and any block
    containing that flag also mentions ``.python-version``. That is the whole
    invariant, and it is a statement about characters, not about what uv
    receives: a literal that reaches uv through a variable, a fragment-built
@@ -764,17 +766,35 @@ def test_an_unrelated_action_is_not_setup_python():
 # ---------------------------------------------------------------------------
 
 
+def _unquote(text):
+    """``text`` with ``'`` and ``"`` characters removed FROM ITS TWO ENDS.
+
+    Not a shell unquoter, and it must never become one: it deletes quote
+    characters at the ends of a piece of text and looks at nothing else.
+    Interior quotes survive, which is exactly why ``--pyth"on-version"=3.12``
+    stays invisible to this file -- recorded as such in the blind-spot list
+    on :func:`uv_python_version_problems`.
+
+    It exists as a named function because the same normalisation has to be
+    applied in two places that are easy to get out of step: to each
+    whitespace-separated word, and to each half of a word glued together with
+    ``=``. Applying it in only the first place is what let
+    ``"--python-version"=3.12`` past this guard until round 6.
+    """
+    return text.strip("'\"")
+
+
 def _shell_words(run):
     """``run`` split on whitespace, each word stripped of surrounding quotes.
 
     This is NOT a shell parser and must never become one. It does not know
     about expansion, comments, escapes, line continuations, heredocs or word
-    splitting; it splits on whitespace and removes leading and trailing ``'``
-    and ``"`` characters from each piece. Four rounds of this PR family died
-    trying to work out what a construct would MEAN at runtime. This decides
-    nothing about meaning: it reports which characters sit next to which.
+    splitting; it splits on whitespace and hands each piece to
+    :func:`_unquote`. Four rounds of this PR family died trying to work out
+    what a construct would MEAN at runtime. This decides nothing about
+    meaning: it reports which characters sit next to which.
     """
-    return [word.strip("'\"") for word in run.split()]
+    return [_unquote(word) for word in run.split()]
 
 
 def literal_python_versions_passed_to_uv(run):
@@ -786,6 +806,21 @@ def literal_python_versions_passed_to_uv(run):
     is the whole repair, since ``"--python-version" 3.12`` is exactly the shape
     that walked past the previous regex.
 
+    BOTH HALVES OF A GLUED WORD ARE UNQUOTED, not just the value, and that is
+    the round-6 repair. ``"--python-version"=3.12`` is one shell word; the
+    shell hands uv ``--python-version=3.12`` (verified, not reasoned:
+    ``zsh -c 'set -- "--python-version"=3.12; printf "<%s>" "$1"'`` prints
+    ``<--python-version=3.12>``). Splitting on whitespace and unquoting the
+    WORD leaves ``--python-version"=3.12``, because the trailing character is
+    a digit and the quote sits in the middle. Partitioning on ``=`` then gives
+    a flag half of ``--python-version"``, which is not equal to the flag, so
+    the literal was missed while the docstring claimed quotes were stripped
+    either way. Unquoting each half after the partition costs no understanding
+    of the shell whatsoever -- it decides nothing about what the shell will do,
+    it normalises characters before a comparison this function already makes,
+    the same species of change as dropping a ``.strip()`` that hid a padded
+    conda spec.
+
     A word that is not a bare version token is not judged. ``"$PYTHON_VERSION"``
     strips to ``$PYTHON_VERSION``, which :data:`VERSION_TOKEN` does not match,
     so it is left alone -- this function never tries to work out what a
@@ -796,13 +831,13 @@ def literal_python_versions_passed_to_uv(run):
 
     for index, word in enumerate(words):
         flag, glued, value = word.partition("=")
-        if flag != UV_PYTHON_VERSION_FLAG:
+        if _unquote(flag) != UV_PYTHON_VERSION_FLAG:
             continue
 
         if not glued:
             value = words[index + 1] if index + 1 < len(words) else ""
 
-        value = value.strip("'\"")
+        value = _unquote(value)
         if VERSION_TOKEN.match(value):
             literals.append(value)
 
@@ -859,10 +894,15 @@ def uv_python_version_problems(where, run):
 
     WHAT IT STILL CANNOT SEE -- here, next to the claim
     ---------------------------------------------------
-    * The flag spelled so the characters ``--python-version`` never appear:
-      ``F=--python; uv pip compile ${F}-version 3.12``. Neither check below
-      triggers, because neither is looking for a concept -- both are looking
-      for that literal run of characters.
+    * The flag spelled so the characters ``--python-version`` never appear
+      as one contiguous run: ``F=--python; uv pip compile ${F}-version 3.12``,
+      and equally ``--pyth"on-version"=3.12``, which the shell glues back
+      together but which carries a quote in the MIDDLE of the flag name --
+      :func:`_unquote` takes quotes off the two ends of a word and off the two
+      halves of a glued word, and off nothing else. Neither check below
+      triggers on either, because neither is looking for a concept: both are
+      looking for that literal run of characters, and the early return in this
+      function never even gets past ``UV_PYTHON_VERSION_FLAG not in run``.
     * A value that arrives from outside this block: a job-level or
       workflow-level ``env:``, a ``$GITHUB_ENV`` write in an earlier step, or
       an input to a reusable workflow. The word here is ``"$SOMETHING"``,
@@ -993,6 +1033,10 @@ def test_a_run_block_that_never_mentions_the_flag_is_left_alone():
         '"--python-version" "3.12"',
         "--python-version=3.12",
         '"--python-version=3.12"',
+        '"--python-version"=3.12',        # the round-6 reviewer mutation
+        '"--python-version"="3.12"',
+        "'--python-version'=3.12",
+        '--python-version="3.12"',
         '--python-version\t3.12',
         "--python-version  3.12",
     ],
@@ -1005,6 +1049,12 @@ def test_a_literal_is_found_however_the_shell_quotes_it(fragment):
     name, so a quote character there hid the literal completely. Quotes come
     off the words first now, which costs no understanding of the shell: the
     literal is either the next word or glued on with ``=``.
+
+    The four glued-and-quoted rows were added in round 6, when a reviewer
+    showed that ``"--python-version"=3.12`` -- which this file's own
+    assertion 4 described as covered -- returned ``[]``. A quote between the
+    flag and the ``=`` survived splitting on whitespace, so the flag half of
+    the partition still carried it. Both halves are unquoted now.
     """
     assert literal_python_versions_passed_to_uv(
         f"uv pip compile {fragment} reqs.in"
@@ -1052,9 +1102,19 @@ def test_a_variable_is_never_resolved_to_a_literal():
 
 
 def test_a_flag_assembled_from_fragments_is_not_seen():
-    run = "F=--python\nuv pip compile ${F}-version 3.12 reqs.in"
+    """Blind spot 1: the characters never appear as one contiguous run.
 
-    assert uv_python_version_problems("w::j step 0", run) == []
+    Two spellings, because round 6's repair to :func:`_unquote` made the
+    boundary worth stating: quotes come off the two ends of a word and off
+    the two halves of a glued word. A quote in the MIDDLE of the flag name is
+    still a different run of characters, so it is still invisible -- for the
+    same reason ``${F}-version`` is.
+    """
+    fragments = "F=--python\nuv pip compile ${F}-version 3.12 reqs.in"
+    interior_quote = 'uv pip compile --pyth"on-version"=3.12 reqs.in'
+
+    assert uv_python_version_problems("w::j step 0", fragments) == []
+    assert uv_python_version_problems("w::j step 0", interior_quote) == []
 
 
 def test_a_value_arriving_from_outside_the_block_is_not_seen():
