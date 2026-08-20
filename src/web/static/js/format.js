@@ -155,33 +155,52 @@ const PYTHON_SPACE =
   '\\t\\n\\v\\f\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000';
 const SURROUNDING_SPACE = new RegExp(`^[${PYTHON_SPACE}]+|[${PYTHON_SPACE}]+$`, 'g');
 
-/* Every code point THIS PROJECT'S PYTHON calls a decimal digit, as inclusive
- * `[first, last]` runs of consecutive code points.
+/* Every code point THE INTERPRETER THIS APP SHIPS ON calls a decimal digit, as
+ * inclusive `[first, last]` runs of consecutive code points.
  *
- * NOT `\p{Nd}`, which is what this used to be, and the difference is a defect
- * rather than pedantry. `\p{Nd}` resolves against the Unicode tables of
- * WHICHEVER JavaScript runtime evaluates it, and those are not the tables
- * CPython was built with - the two version independently:
+ * NOT `\p{Nd}`, which is what this used to be. `\p{Nd}` resolves against the
+ * Unicode tables of WHICHEVER JavaScript runtime evaluates it, and those are
+ * not the tables CPython was built with - node 20 / ICU 78 is Unicode 17.0 and
+ * knows 770 decimal digits, against this table's 660. Those 110 extra - Kawi,
+ * Nag Mundari, Kirat Rai and nine other blocks - are digits to the browser and
+ * `ValueError` to `int()`.
  *
- *   CPython 3.10       unicodedata 13.0  650 Nd code points
- *   node 20.20 / ICU 78  Unicode 17.0    770 Nd code points
+ * NOR THE INTERPRETER THAT RUNS THE TESTS, which is the second thing this was.
+ * The first version of this table was generated from CPython 3.10 (unicodedata
+ * 13.0, 650 digits) because that is what `.github/workflows/test-macos.yml`
+ * sets up. Every `build-*` workflow freezes 3.11, whose unicodedata is 14.0 and
+ * which reads ten more code points as digits (Tangsa, U+16AC0..U+16AC9). So the
+ * table was correct against an interpreter no user has, and wrong by ten code
+ * points against the one in the bundle - it refused a Tangsa ten that the very
+ * `int()` shipped beside it returns 10 for. Measured, not recalled:
  *
- * That is 120 code points - Kawi, Tangsa, Nag Mundari, Kirat Rai and nine other
- * blocks - that node reads as digits and `int()` refuses. `parseIntegerStrictly`
- * answered 10 for a Kawi ten while `int()` raised ValueError, and both `Total
- * Tracks` (:501) and the anchor `Position` control (:962) go through here, so
- * both accepted a length the Tkinter tab would have refused with "Invalid
- * Input". The skew is one-directional today - every digit CPython knows, node
- * also knows - but nothing makes it stay that way.
+ *   CPython 3.10.18  unicodedata 13.0.0  650 Nd
+ *   CPython 3.11.14  unicodedata 14.0.0  660 Nd   <- what `build-*.yml` freezes
+ *   node 20.20 / ICU 78  Unicode 17.0    770 Nd
  *
- * So the table is CPython's, enumerated rather than delegated, and
- * `tests/web/test_integer_parsing_matches_python.py` re-derives it from the
- * RUNNING interpreter on every run: a Python upgrade fails there and names the
- * digits to add, and a node upgrade cannot reach it at all.
+ * WHAT THE DIVERGENCE COSTS, stated accurately, because it was overstated
+ * before. The typed string never reaches Python in this destination: the
+ * frontend parses it and `api.js` sends `total_tracks` as a NUMBER, which
+ * `api.py:_set_total_tracks` requires to be an `int` already. Nothing here
+ * raises ValueError and no request 400s. What breaks is the CONTRACT - the same
+ * characters typed into the Tkinter tab, which really does read them with a
+ * bare `int()` (`ui/set_creator_tab.py:96`, `ui/dialogs.py:107`), get a
+ * different answer from the two destinations. Inventory §2.12 is the acceptance
+ * contract for reproducing that tab, so a disagreement with it is the defect,
+ * whichever way it points.
  *
- * 61 runs, 650 code points, `unicodedata.unidata_version` 13.0.0. Regenerate
- * with `python -c` over `unicodedata.category(chr(c)) == "Nd"`; the test says
- * so too, and says what to run. */
+ * The table is therefore generated from the SHIPPED interpreter, and
+ * `tests/web/test_integer_parsing_matches_python.py` pins both halves: that the
+ * table matches the interpreter running the suite, and that the table is
+ * DECLARED for the interpreter every `build-*` workflow freezes. Aligning the
+ * test workflow with the build one makes those the same interpreter and the
+ * proof total; until then the suite says which of the two it ran.
+ *
+ * 62 runs, 660 code points, `unicodedata.unidata_version` 14.0.0, generated on
+ * CPython 3.11.14. Regenerate on whatever `build-*.yml` freezes, and move the
+ * declaration below with it - the test reads that export, not this comment. */
+export const PYTHON_UNICODE_VERSION = '14.0.0';
+
 const PYTHON_DECIMAL_RUNS = [
   [0x0030, 0x0039], [0x0660, 0x0669], [0x06f0, 0x06f9], [0x07c0, 0x07c9],
   [0x0966, 0x096f], [0x09e6, 0x09ef], [0x0a66, 0x0a6f], [0x0ae6, 0x0aef],
@@ -196,9 +215,9 @@ const PYTHON_DECIMAL_RUNS = [
   [0x110f0, 0x110f9], [0x11136, 0x1113f], [0x111d0, 0x111d9], [0x112f0, 0x112f9],
   [0x11450, 0x11459], [0x114d0, 0x114d9], [0x11650, 0x11659], [0x116c0, 0x116c9],
   [0x11730, 0x11739], [0x118e0, 0x118e9], [0x11950, 0x11959], [0x11c50, 0x11c59],
-  [0x11d50, 0x11d59], [0x11da0, 0x11da9], [0x16a60, 0x16a69], [0x16b50, 0x16b59],
-  [0x1d7ce, 0x1d7ff], [0x1e140, 0x1e149], [0x1e2f0, 0x1e2f9], [0x1e950, 0x1e959],
-  [0x1fbf0, 0x1fbf9],
+  [0x11d50, 0x11d59], [0x11da0, 0x11da9], [0x16a60, 0x16a69], [0x16ac0, 0x16ac9],
+  [0x16b50, 0x16b59], [0x1d7ce, 0x1d7ff], [0x1e140, 0x1e149], [0x1e2f0, 0x1e2f9],
+  [0x1e950, 0x1e959], [0x1fbf0, 0x1fbf9],
 ];
 
 /* The same table as a character class, built from it rather than written

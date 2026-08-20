@@ -281,6 +281,10 @@ def digit_survey():
     return {
         "accepted": {code: value for code, value in survey["accepted"]},
         "node_nd": set(survey["nodeNd"]),
+        # The Unicode version the shipped table DECLARES. Read from the module's
+        # export, so a table regenerated without moving the declaration - or a
+        # declaration moved without regenerating the table - is still caught.
+        "unicode_version": survey["unicodeVersion"],
     }
 
 
@@ -474,43 +478,173 @@ def test_every_digit_node_knows_and_this_python_does_not_is_refused(
     )
 
 
-def test_the_table_is_pinned_to_the_test_interpreter_not_the_build_one():
-    """THE DECLARED RESIDUE, pinned so it cannot be forgotten.
+# ---------------------------------------------------------------------------
+# WHICH interpreter the table is for. The check above compares the parser with
+# the interpreter that RUNS it; on its own that says nothing about the one the
+# app SHIPS on, and round 3 shipped a table generated from the wrong one.
+# ---------------------------------------------------------------------------
 
-    The check above closes the gap against the interpreter that RUNS the tests.
-    It cannot close it against the interpreter the app is SHIPPED with, and
-    those are not the same: `test-macos.yml` sets up Python 3.10 and the two
-    macOS build workflows set up 3.11, whose ``unicodedata`` is 14.0 and which
-    calls ten more code points decimal digits (Tangsa, U+16AC0..U+16AC9). A
-    build on 3.11 therefore refuses in the browser ten digits its own ``int()``
-    accepts - the same divergence with the sign flipped.
+#: ``unicodedata.unidata_version`` for each CPython minor this project is built
+#: or tested with. MEASURED, one real interpreter at a time - never read off a
+#: changelog, because mis-stating exactly this mapping is the defect this
+#: section exists to stop. A minor that is not here is a hard failure with an
+#: instruction to measure it, not a guess put in its place.
+MEASURED_UNICODE_VERSION = {
+    "3.10": "13.0.0",  # measured: CPython 3.10.18, 650 Nd code points
+    "3.11": "14.0.0",  # measured: CPython 3.11.14, 660 Nd code points
+}
 
-    Asserted rather than fixed, and asserted as the MISMATCH: aligning the two
-    versions turns this red, which is the moment to regenerate
-    ``PYTHON_DECIMAL_RUNS`` against the new version and delete both this test
-    and the residue paragraph in the module docstring. Changing only the build
-    version turns it red too, which is the moment to notice that the shipped
-    parser and the shipped interpreter no longer agree.
-    """
+
+def _workflow_python_versions():
+    """``{workflow file name: [python-version, ...]}`` for every workflow."""
     versions = {}
     for workflow in sorted(WORKFLOWS.glob("*.yml")):
-        found = re.findall(r"""python-version:\s*['"]?([0-9.]+)['"]?""", workflow.read_text())
+        found = re.findall(
+            r"""python-version:\s*['"]?([0-9.]+)['"]?""", workflow.read_text()
+        )
         if found:
             versions[workflow.name] = sorted(set(found))
+    return versions
 
-    assert versions.get("test-macos.yml") == ["3.10"], (
-        f"the suite no longer runs on 3.10: {versions.get('test-macos.yml')}. "
-        "PYTHON_DECIMAL_RUNS is a 13.0 table and is now checked against a "
-        "different interpreter."
+
+def _shipped_python_version(versions):
+    """The one CPython minor every ``build-*`` workflow sets up.
+
+    The BUILD workflows, not the test one: what a user runs is what PyInstaller
+    froze, and `parseIntegerStrictly` has to answer as THAT interpreter's
+    ``int()`` answers. Insisting the builds agree with each other is part of the
+    check - three platforms on two Pythons would make "the shipped interpreter"
+    an ambiguous phrase, and the table can only be generated from one.
+    """
+    build = sorted(
+        {
+            version
+            for name, found in versions.items()
+            if name.startswith("build-")
+            for version in found
+        }
     )
-    build_versions = sorted(
-        {version for name, found in versions.items() if name.startswith("build-") for version in found}
+    assert build, f"no build-* workflow sets a python-version; found {versions}"
+    assert len(build) == 1, (
+        f"the build workflows no longer agree on one interpreter: {build}. "
+        "PYTHON_DECIMAL_RUNS can only be generated from one of them, so "
+        "'the shipped interpreter' has to name exactly one version."
     )
-    assert build_versions == ["3.11"], (
-        f"the macOS builds no longer use 3.11: {build_versions}. The residue "
-        "this test records has changed shape; re-measure it."
+    return build[0]
+
+
+def test_the_digit_table_targets_the_interpreter_the_app_ships_on(digit_survey):
+    """THE SHIP-BLOCKING PROPERTY, half one: the table is FOR the built Python.
+
+    ``test_the_helper_accepts_exactly_the_digits_this_python_calls_decimal``
+    compares the parser against whichever interpreter runs the suite. That is
+    only worth something if the table was generated from the interpreter the
+    app is SHIPPED on, and in round 3 it was not: the table came from 3.10
+    (Unicode 13.0, 650 digits) and every ``build-*`` workflow freezes 3.11
+    (Unicode 14.0, 660). A user on a shipped build could type a Tangsa ten,
+    whose ``int()`` in that same bundle returns 10, and be told it was not a
+    valid number for total tracks.
+
+    The version is read from the module's EXPORT through node, not grepped out
+    of the source, so it is the declaration the shipped code actually carries.
+
+    Red when: the builds move to a Python whose Unicode version differs from
+    the table's declaration, or the declaration is edited to a version the
+    builds do not use. Either way the table needs regenerating from the new
+    interpreter, and the message says which one to run.
+    """
+    shipped = _shipped_python_version(_workflow_python_versions())
+
+    assert shipped in MEASURED_UNICODE_VERSION, (
+        f"the app is built on CPython {shipped}, whose unicodedata version has "
+        "not been measured here. Run\n"
+        "  pythonX.Y -c \"import unicodedata; print(unicodedata.unidata_version)\"\n"
+        "on that exact interpreter, add the row to MEASURED_UNICODE_VERSION, "
+        "and regenerate PYTHON_DECIMAL_RUNS from it. Do not read the version "
+        "off a changelog - that is how round 3 shipped the wrong table."
     )
-    assert build_versions != ["3.10"], "unreachable while the assertion above holds"
+    expected = MEASURED_UNICODE_VERSION[shipped]
+
+    assert digit_survey["unicode_version"] == expected, (
+        f"format.js declares its digit table to be Unicode "
+        f"{digit_survey['unicode_version']}, and the app is built on CPython "
+        f"{shipped}, whose unicodedata is {expected}. The shipped parser and "
+        "the shipped interpreter would disagree about which characters are "
+        "digits. Regenerate the table with\n"
+        "  python -c \"import sys,unicodedata; print([c for c in "
+        "range(sys.maxunicode+1) if unicodedata.category(chr(c))=='Nd'])\"\n"
+        f"on CPython {shipped}, and update PYTHON_UNICODE_VERSION."
+    )
+
+
+def test_the_measured_unicode_versions_are_right_about_this_interpreter():
+    """The mapping above is hand-maintained, so it is checked where it can be.
+
+    Only one row is checkable per run - the row for the interpreter running
+    this test - but every interpreter the project uses runs the suite sooner or
+    later, so every row is reachable. A row that was wrong about the running
+    interpreter would make
+    ``test_the_digit_table_targets_the_interpreter_the_app_ships_on`` demand the
+    wrong table, which is round 3's defect wearing a different hat.
+
+    A minor that is not in the map is skipped rather than failed: running the
+    suite on an interpreter the project does not build or test on is a
+    developer's business, not a defect, and the test above is what refuses an
+    unmeasured BUILD version.
+    """
+    running = "%d.%d" % sys.version_info[:2]
+    if running not in MEASURED_UNICODE_VERSION:
+        pytest.skip(
+            f"CPython {running} is not a version this project builds or tests "
+            f"on ({sorted(MEASURED_UNICODE_VERSION)}), so it pins no row"
+        )
+
+    assert MEASURED_UNICODE_VERSION[running] == unicodedata.unidata_version, (
+        f"MEASURED_UNICODE_VERSION says CPython {running} has unicodedata "
+        f"{MEASURED_UNICODE_VERSION[running]}, and this CPython {running} "
+        f"reports {unicodedata.unidata_version}. The map is wrong; measure it "
+        "again on each interpreter rather than editing it to taste."
+    )
+
+
+def test_the_suite_and_the_build_agree_on_one_interpreter_or_say_they_do_not():
+    """THE SHIP-BLOCKING PROPERTY, half two: is this run's evidence complete?
+
+    Parity is proved against the interpreter that RUNS the suite. When that is
+    the interpreter the app SHIPS on, the two halves compose and the proof is
+    total: parser == running == shipped. When it is not, the comparison is
+    still made and still real, but ten code points at the top of the table are
+    ones this interpreter cannot be asked about, so their VALUES go unchecked.
+
+    This test does not fail on the mismatch - it is not a defect for a
+    developer to run the suite on the interpreter they happen to have, and
+    failing here would make the branch unrunnable outside CI. It REPORTS it, in
+    the one place a reader is looking at the parity evidence, so a partial run
+    cannot be read as a total one. `.github/workflows/test-macos.yml` moving to
+    the build's interpreter is what turns this from partial to total, and
+    nothing here has to change when it does.
+    """
+    versions = _workflow_python_versions()
+    shipped = _shipped_python_version(versions)
+    tested = versions.get("test-macos.yml")
+    running = "%d.%d" % sys.version_info[:2]
+
+    assert tested, f"test-macos.yml sets no python-version; found {versions}"
+    assert len(tested) == 1, f"test-macos.yml sets several Pythons: {tested}"
+
+    if running == shipped:
+        print(
+            f"\nTOTAL: this run is on CPython {running}, the interpreter the "
+            "app ships on, so parity is proved against the shipped int()"
+        )
+    else:
+        print(
+            f"\nPARTIAL: this run is on CPython {running} and the app ships on "
+            f"{shipped}. Every digit THIS interpreter knows is checked in both "
+            "directions; the digits only the shipped interpreter knows are "
+            "checked for membership and not for value. CI sets up "
+            f"{tested[0]}; aligning it with {shipped} makes this run total."
+        )
 
 
 def test_no_digit_this_runtime_knows_sits_just_below_a_run_the_helper_accepts(

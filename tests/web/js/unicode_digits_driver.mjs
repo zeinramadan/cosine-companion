@@ -9,8 +9,13 @@
  *
  * Two arrays on stdout as JSON:
  *
- *   accepted  `[codePoint, value]` for every single character the helper parses
- *   nodeNd    every code point this runtime's `\p{Nd}` matches
+ *   accepted        `[codePoint, value]` for every single character the helper parses
+ *   nodeNd          every code point this runtime's `\p{Nd}` matches
+ *   unicodeVersion  the Unicode version the shipped table DECLARES itself to be
+ *
+ * The last one is read from the module's export rather than from the file, so
+ * a declaration that was edited without the table being regenerated is still
+ * the declaration under test.
  *
  * BEHAVIOUR, not internals. `accepted` is measured by calling the exported
  * function, so it reports what the function does rather than what a table it
@@ -21,7 +26,10 @@
  * `parse_integer_driver.mjs` does not.
  */
 
-import { parseIntegerStrictly } from '../../../src/web/static/js/format.js';
+import {
+  PYTHON_UNICODE_VERSION,
+  parseIntegerStrictly,
+} from '../../../src/web/static/js/format.js';
 
 const MAX = 0x10ffff;
 const SURROGATE_FIRST = 0xd800;
@@ -45,4 +53,6 @@ for (let code = 0; code <= MAX; code += 1) {
   }
 }
 
-process.stdout.write(JSON.stringify({ accepted, nodeNd }));
+process.stdout.write(
+  JSON.stringify({ accepted, nodeNd, unicodeVersion: PYTHON_UNICODE_VERSION ?? null }),
+);
