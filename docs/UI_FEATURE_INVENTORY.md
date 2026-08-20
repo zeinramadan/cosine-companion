@@ -1923,32 +1923,58 @@ whichever runtime evaluates it — and those version independently from CPython'
 
 | runtime | Unicode | `Nd` code points |
 | --- | --- | --- |
-| CPython 3.10 | 13.0 | 650 |
+| CPython 3.11 (what `build-*.yml` freezes) | 14.0 | 660 |
 | node 20.20 / ICU 78 | 17.0 | 770 |
 
-So 120 code points — Kawi, Tangsa, Nag Mundari, Kirat Rai and nine other blocks
-— were digits to the browser and `ValueError` to `int()`. A Kawi ten
+So 110 code points — Kawi, Nag Mundari, Kirat Rai and nine other blocks — were
+digits to the browser and `ValueError` to `int()`. A Kawi ten
 (`U+11F51 U+11F50`) parsed as 10 in `Total Tracks` and generated a ten-track
 set, where the Tkinter tab shows "Invalid Input". Reachable through BOTH
-controls, and one-directional: every digit CPython knows, node also knows, so
-nothing was being wrongly refused. `format.js` now carries the 61-run CPython
-table and `tests/web/test_integer_parsing_matches_python.py` re-derives it from
-the RUNNING interpreter, in both directions — a Python upgrade fails and names
-the digits to add, and a node upgrade cannot reach the answer at all.
+controls. `format.js` now carries the 62-run CPython table and
+`tests/web/test_integer_parsing_matches_python.py` re-derives it from the
+running interpreter, in both directions.
 
-*The residue, which is not closed.* A compiled-in table is one Unicode version,
-and it is pinned to the interpreter that runs the TESTS. That is not the
-interpreter the app is SHIPPED with: `test-macos.yml` sets up Python 3.10 and
-both macOS build workflows set up 3.11, whose `unicodedata` is 14.0 and which
-calls ten more code points decimal digits (Tangsa, U+16AC0..U+16AC9). Measured:
-3.10 → 650, 3.11 → 660, 3.13 → 680. A build on 3.11 therefore REFUSES in the
-browser ten digits its own `int()` accepts — the same divergence with the sign
-flipped, over ten code points instead of a hundred and twenty. It cannot be
-closed from the frontend, because the browser cannot ask the interpreter which
-Unicode version it was built against; aligning the two workflow versions and
-regenerating the table would close it. Pinned as the mismatch by
-`test_the_table_is_pinned_to_the_test_interpreter_not_the_build_one`, which
-fails the moment they are aligned.
+*Which CPython, which is the part that was wrong.* A compiled-in table is
+exactly one Unicode version, so "CPython's table" does not finish the sentence
+until it names an interpreter. The first version of it was generated from the
+one that runs the TESTS, and the app ships on a different one —
+`.github/workflows/test-macos.yml` sets up 3.10 and every `build-*.yml` freezes
+3.11. Measured on real interpreters:
+
+| CPython | `unicodedata` | `Nd` | `int("𖫁𖫀")` (Tangsa ten) |
+| --- | --- | --- | --- |
+| 3.10.18 | 13.0.0 | 650 | `ValueError` |
+| 3.11.14 | 14.0.0 | 660 | `10` |
+
+So the shipped parser refused ten code points that the `int()` frozen into the
+same bundle accepts: 120 false acceptances were closed by opening ten false
+refusals, in the configuration users actually run. The table is now generated
+from the interpreter the build workflows freeze, and `format.js` exports
+`PYTHON_UNICODE_VERSION` naming it.
+
+*What the divergence costs, stated accurately.* Both directions of it are a
+contract violation and neither is a crash, because the typed string never
+reaches Python in this destination: `api.js` sends `total_tracks` as a NUMBER
+and `api.py:_set_total_tracks` requires an `int` already, so nothing raises
+`ValueError` on the server and no request 400s. What breaks is that the same
+keystrokes get different answers from the web destination and from the Tkinter
+tab, which really does read them with a bare `int()`
+(`src/ui/set_creator_tab.py:96`, `src/ui/dialogs.py:107`). Reproducing that tab
+is what this document is for, so a disagreement with it is the defect whichever
+way it points.
+
+*How the property is pinned.* "The shipped parser must not disagree with the
+shipped interpreter" is checked as two halves, because they fail separately:
+the parser matches the interpreter running the suite
+(`tests/web/test_integer_parsing_matches_python.py::test_the_helper_accepts_this_pythons_digits_and_the_shipped_tables_extras`),
+and the table is declared for the interpreter the build workflows freeze
+(`tests/web/test_integer_parsing_matches_python.py::test_the_digit_table_targets_the_interpreter_the_app_ships_on`).
+Where the suite runs on the build interpreter the two compose into a total
+proof; where it does not, the ten code points only the newer interpreter knows
+are checked for membership and not for value, and
+`tests/web/test_integer_parsing_matches_python.py::test_the_suite_and_the_build_agree_on_one_interpreter_or_say_they_do_not`
+prints TOTAL or PARTIAL per run so a partial one cannot be read as a total one.
+Aligning `test-macos.yml` with the build workflows makes every run total.
 
 *The other limit, unchanged:* magnitude. Python's integers are unbounded and
 these arrive as a float64, so a value past `Number.MAX_SAFE_INTEGER` loses

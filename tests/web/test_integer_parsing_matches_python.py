@@ -28,21 +28,74 @@ show that JavaScript's extras are refused - and the helper delegated to
 ``\p{Nd}``, which resolves against the Unicode tables of whichever runtime
 evaluates it. Those version independently from CPython's:
 
-    CPython 3.10        unicodedata 13.0    650 Nd code points
+    CPython 3.11        unicodedata 14.0    660 Nd code points
     node 20.20 / ICU 78 Unicode 17.0        770 Nd code points
 
-so 120 code points - Kawi, Tangsa, Nag Mundari, Kirat Rai and nine other blocks
-- were digits to the browser and ``ValueError`` to ``int()``. A Kawi ten parsed
-as 10 in the field and raised in Python. Both ``Total Tracks`` (:501) and the
-anchor ``Position`` control (:962) reach it, so both accepted a value the
-Tkinter tab refuses with a dialog.
+so 110 code points - Kawi, Nag Mundari, Kirat Rai and nine other blocks - were
+digits to the browser and ``ValueError`` to ``int()``. A Kawi ten parsed as 10
+in the field and raised in Python. Both ``Total Tracks`` (:501) and the anchor
+``Position`` control (:962) reach it, so both accepted a value the Tkinter tab
+refuses with a dialog.
 
 ``format.js`` now carries CPython's table instead of delegating, and this file
 checks it in BOTH directions: every code point the helper accepts is one this
 interpreter calls ``Nd`` with the same value, and every code point THIS NODE
-calls ``Nd`` and this interpreter does not is refused - alone and inside a
-number. A Python upgrade fails the first and names the digits to add; a node
-upgrade cannot reach the answer at all any more, and the second says so.
+calls ``Nd`` and the table does not is refused - alone and inside a number.
+
+WHICH CPYTHON. THIS IS THE PART ROUND 3 GOT WRONG
+-------------------------------------------------
+A compiled-in table is exactly one Unicode version, so "CPython's table" is an
+incomplete sentence until it names an interpreter. Round 3 generated it from
+the one that runs the TESTS and the app ships on a different one:
+
+    .github/workflows/test-macos.yml    python 3.10  ->  unicodedata 13.0.0
+    .github/workflows/build-*.yml       python 3.11  ->  unicodedata 14.0.0
+
+Measured on real interpreters, not read off a changelog:
+
+    3.10.18   13.0.0   650 Nd   int("\U00016AC1\U00016AC0")  ValueError
+    3.11.14   14.0.0   660 Nd   int("\U00016AC1\U00016AC0")  == 10
+
+So the shipped parser refused ten Tangsa code points that the ``int()`` frozen
+into the same bundle reads as digits: round 3 closed 120 false acceptances by
+opening ten false REFUSALS, in the configuration users actually run. Its
+``test_the_table_is_pinned_to_the_test_interpreter_not_the_build_one`` went
+green BECAUSE the two disagreed, which is a test asserting a defect. Both are
+gone. The table is generated from the interpreter every ``build-*`` workflow
+freezes, and the module exports ``PYTHON_UNICODE_VERSION`` saying which.
+
+THE PROPERTY THAT BLOCKS SHIPPING, AND HOW IT IS PROVED
+-------------------------------------------------------
+*The shipped parser must not disagree with the shipped interpreter.* That
+decomposes into two halves which are checked separately because they can fail
+separately:
+
+1. the parser accepts exactly what the interpreter RUNNING this suite accepts
+   - ``test_the_helper_accepts_this_pythons_digits_and_the_shipped_tables_extras``
+2. the table is DECLARED for the interpreter every build workflow freezes
+   - ``test_the_digit_table_targets_the_interpreter_the_app_ships_on``, with
+   the reader itself pinned by
+   ``test_the_shipped_version_is_read_from_the_build_workflows``
+
+When the suite runs on the build interpreter those compose into a total proof.
+When it does not, half 1 is still made in full for every digit this interpreter
+knows, and the ten it does not know are checked for MEMBERSHIP but not for
+VALUE. ``test_the_suite_and_the_build_agree_on_one_interpreter_or_say_they_do
+_not`` prints TOTAL or PARTIAL per run so a partial one cannot be read as a
+total one. Aligning `test-macos.yml` with the build workflows makes every run
+total and requires no change here.
+
+WHAT THE ALLOWANCE IS, AND WHAT IT IS DELIBERATELY NOT
+------------------------------------------------------
+Running on an older interpreter means the helper legitimately accepts digits
+this ``int()`` refuses. The tempting rule is "the extras must all be unassigned
+here", and it is too weak to use: every digit node knows and CPython does not
+is also unassigned here, so that rule would re-admit the very ``\p{Nd}``
+delegation this file exists to forbid. ``MEASURED_DIGITS_ADDED_BETWEEN`` names
+the EXACT code points instead, measured by subtracting one interpreter's ``Nd``
+set from another's, and the extras must equal it - and must be present, because
+"may accept them" is indistinguishable from "does not" on an interpreter too
+old to tell, which is how round 3's defect passed a green suite.
 
 WHAT IT DOES NOT CHECK
 ----------------------
@@ -51,27 +104,10 @@ float64, so the corpus stops well inside ``Number.MAX_SAFE_INTEGER``. That
 limit is documented on the helper and is fifteen orders of magnitude past
 ``MAX_SET_TRACKS``; it is a real difference and it is not one this can close.
 
-THE RESIDUE, WHICH IS REAL AND IS NOT CLOSED
---------------------------------------------
-A compiled-in table is exactly one Unicode version, and the check above pins it
-to the interpreter that RUNS THE TESTS - `.github/workflows/test-macos.yml`
-says Python 3.10. The macOS BUILD workflows say Python 3.11, whose
-``unicodedata`` is 14.0 and which calls ten more code points decimal digits
-(Tangsa, U+16AC0..U+16AC9). Measured, not recalled:
-
-    3.10.18  unicodedata 13.0.0  650 Nd   (the table)
-    3.11.14  unicodedata 14.0.0  660 Nd   +U+16AC0..U+16AC9
-    3.13.11  unicodedata 15.1.0  680 Nd   +U+11F50.., +U+16AC0.., +U+1E4F0..
-
-So a shipped build whose interpreter is 3.11 would REFUSE in the browser ten
-digits its own ``int()`` accepts. That is the same class of divergence with the
-sign flipped, over ten code points instead of a hundred and twenty, and it
-cannot be closed from inside the frontend: the browser has no way to ask the
-interpreter which Unicode version it was built against. It is pinned rather
-than papered by
-``test_the_table_is_pinned_to_the_test_interpreter_not_the_build_one``, which
-fails the moment the two versions are aligned - at which point the table should
-be regenerated and this paragraph deleted.
+Nor does it check any interpreter that neither runs the suite nor is named by a
+build workflow. A table generated for 3.11 says nothing about what 3.13 would
+do, and this file does not pretend otherwise: moving a build workflow to an
+unmeasured Python fails with an instruction to measure it.
 """
 
 import json
