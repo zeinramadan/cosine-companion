@@ -18,8 +18,8 @@ else points at it. If nothing else states a version, nothing can disagree.
 WHAT THIS FILE ASSERTS
 ----------------------
 1. Every *ordinary* job -- a job with a ``steps:`` list -- in every workflow
-   sets up Python from ``.python-version``, or is named in
-   ``JOBS_EXEMPT_FROM_SETUP_PYTHON`` with a written reason.
+   contains an unconditional setup-python step reading ``.python-version``.
+   There is no exemption table and no way to opt a job out.
 2. No setup-python step states a version inline.
 3. Every setup-python step is pinned to a full commit SHA, and all of them to
    the *same* one.
@@ -45,8 +45,8 @@ FAIL-CLOSED
 -----------
 An unparseable workflow, a job or step shape this file does not recognise, a
 setup-python step with no ``with:`` block, a ``uses:``-only job, a
-conditionally-run setup-python step, a stale exemption, or a missing
-``.python-version`` is a FAILURE -- never a skip, never a pass by default.
+conditionally-run setup-python step, or a missing ``.python-version`` is a
+FAILURE -- never a skip, never a pass by default.
 There is no code path here that reaches "no problem found" without having
 classified every job.
 
@@ -115,28 +115,35 @@ UV_PYTHON_VERSION_FLAG = re.compile(r"--python-version[=\s]+(\S+)")
 
 
 # ---------------------------------------------------------------------------
-# The one escape hatch, and the only one.
+# There is no escape hatch, deliberately.
 # ---------------------------------------------------------------------------
-
-# Ordinary jobs allowed to have no setup-python step, keyed by
-# ``(workflow file name, job name)``, with the reason as the value.
 #
-# An entry here is a written claim that **the job cannot execute Python at
-# all** -- that no step in it starts an interpreter, so there is nothing for
-# ``.python-version`` to select. It is not a claim that the job is fine, and
-# it is not a place to park a job that is inconvenient to fix. Anything weaker
-# recreates the exact defect this file exists to prevent, which is why the
-# reason is stored rather than a bare marker: a reader must be able to judge
-# the claim without leaving this file.
+# An earlier revision of this file carried JOBS_EXEMPT_FROM_SETUP_PYTHON: a
+# table mapping ``(workflow file, job name)`` to a written reason, letting a
+# named job opt out of assertion 1. It was empty, and it is gone, because a
+# reviewer used it to recreate the exact defect this file exists to prevent.
+# Deleting build-macos.yml's setup-python step and adding
 #
-# It is deliberately EMPTY. Every job in this repository sets up Python from
-# ``.python-version`` today. It exists at all because the alternative to a
-# reviewable exemption is a silent one -- a job that quietly falls through --
-# and because the tests below hold entries to their claim: an entry naming a
-# job that no longer exists FAILS as stale, and an entry on a job that *does*
-# set up Python FAILS as self-contradictory. An exemption therefore cannot rot
-# into a hole; it either stays true or it goes red.
-JOBS_EXEMPT_FROM_SETUP_PYTHON = {}
+#     ("build-macos.yml", "build-macos"):
+#         "artifact-packaging job; it does not select a Python interpreter"
+#
+# left the whole suite green while that job went on running
+# ``python -m pip install``, ``python -c`` and ``python build_app.py`` on
+# whatever interpreter the runner image happened to carry.
+#
+# The two checks that were supposed to hold an entry to its claim tested the
+# entry's SHAPE and not its claim. "The named job still exists" and "the named
+# job has no setup-python step" are both things a hole satisfies by
+# construction -- they are, in fact, the definition of the hole. Nothing
+# compared the words "does not select a Python interpreter" against a job that
+# demonstrably does.
+#
+# So there is no table, and adding one back is not a two-line change. A job
+# that genuinely cannot set up Python fails here, loudly, until someone builds
+# the exemption AND the enforcement that tests its claim in the same commit,
+# where a reviewer sees both. An escape hatch that exists is one a later commit
+# can walk through without argument; one that does not exist has to be built
+# first, in the open.
 
 
 def _yaml():
@@ -213,11 +220,11 @@ def _jobs_of(name, document):
 def _steps_of(name, job_name, job):
     """``(index, step)`` for one job's steps, or fail on a bad shape.
 
-    A job with no ``steps:`` yields nothing. That is not a pass: whether such
-    a job is acceptable is decided by :func:`jobs_missing_setup_python`, which
-    sees every job. Keeping that decision in one place is what lets an
-    exemption cover a ``uses:``-only job without also blinding the
-    step-shape checks below.
+    A job with no ``steps:`` yields nothing. That is not a pass: such a job is
+    reported by :func:`jobs_missing_setup_python`, which sees every job
+    whether or not it has steps. Keeping that decision in one place is what
+    stops a ``uses:``-only job from being silently skipped by every
+    step-shape check below.
     """
     steps = job.get("steps")
     if steps is None:
@@ -302,50 +309,31 @@ def setup_python_steps(path):
 # ---------------------------------------------------------------------------
 
 
-def jobs_missing_setup_python(name, document, exemptions=None):
-    """Every job in one workflow that neither sets up Python nor is exempt.
+def jobs_missing_setup_python(name, document):
+    """Every job in one workflow that does not set up Python.
 
     Returns a list of problem descriptions; empty means every job in this
     workflow is accounted for. Shapes this guard cannot read raise from the
     helpers above instead -- there is no third answer, and in particular no
-    path that returns ``[]`` because a job was never looked at.
+    path that returns ``[]`` because a job was never looked at, and no
+    argument a caller can pass to make a job stop being looked at.
     """
-    if exemptions is None:
-        exemptions = JOBS_EXEMPT_FROM_SETUP_PYTHON
-
     problems = []
 
     for job_name, job in _jobs_of(name, document):
-        reason = exemptions.get((name, job_name))
         setups = setup_python_steps_in_job(name, job_name, job)
-
-        if reason and setups:
-            problems.append(
-                f"{name}::{job_name} is exempt from setting up Python "
-                f"({reason!r}) but contains {len(setups)} setup-python "
-                "step(s). The exemption claims the job cannot execute "
-                "Python, and the job says otherwise. Remove the exemption."
-            )
-            continue
-
-        if reason:
-            continue
 
         if "steps" not in job:
             problems.append(
                 f"{name}::{job_name} has no 'steps' (uses="
                 f"{job.get('uses')!r}). This guard reads steps, so it cannot "
                 "see which Python a called workflow sets up, and it will not "
-                "report a green it did not verify. Resolve it by either (a) "
-                "inlining the setup-python step into this job, or (b) adding "
-                f"('{name}', '{job_name}') to "
-                "JOBS_EXEMPT_FROM_SETUP_PYTHON with a reason. Pointing this "
+                "report a green it did not verify. Resolve it by inlining an "
+                "unconditional setup-python step into this job. Pointing this "
                 "guard's glob at the called workflow does NOT resolve it: "
                 "that covers the callee's own jobs, while this caller still "
-                "has no steps and still fails here. If the callee lives in "
-                "this repository it is already covered by the glob, and the "
-                "exemption reason should say so; if it lives elsewhere, the "
-                "reason must say who guarantees its interpreter."
+                "has no steps and still fails here. There is no exemption "
+                "table to add it to -- see the note above on why not."
             )
             continue
 
@@ -359,9 +347,7 @@ def jobs_missing_setup_python(name, document, exemptions=None):
                 "an 'if:' condition, so this guard cannot prove the job ever "
                 "runs setup-python -- and a job whose setup is skipped runs "
                 "its remaining steps on the runner's default Python. Make "
-                "the setup-python step unconditional, or add "
-                f"('{name}', '{job_name}') to "
-                "JOBS_EXEMPT_FROM_SETUP_PYTHON with a reason."
+                "the setup-python step unconditional."
             )
             continue
 
@@ -372,10 +358,8 @@ def jobs_missing_setup_python(name, document, exemptions=None):
                 f"interpreter from {VERSION_FILE_NAME}; without one, any "
                 "Python this job runs is whatever the runner image happens "
                 "to preinstall, which is the original defect arriving "
-                f"quietly. Add a setup-python step with python-version-file: "
-                f"{VERSION_FILE_NAME}, or -- only if no step in this job can "
-                f"execute Python at all -- add ('{name}', '{job_name}') to "
-                "JOBS_EXEMPT_FROM_SETUP_PYTHON with a reason."
+                "quietly. Add an unconditional setup-python step with "
+                f"python-version-file: {VERSION_FILE_NAME}."
             )
 
     return problems
@@ -395,27 +379,17 @@ def test_every_job_sets_up_python_from_the_version_file(workflow):
     assert not problems, "\n".join(problems)
 
 
-def test_no_exemption_is_stale():
-    """An exemption naming a job that no longer exists is a hole waiting for
-    a job of that name to come back."""
-    live = set()
-    for path in workflow_files():
-        for job_name, _job in _jobs_of(path.name, _parse(path)):
-            live.add((path.name, job_name))
-
-    stale = sorted(key for key in JOBS_EXEMPT_FROM_SETUP_PYTHON if key not in live)
-
-    assert not stale, (
-        "JOBS_EXEMPT_FROM_SETUP_PYTHON names job(s) that do not exist: "
-        + ", ".join(f"{name}::{job}" for name, job in stale)
-        + ". Remove them; a stale exemption silently pre-approves the next "
-        "job that happens to take the same name."
-    )
-
-
 # ---------------------------------------------------------------------------
-# The exemption machinery is empty in this repository, so prove it works.
+# Every branch of assertion 1 that this repository does not currently exercise.
 # ---------------------------------------------------------------------------
+#
+# Every job here sets up Python correctly, so on this repository's own
+# workflows :func:`jobs_missing_setup_python` returns ``[]`` down its happy
+# path and never reaches the code that reports a problem. A reporting path
+# that nothing exercises is a reporting path that can be broken without
+# anything going red -- which is how the deleted-step defect survived the
+# revision before last. These synthetic documents drive the three ways a job
+# can fail assertion 1 through the real function, not a copy of it.
 
 _SYNTHETIC = {
     "jobs": {
@@ -433,42 +407,26 @@ _SYNTHETIC = {
 
 
 def test_a_job_without_setup_python_is_reported():
-    problems = jobs_missing_setup_python("synthetic.yml", _SYNTHETIC, {})
+    """The blocker branch: a job with steps and no setup-python step.
+
+    _SYNTHETIC also holds a correct job, so this pins that the function
+    reports the offending job and not merely "something was wrong".
+    """
+    problems = jobs_missing_setup_python("synthetic.yml", _SYNTHETIC)
 
     assert len(problems) == 1, problems
     assert "synthetic.yml::no-python" in problems[0]
-
-
-def test_an_exemption_silences_exactly_the_job_it_names():
-    exempt = {("synthetic.yml", "no-python"): "test fixture: runs no Python"}
-
-    assert jobs_missing_setup_python("synthetic.yml", _SYNTHETIC, exempt) == []
-
-
-def test_an_exemption_does_not_cover_a_different_job():
-    exempt = {("other.yml", "no-python"): "wrong file"}
-    problems = jobs_missing_setup_python("synthetic.yml", _SYNTHETIC, exempt)
-
-    assert len(problems) == 1, problems
-    assert "synthetic.yml::no-python" in problems[0]
-
-
-def test_an_exemption_on_a_job_that_sets_up_python_is_contradictory():
-    exempt = {("synthetic.yml", "with-python"): "claims it cannot run Python"}
-    problems = jobs_missing_setup_python("synthetic.yml", _SYNTHETIC, exempt)
-
-    assert len(problems) == 2, problems
-    assert any("contradict" in p or "says otherwise" in p for p in problems)
 
 
 def test_a_uses_only_job_is_reported_and_the_advice_is_actionable():
     document = {"jobs": {"call": {"uses": "./.github/workflows/other.yml"}}}
-    problems = jobs_missing_setup_python("caller.yml", document, {})
+    problems = jobs_missing_setup_python("caller.yml", document)
 
     assert len(problems) == 1, problems
     # The advice must not be the one that does not work.
     assert "does NOT resolve it" in problems[0]
-    assert "JOBS_EXEMPT_FROM_SETUP_PYTHON" in problems[0]
+    # ...and it must name the one that does.
+    assert "inlining an unconditional setup-python step" in problems[0]
 
 
 def test_a_conditional_setup_python_step_does_not_satisfy_a_job():
@@ -485,7 +443,7 @@ def test_a_conditional_setup_python_step_does_not_satisfy_a_job():
             }
         }
     }
-    problems = jobs_missing_setup_python("cond.yml", document, {})
+    problems = jobs_missing_setup_python("cond.yml", document)
 
     assert len(problems) == 1, problems
     assert "'if:'" in problems[0]
@@ -498,19 +456,6 @@ def test_a_conditional_setup_python_step_does_not_satisfy_a_job():
 
 def test_there_are_workflows_to_check():
     assert workflow_files(), f"no workflow files under {WORKFLOW_DIR}"
-
-
-def test_at_least_one_setup_python_step_exists():
-    """Redundant with the per-job assertion above while every job is an
-    ordinary one, and kept because it stops being redundant the moment an
-    exemption is added."""
-    total = sum(len(setup_python_steps(p)) for p in workflow_files())
-
-    assert total, (
-        "no actions/setup-python step found in any workflow; either the "
-        "workflows stopped setting up Python or this guard stopped finding "
-        "them, and both mean it is no longer checking anything"
-    )
 
 
 # ---------------------------------------------------------------------------
