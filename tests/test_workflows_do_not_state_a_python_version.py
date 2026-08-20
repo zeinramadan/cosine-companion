@@ -1,5 +1,12 @@
-"""Guard: one file states the Python version, and everything that selects an
-interpreter is checked against it.
+"""Guard: ``.python-version`` is compared against the places listed under
+WHAT THIS FILE ASSERTS below -- the ``with:`` inputs of each setup-python
+step, the conda pin in ``environment.yml``, and the run blocks pinned verbatim
+here. Those comparisons are the enforced set; other things in this repository
+can choose an interpreter without being compared to anything, and they are
+named under WHAT THIS FILE DOES **NOT** ESTABLISH and on
+:data:`UV_RESOLUTION_MARKERS`. Nor is ``.python-version`` the one file that
+states the version: ``environment.yml`` restates it, which is why assertion 5
+exists to compare the two rather than to forbid the second statement.
 
 WHAT THIS FILE READS -- two kinds of thing, and deliberately nothing else:
 PARSED REPOSITORY CONFIGURATION (PyYAML's view of the workflows and of
@@ -677,11 +684,18 @@ def test_an_unrelated_action_is_not_setup_python():
 # with the text, only which blocks are subject to the comparison. Three markers
 # rather than one because each is a way a block can name uv's resolution target.
 #
-# A block that selects an interpreter without any of them -- a job-level or
-# workflow-level ``env:``, ``requires-python`` in pyproject.toml, ``uv python
-# install``, a flag spelled so the characters never appear contiguously -- is
-# NOT collected and NOT covered. Deciding that in general means interpreting the
-# shell.
+# A block that selects an interpreter without any of them is NOT collected and
+# NOT covered. Deciding otherwise in general means interpreting the shell.
+# Named, because an unnamed limit reads as coverage: a STEP-level ``env:``
+# (collection reads ``run:`` and nothing else), a job-level or workflow-level
+# ``env:``, ``requires-python`` in pyproject.toml, ``uv python install``, and a
+# flag spelled so the characters never appear contiguously. The first of those
+# was MEASURED on 2026-08-21 rather than reasoned about: a second step carrying
+# ``env: {UV_PYTHON: "3.12"}`` beside ``run: u"v" p"ip" c"ompile" ...`` -- which
+# the shell glues back into a real ``uv pip compile`` call -- was added to
+# build-macos.yml, and this guard stayed green. It still does. Collecting
+# ``env:`` too would close that one member and leave the rest of the list, which
+# is the shape-by-shape widening that produced five of this file's revisions.
 UV_RESOLUTION_MARKERS = ("uv pip compile", "--python-version", "UV_PYTHON")
 
 # The reviewed text of every collected block, keyed by where it lives. A raw
