@@ -689,8 +689,11 @@ def test_every_setup_python_step_is_pinned_to_one_agreed_sha():
     change the behaviour this file depends on without changing a byte of this
     repository.
 
-    All five must agree, for the same reason the Python version lives in one
-    file: two pins are two things that can drift apart.
+    All five must agree, for the same reason the Python version has one
+    authoritative source: two pins are two things that can drift apart.
+    ("Lives in one file" is what this said, and it is the same overclaim
+    corrected elsewhere in this file -- environment.yml states the version
+    too. One SOURCE; restatements get checked against it.)
     """
     refs = {}
     for path in workflow_files():
