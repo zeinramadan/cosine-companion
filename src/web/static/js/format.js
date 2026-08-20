@@ -191,10 +191,13 @@ const SURROUNDING_SPACE = new RegExp(`^[${PYTHON_SPACE}]+|[${PYTHON_SPACE}]+$`, 
  *
  * The table is therefore generated from the SHIPPED interpreter, and
  * `tests/web/test_integer_parsing_matches_python.py` pins both halves: that the
- * table matches the interpreter running the suite, and that the table is
- * DECLARED for the interpreter every `build-*` workflow freezes. Aligning the
- * test workflow with the build one makes those the same interpreter and the
- * proof total; until then the suite says which of the two it ran.
+ * table matches this interpreter EXACTLY - membership and value, both
+ * directions, no allowance for the ten - and that it is DECLARED for the
+ * interpreter every `build-*` workflow freezes. Run that suite on an
+ * interpreter older than the declaration and it FAILS rather than narrow what
+ * it claims: an allowance for the difference lived there for two rounds and let
+ * a wrong table through a green suite each time, once by excusing the ten's
+ * absence and once by pinning which ten they are and never their values.
  *
  * 62 runs, 660 code points, `unicodedata.unidata_version` 14.0.0, generated on
  * CPython 3.11.14. Regenerate on whatever `build-*.yml` freezes, and move the

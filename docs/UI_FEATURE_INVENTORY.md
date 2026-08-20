@@ -1964,17 +1964,24 @@ is what this document is for, so a disagreement with it is the defect whichever
 way it points.
 
 *How the property is pinned.* "The shipped parser must not disagree with the
-shipped interpreter" is checked as two halves, because they fail separately:
-the parser matches the interpreter running the suite
-(`tests/web/test_integer_parsing_matches_python.py::test_the_helper_accepts_this_pythons_digits_and_the_shipped_tables_extras`),
+shipped interpreter, in membership or in value" is checked as two halves,
+because they fail separately: the parser matches the running interpreter
+exactly, in both directions and with the values
+(`tests/web/test_integer_parsing_matches_python.py::test_the_helper_accepts_exactly_the_shipped_interpreters_digits`),
 and the table is declared for the interpreter the build workflows freeze
 (`tests/web/test_integer_parsing_matches_python.py::test_the_digit_table_targets_the_interpreter_the_app_ships_on`).
-Where the suite runs on the build interpreter the two compose into a total
-proof; where it does not, the ten code points only the newer interpreter knows
-are checked for membership and not for value, and
-`tests/web/test_integer_parsing_matches_python.py::test_the_suite_and_the_build_agree_on_one_interpreter_or_say_they_do_not`
-prints TOTAL or PARTIAL per run so a partial one cannot be read as a total one.
-Aligning `test-macos.yml` with the build workflows makes every run total.
+
+There is no allowance for running the suite on an older interpreter, and the
+absence is the design rather than an omission. One lived there for two rounds
+and let a wrong table through a green 3.10 suite each time — first by excusing
+the ten Tangsa code points' ABSENCE, then by pinning which ten they are and
+never their VALUES, so a table whose Tangsa run was split in two answered `0`
+for a Tangsa ten and passed everything. The first half now FAILS on any
+interpreter whose `unicodedata` is not the version the table declares, with a
+message saying that parity with the shipped interpreter was not proved there.
+Until `.github/workflows/test-macos.yml` names the interpreter `build-*.yml`
+freezes, that is one red test on CI; aligning them makes every run a total
+proof and requires no change to the test file.
 
 *The other limit, unchanged:* magnitude. Python's integers are unbounded and
 these arrive as a float64, so a value past `Number.MAX_SAFE_INTEGER` loses

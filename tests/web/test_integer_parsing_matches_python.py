@@ -64,38 +64,63 @@ green BECAUSE the two disagreed, which is a test asserting a defect. Both are
 gone. The table is generated from the interpreter every ``build-*`` workflow
 freezes, and the module exports ``PYTHON_UNICODE_VERSION`` saying which.
 
-THE PROPERTY THAT BLOCKS SHIPPING, AND HOW IT IS PROVED
--------------------------------------------------------
-*The shipped parser must not disagree with the shipped interpreter.* That
-decomposes into two halves which are checked separately because they can fail
-separately:
+THE PROPERTY THAT BLOCKS SHIPPING, AND WHY NOTHING BRIDGES IT ANY MORE
+----------------------------------------------------------------------
+*The shipped parser must not disagree with the shipped interpreter, in
+membership OR in value.* The oracle for that sentence is the shipped
+interpreter, and there is exactly one way to consult it: run the suite on it.
 
-1. the parser accepts exactly what the interpreter RUNNING this suite accepts
-   - ``test_the_helper_accepts_this_pythons_digits_and_the_shipped_tables_extras``
-2. the table is DECLARED for the interpreter every build workflow freezes
-   - ``test_the_digit_table_targets_the_interpreter_the_app_ships_on``, with
-   the reader itself pinned by
-   ``test_the_shipped_version_is_read_from_the_build_workflows``
+Rounds 3 and 4 both tried the other way. CI set up 3.10 and the app ships 3.11,
+so this file carried a MEASURED record of the difference - ten Tangsa code
+points - and excused the parser for accepting them. Round 3's defect was that
+the record excused their ABSENCE too, so a table that dropped them while still
+declaring Unicode 14.0.0 passed a green 3.10 suite. Round 4 closed that half,
+and the same defect came straight back one dimension over: the record pinned
+WHICH code points and never their VALUES, and ``unicodedata.decimal`` cannot be
+asked about a character this build has never heard of. Splitting the Tangsa run
+in two -
 
-When the suite runs on the build interpreter those compose into a total proof.
-When it does not, half 1 is still made in full for every digit this interpreter
-knows, and the ten it does not know are checked for MEMBERSHIP but not for
-VALUE. ``test_the_suite_and_the_build_agree_on_one_interpreter_or_say_they_do
-_not`` prints TOTAL or PARTIAL per run so a partial one cannot be read as a
-total one. Aligning `test-macos.yml` with the build workflows makes every run
-total and requires no change here.
+    [0x16ac0, 0x16ac9]  ->  [0x16ac0, 0x16ac0], [0x16ac1, 0x16ac9]
 
-WHAT THE ALLOWANCE IS, AND WHAT IT IS DELIBERATELY NOT
-------------------------------------------------------
-Running on an older interpreter means the helper legitimately accepts digits
-this ``int()`` refuses. The tempting rule is "the extras must all be unassigned
-here", and it is too weak to use: every digit node knows and CPython does not
-is also unassigned here, so that rule would re-admit the very ``\p{Nd}``
-delegation this file exists to forbid. ``MEASURED_DIGITS_ADDED_BETWEEN`` names
-the EXACT code points instead, measured by subtracting one interpreter's ``Nd``
-set from another's, and the extras must equal it - and must be present, because
-"may accept them" is indistinguishable from "does not" on an interpreter too
-old to tell, which is how round 3's defect passed a green suite.
+- leaves membership identical, makes ``parseIntegerStrictly`` answer 0 for the
+Tangsa ten the shipped ``int()`` answers 10 for, and passed all eleven tests on
+3.10. Measured in this worktree, not argued.
+
+That is not two bugs. It is one shape, twice: every fix added another recorded
+fact about an interpreter that is not present, and each such fact is
+unverifiable on exactly the interpreter where it is load-bearing. A third
+dimension was already queued - the extras never entered the multi-character
+grammar corpus, because a corpus derived from THIS ``unicodedata`` cannot
+contain them - and a fourth would have followed it.
+
+So the record is gone and nothing replaces it. The comparison is exact, in one
+code path, on every interpreter:
+
+* every digit the running interpreter calls decimal is accepted with the same
+  VALUE, and nothing else is accepted at all;
+* and where the running interpreter is not the one the table declares, this
+  file FAILS rather than certify what it cannot see.
+
+That second line is the whole design. A 3.10 run does not get a green suite and
+an allowance; it gets one named failure saying parity with the shipped
+interpreter was not proved here and naming the interpreter that proves it. An
+interpreter that cannot see the property does not get to certify it - which is
+also why there is no ``pytest.skip`` and no ``if os.environ["CI"]`` here. A
+skip exits zero, and an environment sniff is the same fail-open shape the
+workflow reader below had to be made strict to remove.
+
+The cost is real and it is the smaller half: until
+``.github/workflows/test-macos.yml`` names the interpreter the builds freeze,
+this one test is red on CI and on any developer's 3.10. That red IS the
+mismatch. Aligning the two makes every run a total proof and requires no change
+here.
+
+The other half of the property fails separately and so is checked separately:
+that the table is DECLARED for the interpreter every build workflow freezes -
+``test_the_digit_table_targets_the_interpreter_the_app_ships_on``, with the
+reader under it pinned by
+``test_the_shipped_version_is_read_from_the_build_workflows`` and
+``test_every_workflow_names_exactly_one_python_the_reader_understands``.
 
 WHAT IT DOES NOT CHECK
 ----------------------
@@ -137,48 +162,6 @@ MEASURED_UNICODE_VERSION = {
     "3.11": "14.0.0",  # measured: CPython 3.11.14, 660 Nd code points
 }
 
-
-
-#: Which code points became decimal digits BETWEEN two Unicode versions, as
-#: ``(older, newer) -> code points``. MEASURED by taking the ``Nd`` set from
-#: each interpreter and subtracting, never recalled.
-#:
-#: This is what lets a suite running on an older interpreter check a table
-#: generated from a newer one EXACTLY rather than approximately. "Accepts some
-#: code points this Python has never heard of" is too weak a rule: every digit
-#: node knows and CPython does not is also unassigned here, so that rule would
-#: re-admit the very `\p{Nd}` delegation round 3 removed. Naming the exact ten
-#: does not.
-#:
-#: Only pairs actually measured appear. An unrecorded pair fails with an
-#: instruction to measure it - the entry cost is deliberately a real
-#: interpreter, because guessing this is round 3's defect.
-MEASURED_DIGITS_ADDED_BETWEEN = {
-    # Tangsa. Measured: set(3.11.14 Nd) - set(3.10.18 Nd), nothing removed.
-    ("13.0.0", "14.0.0"): tuple(range(0x16AC0, 0x16ACA)),
-}
-
-
-def _expected_extra_digits(running, declared):
-    """Code points the shipped table has and THIS interpreter does not.
-
-    Empty when the suite runs on the interpreter the table was generated from,
-    which is the case that needs no allowance at all and gets none.
-    """
-    if running == declared:
-        return ()
-    added = MEASURED_DIGITS_ADDED_BETWEEN.get((running, declared))
-    assert added is not None, (
-        f"this suite runs on Unicode {running} and the shipped table declares "
-        f"Unicode {declared}, and the difference between those two has not been "
-        "measured. Take the Nd set from each interpreter, subtract, and record "
-        "the result in MEASURED_DIGITS_ADDED_BETWEEN:\n"
-        "  python -c \"import sys,unicodedata; print([c for c in "
-        "range(sys.maxunicode+1) if unicodedata.category(chr(c))=='Nd'])\"\n"
-        "Do not approximate it - an approximate allowance here is how a parser "
-        "that asks the JavaScript runtime what a digit is gets back in."
-    )
-    return added
 
 
 
@@ -393,14 +376,15 @@ def node_digits_the_helper_refuses(digit_survey):
     """Characters node calls a decimal digit and the shipped table does not.
 
     Derived from the helper's own accepted set rather than from this
-    interpreter's ``Nd``, because those stopped being the same question once the
-    table began targeting the interpreter the app SHIPS on: on a 3.10 suite the
-    table legitimately accepts ten Tangsa digits this ``int()`` refuses, and
-    feeding those into a corpus that expects ``int()`` to agree would fail for
-    the one reason that is not a defect.
+    interpreter's ``Nd``, because those are not the same question when the suite
+    runs on an interpreter older than the one the table targets: there the table
+    holds digits this ``int()`` refuses, and feeding those into a corpus that
+    expects ``int()`` to agree would fail for a reason that is not a parser
+    defect. ``test_the_helper_accepts_exactly_the_shipped_interpreters_digits``
+    is where that mismatch is failed, once, by name.
 
-    Every member is still one THIS ``int()`` refuses - the table is a superset
-    of this interpreter's digits, so subtracting it subtracts at least as much -
+    Every member is still one THIS ``int()`` refuses - the table holds at least
+    this interpreter's digits, so subtracting it subtracts at least as much -
     which is what keeps the comparison against ``int()`` in
     ``test_every_answer_is_the_answer_int_gives`` honest.
     """
@@ -487,82 +471,41 @@ def test_a_non_ascii_ten_is_a_ten(javascript_answers):
 # ---------------------------------------------------------------------------
 
 
-def test_the_helper_accepts_this_pythons_digits_and_the_shipped_tables_extras(
+def test_the_helper_accepts_exactly_the_shipped_interpreters_digits(
     digit_survey, python_decimal_digits
 ):
-    r"""BOTH DIRECTIONS, over every code point there is, with the values.
+    r"""THE SHIP-BLOCKING PROPERTY: parser == shipped interpreter, with VALUES.
 
-    NAMED FOR WHAT IT PROVES, which is not quite "exactly this Python's digits"
-    any more. The table targets the interpreter the app SHIPS on, and the suite
-    may be running on an older one; where it is, the table legitimately holds
-    digits this ``int()`` refuses. So the property is:
+    Exact parity in both directions over every code point there is. No
+    allowance, no measured record of an interpreter that is not here, no branch
+    on which interpreter is running - one comparison, and where it cannot be
+    made this fails instead of narrowing what it claims.
 
-    * every digit THIS interpreter calls decimal is accepted, with the same
-      VALUE - unconditional, no allowance, in every configuration;
-    * and the only extras are the exact code points measured to have become
-      digits between this interpreter's Unicode version and the table's.
+    Three ways to fail, named separately because they mean different things: an
+    unexpected acceptance is `\p{Nd}` delegation or a table generated from the
+    wrong interpreter; one this Python accepts and the helper does not is the
+    table falling behind; and a disagreement about a VALUE is `decimalValue`
+    finding the wrong start for a run.
 
-    "The only extras are exactly these ten" and not "the extras are all
-    unassigned here": the weaker rule would pass a helper that went back to
-    asking the JavaScript runtime what a digit is, because node's 110 extra
-    digits are unassigned in this interpreter too. The exact set is what
-    separates a table generated from a newer CPython from a table that is not a
-    table at all.
+    WHY THE INTERPRETER CHECK SITS IN THE MIDDLE OF IT. The first two failures
+    are askable of any interpreter: every digit it knows must be accepted, with
+    its value. The third - that NOTHING ELSE is accepted - is only askable of
+    the interpreter the table was generated from, because a table legitimately
+    holding digits an older `int()` refuses is indistinguishable, from that
+    older interpreter, from a table holding digits nobody's `int()` accepts.
 
-    Three ways to fail, named separately, because they mean different things:
-    an unexpected acceptance is `\p{Nd}` delegation or a mis-generated table;
-    one this Python accepts and the helper does not is the table falling behind;
-    and a disagreement about a VALUE is the place-value walk finding the wrong
-    start of a run.
+    Rounds 3 and 4 both shipped a defect through that gap, so the gap is closed
+    by refusing to certify rather than by describing the gap more precisely.
+    See the module docstring: the record that used to sit here pinned
+    membership and then, one round later, still not values, and a table whose
+    Tangsa run was split in two answered 0 for a Tangsa ten and passed all
+    eleven tests on 3.10.
 
-    WHAT IT DOES NOT PROVE on an older interpreter: the VALUES of those extras.
-    ``unicodedata.decimal`` cannot be asked about a code point this build has
-    never heard of. They are proved on the shipped interpreter and nowhere else,
-    which is what
-    ``test_the_suite_and_the_build_agree_on_one_interpreter_or_say_they_do_not``
-    reports per run.
+    Red on a 3.10 run, deliberately, and that red says so in one line rather
+    than looking like a parser defect.
     """
     accepted = digit_survey["accepted"]
-    extras = set(
-        _expected_extra_digits(
-            unicodedata.unidata_version, digit_survey["unicode_version"]
-        )
-    )
 
-    # The record itself is checked before it is trusted: a code point this
-    # interpreter has ASSIGNED cannot be one a later Unicode version added, so
-    # an entry pointing at a letter or an already-known digit is a typo, and a
-    # typo here is an allowance for the wrong character.
-    misrecorded = sorted(code for code in extras if unicodedata.category(chr(code)) != "Cn")
-    assert misrecorded == [], (
-        "MEASURED_DIGITS_ADDED_BETWEEN records "
-        + ", ".join(f"U+{code:04X}" for code in misrecorded[:20])
-        + " as added after Unicode "
-        + unicodedata.unidata_version
-        + ", but this interpreter has already assigned "
-        + ", ".join(unicodedata.category(chr(code)) for code in misrecorded[:20])
-        + " to them. The record is wrong, and it is being used to excuse the "
-        "helper accepting them."
-    )
-
-    # The extras are REQUIRED, not merely tolerated. Without this, a table that
-    # dropped them while still declaring the newer Unicode version - which is
-    # round 3's shipped defect exactly - passes every check on an interpreter
-    # too old to know the difference. Measured: it did.
-    missing_extras = sorted(extras - set(accepted))
-    assert missing_extras == [], (
-        "the table declares itself Unicode "
-        + digit_survey["unicode_version"]
-        + " and does not accept "
-        + ", ".join(f"U+{code:04X}" for code in missing_extras[:20])
-        + f" ({len(missing_extras)} code points), which that version added. "
-        "The shipped parser would refuse digits the shipped int() accepts. "
-        "Regenerate PYTHON_DECIMAL_RUNS on the interpreter the build workflows "
-        "freeze, or correct PYTHON_UNICODE_VERSION to the version the table "
-        "really is."
-    )
-
-    unexpected = sorted(set(accepted) - set(python_decimal_digits) - extras)
     only_python = sorted(set(python_decimal_digits) - set(accepted))
     wrong_value = sorted(
         code
@@ -570,16 +513,6 @@ def test_the_helper_accepts_this_pythons_digits_and_the_shipped_tables_extras(
         if accepted[code] != python_decimal_digits[code]
     )
 
-    assert unexpected == [], (
-        "parseIntegerStrictly accepts "
-        + ", ".join(f"U+{code:04X}" for code in unexpected[:20])
-        + f" ({len(unexpected)} code points), which neither this int() nor the "
-        f"Unicode {digit_survey['unicode_version']} table it declares itself to "
-        "be accounts for. Either the digit class is resolving against the "
-        "JavaScript runtime's Unicode tables instead of PYTHON_DECIMAL_RUNS, or "
-        "the table was generated from an interpreter that is not the one "
-        "PYTHON_UNICODE_VERSION names."
-    )
     assert only_python == [], (
         "int() accepts "
         + ", ".join(f"U+{code:04X}" for code in only_python[:20])
@@ -597,6 +530,39 @@ def test_the_helper_accepts_this_pythons_digits_and_the_shipped_tables_extras(
         + " - decimalValue found the wrong start for a run"
     )
 
+    declared = digit_survey["unicode_version"]
+    assert unicodedata.unidata_version == declared, (
+        f"this suite is running CPython "
+        f"{sys.version_info[0]}.{sys.version_info[1]} (unicodedata "
+        f"{unicodedata.unidata_version}) and format.js declares its digit table "
+        f"to be Unicode {declared}, which is what the interpreter every "
+        "build-*.yml freezes reports. Parity with the SHIPPED interpreter is "
+        "the property that blocks shipping, and this interpreter cannot check "
+        "it: the code points the two versions differ by are ones it has never "
+        "heard of, so it can see neither their membership nor their values.\n"
+        "\n"
+        "There is deliberately no allowance for this any more. One lived here "
+        "for two rounds and shipped a defect through a green suite each time - "
+        "first by excusing the extras' ABSENCE, then by pinning which code "
+        "points they are and never their VALUES.\n"
+        "\n"
+        "Run the suite on the interpreter the app ships on. "
+        ".github/workflows/test-macos.yml naming that interpreter is what makes "
+        "this green on CI, and nothing in this file has to change when it does."
+    )
+
+    unexpected = sorted(set(accepted) - set(python_decimal_digits))
+    assert unexpected == [], (
+        "parseIntegerStrictly accepts "
+        + ", ".join(f"U+{code:04X}" for code in unexpected[:20])
+        + f" ({len(unexpected)} code points) that this int() refuses, and this "
+        f"IS the interpreter the table declares itself generated from "
+        f"(Unicode {declared}). Either the digit class is resolving against the "
+        "JavaScript runtime's Unicode tables instead of PYTHON_DECIMAL_RUNS, or "
+        "the table was generated from an interpreter that is not the one "
+        "PYTHON_UNICODE_VERSION names."
+    )
+
 
 def test_every_digit_node_knows_and_the_table_refuses_is_refused_everywhere(
     digit_survey, node_digits_the_helper_refuses, javascript_answers
@@ -612,8 +578,8 @@ def test_every_digit_node_knows_and_the_table_refuses_is_refused_everywhere(
     opinion of itself.
 
     The character class is owned by
-    ``test_the_helper_accepts_this_pythons_digits_and_the_shipped_tables_extras``
-    exactly; this does not restate it. What this adds is the four positions.
+    ``test_the_helper_accepts_exactly_the_shipped_interpreters_digits`` exactly;
+    this does not restate it. What this adds is the four positions.
     """
     assert digit_survey["node_nd"] >= set(digit_survey["accepted"]), (
         "this node calls fewer code points Nd than the shipped table holds, "
@@ -740,7 +706,7 @@ def test_the_shipped_version_is_read_from_the_build_workflows(tmp_path, monkeypa
 def test_the_digit_table_targets_the_interpreter_the_app_ships_on(digit_survey):
     """THE SHIP-BLOCKING PROPERTY, half one: the table is FOR the built Python.
 
-    ``test_the_helper_accepts_exactly_the_digits_this_python_calls_decimal``
+    ``test_the_helper_accepts_exactly_the_shipped_interpreters_digits``
     compares the parser against whichever interpreter runs the suite. That is
     only worth something if the table was generated from the interpreter the
     app is SHIPPED on, and in round 3 it was not: the table came from 3.10
@@ -874,8 +840,8 @@ def test_no_digit_this_runtime_knows_sits_just_below_a_run_the_helper_accepts(
 
     What it does NOT pin: the current implementation. A rule that read the table
     and then computed the offset some other way passes here and fails
-    ``test_the_helper_accepts_exactly_the_digits_this_python_calls_decimal``,
-    which is the test that owns values.
+    ``test_the_helper_accepts_exactly_the_shipped_interpreters_digits``, which
+    is the test that owns values.
     """
     accepted = set(digit_survey["accepted"])
     assert accepted, "the survey accepted nothing, so this checks no boundaries"
