@@ -195,7 +195,7 @@ def workflow_files():
     return sorted(WORKFLOW_DIR.glob("*.yml")) + sorted(WORKFLOW_DIR.glob("*.yaml"))
 
 
-def stated_version_text():
+def stated_version_text(path=VERSION_FILE):
     """The raw contents of the AUTHORITATIVE SOURCE for the version.
 
     Not "the one file that states the version": ``environment.yml`` states it
@@ -210,12 +210,17 @@ def stated_version_text():
     with ``read_text``, ``3.11\\r\\n`` on disk passed. It reddens now. pyenv
     would read the version name as ``3.11\\r``; setup-python trims the ``\\r``
     away. Two consumers, two answers, from one file.
+
+    ``path`` is an argument only so that behaviour is reachable with a file
+    this repository does not have. Reading the fixed path alone, switching
+    back to ``read_text`` reddened nothing -- measured -- because the real
+    file is LF and the two agree on it.
     """
-    assert VERSION_FILE.is_file(), (
+    assert path.is_file(), (
         f"{VERSION_FILE_NAME} is missing. Every workflow points at it, so "
         "every job would fail -- but this guard says so first, and by name."
     )
-    return VERSION_FILE.read_bytes().decode("utf-8")
+    return path.read_bytes().decode("utf-8")
 
 
 def _parse(path):
@@ -835,8 +840,10 @@ def test_a_reviewed_block_that_vanished_is_reported():
         ("--python-version", '--pyth"on-version"'),       # the round-7 mutant
         ("--exclude-newer 2026-08-20", "--exclude-newer 2027-01-01"),
         ("git diff --exit-code", "git diff"),             # the drift gate itself
+        ("", "export UV_PYTHON=3.12\n"),                  # APPENDED, not replaced
     ],
-    ids=["literal", "quoted-flag", "interior-quote", "exclude-newer", "drift-gate"],
+    ids=["literal", "quoted-flag", "interior-quote", "exclude-newer",
+         "drift-gate", "appended"],
 )
 def test_a_one_character_edit_to_a_reviewed_block_is_reported(edit):
     """Every shape the deleted shell parser missed is simply "the text differs".
@@ -845,6 +852,12 @@ def test_a_one_character_edit_to_a_reviewed_block_is_reported(edit):
     and 7 -- a quote at the end of the flag name, and a quote in the MIDDLE of
     it, which the shell glues back together before uv sees it. Neither needs
     understanding here.
+
+    The last row APPENDS rather than replaces, and it is here because relaxing
+    the comparison to ``reviewed in collected[key]`` survived every replacing
+    row -- a modified copy does not contain the original either way. Only an
+    addition tells the two apart, and an addition is how a second resolution
+    target arrives beside a correct one.
     """
     key = ("test-macos.yml", "pytest")
     mutated = _LOCK_COMPILE_RUN.replace(*edit, 1)
@@ -1273,6 +1286,40 @@ def test_a_version_written_in_non_ascii_digits_is_refused(version, script):
         one_version_token(f"{version}\n")
 
 
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "3.11",           # no trailing newline at all
+        "3.11\n\n",       # a blank second line
+        "\n3.11\n",       # a blank first line
+        " 3.11 \n",       # padded
+        "3.11\r\n",       # CRLF -- pyenv reads the name as '3.11\r'
+        "\t3.11\n",       # a leading tab
+    ],
+    ids=["no-newline", "blank-second-line", "blank-first-line", "padded",
+         "crlf", "leading-tab"],
+)
+def test_a_content_that_only_trims_to_a_version_is_refused(raw):
+    """The second assertion of :func:`one_version_token`, driven on its own.
+
+    Every row here TRIMS to ``3.11``, so the first assertion accepts all of
+    them and only the byte comparison refuses them. Without this, relaxing
+    that comparison to ``raw.strip() == version`` reddens nothing -- measured:
+    the whole file stayed green under exactly that edit, which is the same
+    unexercised-branch hole this file has now found in itself four times.
+
+    Both consumers would accept several of these. The argument for refusing
+    them anyway is on :func:`one_version_token`.
+    """
+    assert VERSION_TOKEN.match(raw.strip()), (
+        f"the {raw!r} row does not trim to a version token, so it would be "
+        "refused by the first assertion too and pins nothing"
+    )
+
+    with pytest.raises(AssertionError, match="the one accepted content is"):
+        one_version_token(raw)
+
+
 def test_an_ascii_version_still_passes():
     """The other half: this must not be a check that refuses everything."""
     assert one_version_token("3.11\n") == "3.11"
@@ -1286,6 +1333,23 @@ def test_a_trailing_newline_is_not_itself_part_of_a_version_token():
     it that way; it is anchored ``\A``/``\Z`` now regardless."""
     assert VERSION_TOKEN.match("3.11")
     assert not VERSION_TOKEN.match("3.11\n")
+
+
+def test_the_version_file_is_read_as_raw_bytes(tmp_path):
+    """No universal-newline translation between the disk and the comparison.
+
+    Written as a file rather than asserted about the reader's source, because
+    what matters is the bytes that come back. A CRLF file must arrive with its
+    carriage return intact; under ``read_text`` it arrives as ``"3.11\\n"``
+    and :func:`one_version_token` cannot tell it from a correct file.
+    """
+    crlf = tmp_path / VERSION_FILE_NAME
+    crlf.write_bytes(b"3.11\r\n")
+
+    assert stated_version_text(crlf) == "3.11\r\n"
+
+    with pytest.raises(AssertionError, match="the one accepted content is"):
+        one_version_token(stated_version_text(crlf))
 
 
 def test_the_version_file_holds_exactly_one_version():
