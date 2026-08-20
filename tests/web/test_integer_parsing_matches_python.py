@@ -120,7 +120,8 @@ Everything above compares the table against the interpreter that RUNS the
 suite. That the interpreter the app is BUILT on is the same one is NOT
 checked here, and is not checked anywhere else either.
 
-A check that read ``.github/workflows/`` to answer it used to live below. It
+A check that read ``.github/workflows/`` to answer it used to live in this
+file. It
 was confidently WRONG four rounds running, each round fixed by teaching it one
 more GitHub Actions shape and each fix followed by a shape nobody had thought
 of: a line-anchored regex that read a heredoc as a setting; flow mappings and
