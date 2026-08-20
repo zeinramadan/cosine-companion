@@ -1,5 +1,5 @@
 # proxy-tools==0.1.0 is sdist-only. pip's PEP 517 build isolation downloads
 # and executes these tools, so they must be constrained separately from the
 # hash-enforced runtime environment.
-setuptools==75.8.2
+setuptools==84.0.0
 wheel==0.45.1
