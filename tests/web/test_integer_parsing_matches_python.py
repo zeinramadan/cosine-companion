@@ -801,11 +801,17 @@ def test_the_workflows_agree_on_the_interpreter_the_digit_table_targets():
     once: a real setting spelled so the text never appears (a double-quoted
     ``"python\\x2dversion"``, a folded key), AND a decoy line planted in the
     same file that reproduces the other file's line exactly. Either alone is
-    caught - the first leaves the file silent, the second makes it differ. I
-    could not prove the pair impossible, and no check in this file defends
-    against someone with commit access writing YAML designed to mislead it. The
-    accident shapes are all caught, and those are what three rounds of defects
-    actually were.
+    caught - the first leaves the file silent, the second makes it differ.
+
+    The pair is NOT caught, and that is measured rather than guessed at: on the
+    real ``build-macos.yml``, an escaped key setting 3.10 under a ``run: |2-``
+    block whose text is ``python-version: "3.11"`` leaves this green while
+    ``yaml.safe_load`` says the build uses 3.10. Both halves have to be
+    deliberate - an accident does not spell a key in hex and then reproduce
+    another file's line under it - and no check in this file defends against
+    someone with commit access writing YAML designed to mislead it. What the
+    three rounds of defect actually were is accident shapes, and those are
+    caught, one probe each, in the test below.
 
     Red when: a build moves to another Python and this suite does not, a build
     stops setting one up, a build's version becomes an expression or a matrix,
@@ -821,7 +827,7 @@ def test_the_workflows_agree_on_the_interpreter_the_digit_table_targets():
 def test_the_shapes_that_made_the_old_reader_confidently_wrong_are_refused(
     tmp_path, monkeypatch
 ):
-    r"""The three rounds of defect, replayed against the check that replaced it.
+    """The three rounds of defect, replayed against the check that replaced it.
 
     Every one of these was a GREEN suite at the time. They are pinned here
     rather than in prose because prose does not go red, and because the point
