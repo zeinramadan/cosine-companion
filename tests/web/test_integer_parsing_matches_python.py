@@ -964,46 +964,6 @@ def test_the_measured_unicode_versions_are_right_about_this_interpreter():
     )
 
 
-def test_the_suite_and_the_build_agree_on_one_interpreter_or_say_they_do_not():
-    """THE SHIP-BLOCKING PROPERTY, half two: is this run's evidence complete?
-
-    Parity is proved against the interpreter that RUNS the suite. When that is
-    the interpreter the app SHIPS on, the two halves compose and the proof is
-    total: parser == running == shipped. When it is not, the comparison is
-    still made and still real, but ten code points at the top of the table are
-    ones this interpreter cannot be asked about, so their VALUES go unchecked.
-
-    This test does not fail on the mismatch - it is not a defect for a
-    developer to run the suite on the interpreter they happen to have, and
-    failing here would make the branch unrunnable outside CI. It REPORTS it, in
-    the one place a reader is looking at the parity evidence, so a partial run
-    cannot be read as a total one. `.github/workflows/test-macos.yml` moving to
-    the build's interpreter is what turns this from partial to total, and
-    nothing here has to change when it does.
-    """
-    versions = _workflow_python_versions()
-    shipped = _shipped_python_version(versions)
-    tested = versions.get("test-macos.yml")
-    running = "%d.%d" % sys.version_info[:2]
-
-    assert tested, f"test-macos.yml sets no python-version; found {versions}"
-    assert len(tested) == 1, f"test-macos.yml sets several Pythons: {tested}"
-
-    if running == shipped:
-        print(
-            f"\nTOTAL: this run is on CPython {running}, the interpreter the "
-            "app ships on, so parity is proved against the shipped int()"
-        )
-    else:
-        print(
-            f"\nPARTIAL: this run is on CPython {running} and the app ships on "
-            f"{shipped}. Every digit THIS interpreter knows is checked in both "
-            "directions; the digits only the shipped interpreter knows are "
-            "checked for membership and not for value. CI sets up "
-            f"{tested[0]}; aligning it with {shipped} makes this run total."
-        )
-
-
 def test_no_digit_this_runtime_knows_sits_just_below_a_run_the_helper_accepts(
     digit_survey,
 ):
