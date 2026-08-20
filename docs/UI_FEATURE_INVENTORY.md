@@ -2148,15 +2148,25 @@ shows. Pinned as current behaviour by
 
 **Known defect, declared here rather than fixed: the library can change under
 an in-flight operation, and nothing notices.** One defect, two places it shows.
-Neither is fixed in this PR, and both fixes belong to the same follow-up.
+Half 1 was CLOSED by PR #19 while this PR was in review; Half 2 remains open and
+is not fixed in this PR.
 
-*Half 1 — `SetBuilder.build` does not capture the library atomically.*
+*Half 1 — CLOSED by PR #19. `SetBuilder.build` now captures the library
+atomically.*
 `build` takes one `LibrarySession.snapshot()`, and `snapshot()`
-(`services/library_session.py:149-166`) is itself six unlocked sequential
-attribute reads; its own docstring says a delete landing between two of them can
-be observed half-applied. `delete_tracks` rebinds `_meta_ix`, then `_emb_ix`,
-then `_index` (`:202-224`), so the two run into each other from both directions.
-Reproduced on the twelve-track fixture library, `{1: f01}` over five tracks:
+(`services/library_session.py:154`) takes `self._lock` (`:162`) around all six
+reads. `delete_tracks` (`:190`) holds the SAME lock (`:201`) while publishing
+its new references, so a capture is wholly before or wholly after that
+publication, and deletion never mutates a captured object in place. Pinned by
+`tests/services/test_library_session.py:182`,
+`test_snapshot_cannot_land_inside_the_delete_publication`.
+
+The rest of this half is the HISTORICAL record of the defect and why it was
+missed, kept because the way it was missed is the reusable part. Both
+interleavings below were reproduced against the PRE-PR-#19 code, when
+`snapshot()` was six unlocked sequential attribute reads and `delete_tracks`
+rebound `_meta_ix`, then `_emb_ix`, then `_index` without a lock. Neither is
+reachable now. On the twelve-track fixture library, `{1: f01}` over five tracks:
 
 | interleaving | result |
 | --- | --- |
@@ -2165,9 +2175,10 @@ Reproduced on the twelve-track fixture library, `{1: f01}` over five tracks:
 
 The second is the one that raises, and it is NOT the one a probe on
 `snapshot()`'s own reads produces — it needs the reader interleaved into the
-delete rather than the delete into the reader. Both are reachable for the same
+delete rather than the delete into the reader. Both WERE reachable for the same
 reason: a delete and a build are two requests served off the Tk main thread
-rather than two turns of one event loop.
+rather than two turns of one event loop. That reason still holds; what changed
+is that the lock now makes the two operations mutually exclusive.
 
 Round 2 shipped a test named
 `test_a_delete_between_the_property_reads_cannot_be_observed_half_applied`
@@ -2201,10 +2212,17 @@ by construction and the object it gets can carry the revision the response needs
 to echo. This codebase has used that shape three times already — PR #15 (the
 transitions vector cache, built privately and published by rebinding an
 immutable tuple), PR #17 (`_Generation` + `MappingProxyType`) and PR #19
-(generation files behind a manifest pointer). It is deliberately not in this PR:
-it rewrites `delete_tracks`, which the sibling Library PR also rewrites, and a
-core-services concurrency change deserves its own review rather than riding
-inside a UI destination.
+(generation files behind a manifest pointer).
+
+What actually happened: the sibling Library PR (#19) merged first and took the
+LOCK route rather than the atomic-publish route — `snapshot()` and
+`delete_tracks` now hold the same `RLock`. That closes Half 1 completely, and it
+is why this section's Half 1 is marked CLOSED above. It does NOT close Half 2: a
+lock makes the capture atomic, but it still hands back no IDENTITY, so the
+frontend has nothing to echo and no way to tell that the library moved. Closing
+Half 2 needs a revision on the snapshot and in the `POST /api/set` response,
+which is a core-services plus API change and deserves its own review rather than
+riding inside a UI destination. It is deliberately not in this PR.
 
 *The 2.76 s at :511-512 is no longer the number.* That figure was captured
 before the transition-vector work. Measured on this branch against the same
