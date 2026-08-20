@@ -91,6 +91,60 @@ WORKFLOWS = Path(__file__).resolve().parents[2] / ".github" / "workflows"
 #: Same floor as the behavioural suites: `node --test` and ESM top-level await.
 MINIMUM_NODE_MAJOR = 18
 
+#: ``unicodedata.unidata_version`` for each CPython minor this project is built
+#: or tested with. MEASURED, one real interpreter at a time - never read off a
+#: changelog, because mis-stating exactly this mapping is the defect this
+#: section exists to stop. A minor that is not here is a hard failure with an
+#: instruction to measure it, not a guess put in its place.
+MEASURED_UNICODE_VERSION = {
+    "3.10": "13.0.0",  # measured: CPython 3.10.18, 650 Nd code points
+    "3.11": "14.0.0",  # measured: CPython 3.11.14, 660 Nd code points
+}
+
+
+
+#: Which code points became decimal digits BETWEEN two Unicode versions, as
+#: ``(older, newer) -> code points``. MEASURED by taking the ``Nd`` set from
+#: each interpreter and subtracting, never recalled.
+#:
+#: This is what lets a suite running on an older interpreter check a table
+#: generated from a newer one EXACTLY rather than approximately. "Accepts some
+#: code points this Python has never heard of" is too weak a rule: every digit
+#: node knows and CPython does not is also unassigned here, so that rule would
+#: re-admit the very `\p{Nd}` delegation round 3 removed. Naming the exact ten
+#: does not.
+#:
+#: Only pairs actually measured appear. An unrecorded pair fails with an
+#: instruction to measure it - the entry cost is deliberately a real
+#: interpreter, because guessing this is round 3's defect.
+MEASURED_DIGITS_ADDED_BETWEEN = {
+    # Tangsa. Measured: set(3.11.14 Nd) - set(3.10.18 Nd), nothing removed.
+    ("13.0.0", "14.0.0"): tuple(range(0x16AC0, 0x16ACA)),
+}
+
+
+def _expected_extra_digits(running, declared):
+    """Code points the shipped table has and THIS interpreter does not.
+
+    Empty when the suite runs on the interpreter the table was generated from,
+    which is the case that needs no allowance at all and gets none.
+    """
+    if running == declared:
+        return ()
+    added = MEASURED_DIGITS_ADDED_BETWEEN.get((running, declared))
+    assert added is not None, (
+        f"this suite runs on Unicode {running} and the shipped table declares "
+        f"Unicode {declared}, and the difference between those two has not been "
+        "measured. Take the Nd set from each interpreter, subtract, and record "
+        "the result in MEASURED_DIGITS_ADDED_BETWEEN:\n"
+        "  python -c \"import sys,unicodedata; print([c for c in "
+        "range(sys.maxunicode+1) if unicodedata.category(chr(c))=='Nd'])\"\n"
+        "Do not approximate it - an approximate allowance here is how a parser "
+        "that asks the JavaScript runtime what a digit is gets back in."
+    )
+    return added
+
+
 
 def _node():
     return shutil.which("node")
@@ -299,17 +353,30 @@ def python_decimal_digits():
 
 
 @pytest.fixture(scope="module")
-def node_only_digits(digit_survey, python_decimal_digits):
-    """Characters node calls a decimal digit and this interpreter does not."""
-    return [chr(code) for code in sorted(digit_survey["node_nd"] - set(python_decimal_digits))]
+def node_digits_the_helper_refuses(digit_survey):
+    """Characters node calls a decimal digit and the shipped table does not.
+
+    Derived from the helper's own accepted set rather than from this
+    interpreter's ``Nd``, because those stopped being the same question once the
+    table began targeting the interpreter the app SHIPS on: on a 3.10 suite the
+    table legitimately accepts ten Tangsa digits this ``int()`` refuses, and
+    feeding those into a corpus that expects ``int()`` to agree would fail for
+    the one reason that is not a defect.
+
+    Every member is still one THIS ``int()`` refuses - the table is a superset
+    of this interpreter's digits, so subtracting it subtracts at least as much -
+    which is what keeps the comparison against ``int()`` in
+    ``test_every_answer_is_the_answer_int_gives`` honest.
+    """
+    return [chr(code) for code in sorted(digit_survey["node_nd"] - set(digit_survey["accepted"]))]
 
 
 @pytest.fixture(scope="module")
-def javascript_answers(node_only_digits):
+def javascript_answers(node_digits_the_helper_refuses):
     """The shipped helper's answer for every corpus entry, via node."""
     executable = _require_node()
 
-    corpus = _corpus(node_only_digits)
+    corpus = _corpus(node_digits_the_helper_refuses)
     answers = json.loads(_run_node(executable, DRIVER, json.dumps(corpus)))
     assert len(answers) == len(corpus), (
         f"the driver answered {len(answers)} of {len(corpus)} inputs"
@@ -384,26 +451,65 @@ def test_a_non_ascii_ten_is_a_ten(javascript_answers):
 # ---------------------------------------------------------------------------
 
 
-def test_the_helper_accepts_exactly_the_digits_this_python_calls_decimal(
+def test_the_helper_accepts_this_pythons_digits_and_the_shipped_tables_extras(
     digit_survey, python_decimal_digits
 ):
-    """BOTH DIRECTIONS, over every code point there is, with the values.
+    r"""BOTH DIRECTIONS, over every code point there is, with the values.
 
-    This is the check the corpus structurally cannot make. `format.js` used to
-    write the digit class as ``\\p{Nd}``, which asks the RUNTIME what a digit is,
-    and node's Unicode tables are not CPython's - so the helper accepted 120
-    code points ``int()`` refuses and nothing noticed, because every input the
-    corpus contained was one Python already knew.
+    NAMED FOR WHAT IT PROVES, which is not quite "exactly this Python's digits"
+    any more. The table targets the interpreter the app SHIPS on, and the suite
+    may be running on an older one; where it is, the table legitimately holds
+    digits this ``int()`` refuses. So the property is:
+
+    * every digit THIS interpreter calls decimal is accepted, with the same
+      VALUE - unconditional, no allowance, in every configuration;
+    * and the only extras are the exact code points measured to have become
+      digits between this interpreter's Unicode version and the table's.
+
+    "The only extras are exactly these ten" and not "the extras are all
+    unassigned here": the weaker rule would pass a helper that went back to
+    asking the JavaScript runtime what a digit is, because node's 110 extra
+    digits are unassigned in this interpreter too. The exact set is what
+    separates a table generated from a newer CPython from a table that is not a
+    table at all.
 
     Three ways to fail, named separately, because they mean different things:
-    a digit the helper accepts and Python does not is the defect above coming
-    back; one Python accepts and the helper does not is the table falling behind
-    a Python upgrade; and a disagreement about a VALUE is the place-value walk
-    finding the wrong start of a run.
+    an unexpected acceptance is `\p{Nd}` delegation or a mis-generated table;
+    one this Python accepts and the helper does not is the table falling behind;
+    and a disagreement about a VALUE is the place-value walk finding the wrong
+    start of a run.
+
+    WHAT IT DOES NOT PROVE on an older interpreter: the VALUES of those extras.
+    ``unicodedata.decimal`` cannot be asked about a code point this build has
+    never heard of. They are proved on the shipped interpreter and nowhere else,
+    which is what
+    ``test_the_suite_and_the_build_agree_on_one_interpreter_or_say_they_do_not``
+    reports per run.
     """
     accepted = digit_survey["accepted"]
+    extras = set(
+        _expected_extra_digits(
+            unicodedata.unidata_version, digit_survey["unicode_version"]
+        )
+    )
 
-    only_js = sorted(set(accepted) - set(python_decimal_digits))
+    # The record itself is checked before it is trusted: a code point this
+    # interpreter has ASSIGNED cannot be one a later Unicode version added, so
+    # an entry pointing at a letter or an already-known digit is a typo, and a
+    # typo here is an allowance for the wrong character.
+    misrecorded = sorted(code for code in extras if unicodedata.category(chr(code)) != "Cn")
+    assert misrecorded == [], (
+        "MEASURED_DIGITS_ADDED_BETWEEN records "
+        + ", ".join(f"U+{code:04X}" for code in misrecorded[:20])
+        + " as added after Unicode "
+        + unicodedata.unidata_version
+        + ", but this interpreter has already assigned "
+        + ", ".join(unicodedata.category(chr(code)) for code in misrecorded[:20])
+        + " to them. The record is wrong, and it is being used to excuse the "
+        "helper accepting them."
+    )
+
+    unexpected = sorted(set(accepted) - set(python_decimal_digits) - extras)
     only_python = sorted(set(python_decimal_digits) - set(accepted))
     wrong_value = sorted(
         code
@@ -411,19 +517,23 @@ def test_the_helper_accepts_exactly_the_digits_this_python_calls_decimal(
         if accepted[code] != python_decimal_digits[code]
     )
 
-    assert only_js == [], (
+    assert unexpected == [], (
         "parseIntegerStrictly accepts "
-        + ", ".join(f"U+{code:04X}" for code in only_js[:20])
-        + f" ({len(only_js)} code points), which int() refuses. The digit class "
-        "is resolving against the JavaScript runtime's Unicode tables instead of "
-        "the table in format.js."
+        + ", ".join(f"U+{code:04X}" for code in unexpected[:20])
+        + f" ({len(unexpected)} code points), which neither this int() nor the "
+        f"Unicode {digit_survey['unicode_version']} table it declares itself to "
+        "be accounts for. Either the digit class is resolving against the "
+        "JavaScript runtime's Unicode tables instead of PYTHON_DECIMAL_RUNS, or "
+        "the table was generated from an interpreter that is not the one "
+        "PYTHON_UNICODE_VERSION names."
     )
     assert only_python == [], (
         "int() accepts "
         + ", ".join(f"U+{code:04X}" for code in only_python[:20])
         + f" ({len(only_python)} code points) and parseIntegerStrictly refuses "
-        f"them. PYTHON_DECIMAL_RUNS in format.js is behind this interpreter "
-        f"(unicodedata {unicodedata.unidata_version}); regenerate it with\n"
+        f"them. PYTHON_DECIMAL_RUNS is behind this interpreter "
+        f"(unicodedata {unicodedata.unidata_version}); regenerate it on the "
+        "interpreter the build workflows freeze, with\n"
         "  python -c \"import sys,unicodedata; "
         "print([c for c in range(sys.maxunicode+1) "
         "if unicodedata.category(chr(c))=='Nd'])\""
@@ -435,36 +545,46 @@ def test_the_helper_accepts_exactly_the_digits_this_python_calls_decimal(
     )
 
 
-def test_every_digit_node_knows_and_this_python_does_not_is_refused(
-    digit_survey, python_decimal_digits, node_only_digits, javascript_answers
+def test_every_digit_node_knows_and_the_table_refuses_is_refused_everywhere(
+    digit_survey, node_digits_the_helper_refuses, javascript_answers
 ):
-    """The reverse corpus, and the guard that says how big it was.
+    """The reverse corpus: the GRAMMAR half, and the guard that sizes it.
 
-    ``node_only_digits`` went into ``_corpus`` alone, doubled, and mixed with an
-    ASCII digit, so this covers the GRAMMAR and not only the character class - a
-    rule that refused a lone Kawi zero and still accepted ``1`` followed by one
-    would fail here and pass the test above.
+    ``node_digits_the_helper_refuses`` went into ``_corpus`` alone, doubled,
+    and mixed with an ASCII digit on both sides, so this covers the grammar and
+    not only the character class - a rule that refused a lone Kawi zero and
+    still let one through beside a ``1`` would fail here and pass the character
+    -class test above. Each of them is also one THIS ``int()`` refuses, so the
+    comparison is still against CPython and not merely against the helper's own
+    opinion of itself.
 
-    An empty ``node_only_digits`` is not a failure: it means this node and this
-    interpreter have converged on one Unicode version, and there is nothing left
-    to disagree about. It IS reported, so a run that checked nothing cannot read
-    as a run that checked everything.
+    The character class is owned by
+    ``test_the_helper_accepts_this_pythons_digits_and_the_shipped_tables_extras``
+    exactly; this does not restate it. What this adds is the four positions.
     """
-    assert digit_survey["node_nd"] >= set(python_decimal_digits), (
-        "this node calls fewer code points Nd than this interpreter does, which "
-        "the corpus in the other direction assumes is impossible"
+    assert digit_survey["node_nd"] >= set(digit_survey["accepted"]), (
+        "this node calls fewer code points Nd than the shipped table holds, "
+        "which the reverse corpus assumes is impossible"
+    )
+    assert len(node_digits_the_helper_refuses) > 50, (
+        f"only {len(node_digits_the_helper_refuses)} code points this node "
+        "calls a decimal digit and the table refuses, so this checks almost "
+        "nothing. Either node and the shipped CPython have converged on one "
+        "Unicode version - in which case say so here and retire the guard - or "
+        "the helper has gone back to asking the runtime what a digit is, which "
+        "would make these two sets identical by construction."
     )
 
     disagreements = [
         (text, _python_answer(text), javascript_answers[text])
-        for digit in node_only_digits
+        for digit in node_digits_the_helper_refuses
         for text in (digit, digit + digit, digit + "0", "1" + digit)
         if _python_answer(text) != javascript_answers[text]
     ]
 
     assert disagreements == [], (
-        f"{len(node_only_digits)} code points this node calls a decimal digit "
-        f"and this Python does not; "
+        f"{len(node_digits_the_helper_refuses)} code points this node calls a "
+        "decimal digit and the shipped table does not; "
         + "\n".join(
             f"  {text!r}: int() -> {expected}, parseIntegerStrictly -> {actual}"
             for text, expected, actual in disagreements[:20]
@@ -472,9 +592,9 @@ def test_every_digit_node_knows_and_this_python_does_not_is_refused(
     )
 
     print(
-        f"\nchecked {len(node_only_digits)} node-only decimal digits "
-        f"(node Nd {len(digit_survey['node_nd'])}, "
-        f"python Nd {len(python_decimal_digits)})"
+        f"\nchecked {len(node_digits_the_helper_refuses)} node digits the table "
+        f"refuses (node Nd {len(digit_survey['node_nd'])}, "
+        f"table {len(digit_survey['accepted'])})"
     )
 
 
@@ -483,17 +603,6 @@ def test_every_digit_node_knows_and_this_python_does_not_is_refused(
 # the interpreter that RUNS it; on its own that says nothing about the one the
 # app SHIPS on, and round 3 shipped a table generated from the wrong one.
 # ---------------------------------------------------------------------------
-
-#: ``unicodedata.unidata_version`` for each CPython minor this project is built
-#: or tested with. MEASURED, one real interpreter at a time - never read off a
-#: changelog, because mis-stating exactly this mapping is the defect this
-#: section exists to stop. A minor that is not here is a hard failure with an
-#: instruction to measure it, not a guess put in its place.
-MEASURED_UNICODE_VERSION = {
-    "3.10": "13.0.0",  # measured: CPython 3.10.18, 650 Nd code points
-    "3.11": "14.0.0",  # measured: CPython 3.11.14, 660 Nd code points
-}
-
 
 def _workflow_python_versions():
     """``{workflow file name: [python-version, ...]}`` for every workflow."""
