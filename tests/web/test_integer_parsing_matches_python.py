@@ -216,8 +216,8 @@ left by which this file could notice a workflow at all.
 State that as the apparatus and not as the mentions, because the mentions did
 not go. Parse this file and strip its docstrings and exactly one string
 literal still names the directory: the failure message in
-``test_the_helper_accepts_exactly_the_shipped_interpreters_digits`` (its
-``def`` at line 615), which tells a reader on the wrong interpreter that
+``test_the_helper_accepts_exactly_the_shipped_interpreters_digits``, which
+tells a reader on the wrong interpreter that
 ``.github/workflows/test-macos.yml`` naming the shipped one is what makes this
 green on CI. That path is printed, never opened. The mechanical form of the
 claim is that this module has zero

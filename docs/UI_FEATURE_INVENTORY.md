@@ -2107,14 +2107,15 @@ whole claim.* An earlier draft of the sentence above said the parity file does
 not "name a path under `.github/` at all", and the file refutes it: parse
 `tests/web/test_integer_parsing_matches_python.py`, strip the docstrings, and
 one string literal survives — the failure message inside
-`test_the_helper_accepts_exactly_the_shipped_interpreters_digits`, which tells
-a reader on the wrong interpreter that `.github/workflows/test-macos.yml`
-naming the shipped one is what makes the suite green on CI. The docstrings
-name that directory throughout besides — twelve times as the file stands. What
-is actually gone is every way of READING it: the module has no `yaml` import
-and zero `open`/`read_text`/`glob`/`iterdir`/`safe_load` call sites, which is
-the mechanical reason the workflow mutations above cannot reach it. A printed
-path is not a path anything opens.
+`…::test_the_helper_accepts_exactly_the_shipped_interpreters_digits`, which
+tells a reader on the wrong interpreter that
+`.github/workflows/test-macos.yml` naming the shipped one is what makes the
+suite green on CI. The docstrings name that directory throughout besides —
+twelve times as the file stands. What is actually gone is every way of READING
+it: the module has no `yaml` import and zero
+`open`/`read_text`/`glob`/`iterdir`/`safe_load` call sites, which is the
+mechanical reason the workflow mutations above cannot reach it. A printed path
+is not a path anything opens.
 
 *Property 3 is the one the two earlier drafts missed, and it hides for a
 reason.* Removing only `build-macos.yml`'s `python-version` line leaves the
