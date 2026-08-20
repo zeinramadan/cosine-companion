@@ -225,11 +225,17 @@ MINIMUM_NODE_MAJOR = 18
 #: changelog, because mis-stating exactly this mapping is how round 3 shipped a
 #: table generated from the wrong interpreter.
 #:
-#: NO BUILD-PARITY ASSERTION CONSUMES THIS MAP ANY MORE. Its one such reader was
-#: the deleted check that turned a build workflow's Python into the Unicode
-#: version the table had to declare. The map is not dead code - the test below
-#: reads it, and that test is not vacuous - but it now certifies a fact about
-#: THIS interpreter only, and nothing about any build.
+#: NO BUILD-PARITY ASSERTION CONSUMES THIS MAP ANY MORE - which is not the same
+#: sentence as "nothing consumes this map", and the difference is the point.
+#: This map had exactly two readers. The build-parity one,
+#: ``test_the_digit_table_targets_the_interpreter_the_app_ships_on``, turned a
+#: build workflow's Python into the Unicode version the table had to declare,
+#: and it is deleted. The other,
+#: ``test_the_measured_unicode_versions_are_right_about_this_interpreter``
+#: below, is kept and reads the row for whichever interpreter is running - one
+#: row per run, both reachable - so this is a live record and not dead code.
+#: What it now certifies is a fact about the interpreter RUNNING
+#: the suite, and nothing whatever about the one the app is built on.
 MEASURED_UNICODE_VERSION = {
     "3.10": "13.0.0",  # measured: CPython 3.10.18, 650 Nd code points
     "3.11": "14.0.0",  # measured: CPython 3.11.14, 660 Nd code points
