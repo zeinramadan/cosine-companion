@@ -2,8 +2,11 @@
 # direct dependencies to the versions exercised by the macOS Python 3.11 job.
 -r requirements.txt
 
-# Core/tested runtime dependencies (shared with the Python 3.11 CI baseline)
-numpy==2.2.6
+# Core/tested runtime dependencies. NumPy stays on the final 1.x release
+# because Essentia's macOS 11 arm64 wheel was built against the NumPy 1.x ABI.
+# Its NumPy-2-compatible arm64 successor requires macOS 15, which would raise
+# the app's effective minimum OS without changing its bundle metadata.
+numpy==1.26.4
 pandas==2.3.2
 pyarrow==21.0.0
 lxml==6.1.2
