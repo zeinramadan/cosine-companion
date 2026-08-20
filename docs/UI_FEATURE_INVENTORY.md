@@ -1748,9 +1748,9 @@ JavaScript file, and those files are what `tests/web/test_frontend_behaviour.py`
 discovers; the digit-parity comparisons in
 `tests/web/test_integer_parsing_matches_python.py`, which reach `int()` through
 node, skip with a reason of their own. On the interpreter `build-*.yml` freezes,
-with node 20 and pywebview installed, the current web suite gives **474 passed
-and 0 skipped**; without node on PATH, **456 passed and 18 skipped** — eleven
-JavaScript files and seven parity comparisons. One of the JavaScript suites,
+with node 20 and pywebview installed, the current web suite gives **471 passed
+and 0 skipped**; without node on PATH, **454 passed and 17 skipped** — eleven
+JavaScript files and six parity comparisons. One of the JavaScript suites,
 `globals.test.mjs`, has the
 shim itself as its subject rather than any shipped module — CI runs node 24,
 where `globalThis.navigator` is a getter-only accessor the runtime owns, and
@@ -2028,21 +2028,35 @@ is what this document is for, so a disagreement with it is the defect whichever
 way it points.
 
 *How the property is pinned.* "The shipped parser must not disagree with the
-shipped interpreter, in membership or in value" is checked as two halves,
-because they fail separately: the parser matches the running interpreter
-exactly, in both directions and with the values
-(`tests/web/test_integer_parsing_matches_python.py::test_the_helper_accepts_exactly_the_shipped_interpreters_digits`),
-and the table is declared for the interpreter the build workflows freeze
-(`tests/web/test_integer_parsing_matches_python.py::test_the_digit_table_targets_the_interpreter_the_app_ships_on`).
+shipped interpreter, in membership or in value" is checked against the RUNNING
+interpreter — exactly, over every code point there is, in both directions and
+with the values
+(`tests/web/test_integer_parsing_matches_python.py::test_the_helper_accepts_exactly_the_shipped_interpreters_digits`).
+That check runs on every CI run.
+
+*And what is NOT pinned, stated plainly.* That the interpreter the app is BUILT
+on is the one the tests run on is **not** verified — not by that test, and not
+anywhere else. It is a real gap and it is tracked separately. A check that read
+`.github/workflows/` to close it was deleted from
+`tests/web/test_integer_parsing_matches_python.py`: over four review rounds it
+answered confidently and wrongly four times, most recently on a `setup-python`
+step taking its version from `python-version-file:` while an unrelated step
+carried a literal `python-version`, and each round's fix taught it one more
+GitHub Actions shape without converging. It was deleted outright rather than
+skipped, because a skip exits zero and reads exactly like a pass. The uncovered
+case is exact: changing `build-macos.yml`'s Python without changing
+`test-macos.yml`'s would leave the table proved for an interpreter the app no
+longer ships on, with nothing to report it. Today both name 3.11, so every CI
+run does prove the table correct for the shipped interpreter.
 
 There is no allowance for running the suite on an older interpreter, and the
 absence is the design rather than an omission. One lived there for two rounds
 and let a wrong table through a green 3.10 suite each time — first by excusing
 the ten Tangsa code points' ABSENCE, then by pinning which ten they are and
 never their VALUES, so a table whose Tangsa run was split in two answered `0`
-for a Tangsa ten and passed everything. The first half now FAILS on any
-interpreter whose `unicodedata` is not the version the table declares, with a
-message saying that parity with the shipped interpreter was not proved there.
+for a Tangsa ten and passed everything. The check now FAILS on any interpreter
+whose `unicodedata` is not the version the table declares, with a message saying
+that parity with the shipped interpreter was not proved there.
 That cost one red test on CI until `.github/workflows/test-macos.yml` named the
 interpreter `build-*.yml` freezes. PR #21 aligned them, so every CI run is now a
 total proof, and it required no change to this test file. Running the suite on
