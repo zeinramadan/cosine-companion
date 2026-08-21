@@ -314,7 +314,23 @@ class Job:
         result: Optional[Mapping[str, Any]] = None,
         error: Optional[str] = None,
     ) -> JobSnapshot:
-        """Publish the terminal snapshot. Called once, by the worker."""
+        """Publish the terminal snapshot. Called once, by the worker.
+
+        KNOWN LIMIT, DELIBERATELY NOT CLOSED HERE. Every call to this sits
+        OUTSIDE ``_run``'s outer guard - two in its handlers, one in its
+        ``else``, and a ``try`` covers neither. So a ``clock`` that raises on
+        this line escapes ``_run`` with nothing published at all: a clock
+        that returns once for ``started_at`` and raises for ``finished_at``
+        leaves the job ``running`` for good, one ``threading.excepthook``
+        call, and every later job refused with ``JobInProgress`` - exactly
+        the wedge the ordering above is built to prevent, reached from the
+        one call the ordering does not cover. It stays open because of its
+        precondition, not because it is harmless: ``JobRegistry`` is
+        constructed with ``time.time``, so getting here needs a test seam
+        that fails on purpose or an environmental failure of that shape.
+        Closing it means publishing without asking a clock, or guarding the
+        publication itself - a change to behaviour, and so its own change.
+        """
         return self._publish(
             state=state,
             finished_at=self._clock(),
@@ -462,12 +478,18 @@ def _describe(error: BaseException) -> str:
     TOTAL - AND THE CONSTRUCTION IS THE BODY BELOW, NOT THIS SENTENCE. It is
     called while building the terminal snapshot, so it must return for every
     argument or the job never lands. An earlier version claimed exactly that
-    here while its fallback re-evaluated the expression that had just raised,
-    which is the difference between a property and a note saying there is
-    one. Three things make it true now: every call that can raise is inside a
-    guard; no handler repeats the call it is handling; and the last resort is
-    a constant. Each branch binds a ``str`` - ``f"..."`` and ``str()`` return
-    one or raise - so the truncation below cannot raise either.
+    here while its fallback re-evaluated, unguarded, the expression that had
+    just raised, which is the difference between a property and a note saying
+    there is one. Three things make it true now: every call that can raise is
+    inside a guard; a handler may repeat the call it is handling, but only
+    under a guard of its own, so the repeats are a short finite chain and not
+    a way out; and the innermost handler calls nothing at all - it binds a
+    constant. That middle clause is worded that way because it has to be: the
+    fallback below does re-read ``type(error).__name__``, and when that read
+    is what raised, it raises a second time. What changed is not that the
+    repeat went away but that it landed in a guard. Each branch binds a
+    ``str`` - ``f"..."`` and ``str()`` return one or raise - so the truncation
+    below cannot raise either.
     """
     # ``{error}`` calls the exception's own ``__str__``, which is ordinary
     # user code and can raise. Losing the message is a poor outcome; losing
@@ -476,15 +498,19 @@ def _describe(error: BaseException) -> str:
     try:
         text = f"{type(error).__name__}: {error}".strip()
     except BaseException:  # noqa: BLE001 - see above
-        # AND THE FALLBACK MAY NOT REPEAT THE CALL THAT JUST FAILED.
+        # THE FALLBACK DOES REPEAT THE CALL THAT JUST FAILED, AND MAY ONLY
+        # DO SO UNDER A GUARD OF ITS OWN WITH A CONSTANT BEHIND IT.
         # ``type(error).__name__`` reads like a plain attribute access and is
         # not one: a metaclass may define ``__name__`` as a data descriptor,
         # and a data descriptor on the metaclass wins over ``type``'s own
         # slot. An exception whose metaclass raises there made the attempt
-        # above raise and this line raise again - out of a function that had
-        # just promised to return, into the handler building the terminal
-        # snapshot, and the job never landed. So the name is attempted under
-        # its own guard, and what follows it is a constant.
+        # above raise and makes this line raise again - the name is read
+        # twice and fails twice. Before the guard below existed, that second
+        # raise went out of a function that had just promised to return, into
+        # the handler building the terminal snapshot, and the job never
+        # landed. The read is not avoidable here - it is the only thing left
+        # worth salvaging - so it is attempted under its own guard, and what
+        # follows it calls nothing: it is a constant.
         try:
             text = str(type(error).__name__)
         except BaseException:  # noqa: BLE001 - see above
