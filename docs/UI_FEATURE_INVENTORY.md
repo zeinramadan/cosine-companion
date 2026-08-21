@@ -1321,8 +1321,16 @@ boundary is strictly greater than 200, so a name of exactly 200 characters is le
 
 A **doubled `.m3u` is impossible**, contrary to what this document previously claimed: the
 sanitiser drops `.`, so the only dot in the name is the extension the function appends, and when
-the name exceeds 200 characters that extension sits beyond the cut. Two different seeds that
-sanitise to the same name overwrite each other silently.
+the name exceeds 200 characters that extension sits beyond the cut. Two different seeds that sanitise to the same name no longer
+overwrite each other. `_unique_playlist_path` reserves each written name for the run, keyed on
+NFC + casefold so the reservation is at least as broad as APFS's own equivalence; the first seed
+to claim a name keeps the legacy filename unchanged, and a later collider is given
+`[ID <track_id>]` before the extension, with the marker appended AFTER truncation so it can never
+be cut off. Pre-existing files in the destination are ignored when allocating, so re-exporting
+into the same folder reuses names rather than accumulating suffixes. Measured on the real
+1,532-track library: 1,529 distinct legacy names, 3 colliding pairs, 1,532 files written, 3
+suffixed, 1,526 of 1,532 filenames invariant under every seed ordering. `playlists_created` is
+set from the count of distinct written paths, so it means files.
 
 ### 3.7 Settings file
 
