@@ -52,6 +52,9 @@ a = Analysis(
         (str(project_root / 'models'), 'models'),
         # Include assets directory (icons, etc.)
         (str(project_root / 'assets'), 'assets'),
+        # Include the no-build web frontend where web.assets expects it under
+        # sys._MEIPASS in a frozen process.
+        (str(project_root / 'src' / 'web' / 'static'), 'web/static'),
     ] + pandas_datas + pil_datas + lxml_datas + pandas_all_datas + numpy_all_datas + pyarrow_datas,
     hiddenimports=[
         # Core modules
