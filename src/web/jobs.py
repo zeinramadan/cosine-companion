@@ -485,9 +485,10 @@ def _describe(error: BaseException) -> str:
     under a guard of its own, so the repeats are a short finite chain and not
     a way out; and the innermost handler calls nothing at all - it binds a
     constant. That middle clause is worded that way because it has to be: the
-    fallback below does re-read ``type(error).__name__``, and when that read
-    is what raised, it raises a second time. What changed is not that the
-    repeat went away but that it landed in a guard. Each branch binds a
+    fallback below does re-read ``type(error).__name__``, so when that read is
+    what raised, it is attempted a second time and a descriptor that raises
+    every time raises there too. What changed is not that the repeat went
+    away but that it landed in a guard. Each branch binds a
     ``str`` - ``f"..."`` and ``str()`` return one or raise - so the truncation
     below cannot raise either.
     """
@@ -504,13 +505,14 @@ def _describe(error: BaseException) -> str:
         # not one: a metaclass may define ``__name__`` as a data descriptor,
         # and a data descriptor on the metaclass wins over ``type``'s own
         # slot. An exception whose metaclass raises there made the attempt
-        # above raise and makes this line raise again - the name is read
-        # twice and fails twice. Before the guard below existed, that second
-        # raise went out of a function that had just promised to return, into
-        # the handler building the terminal snapshot, and the job never
-        # landed. The read is not avoidable here - it is the only thing left
-        # worth salvaging - so it is attempted under its own guard, and what
-        # follows it calls nothing: it is a constant.
+        # above raise, and this line reads the name a second time - so a
+        # descriptor that raises every time raises here too. Before the guard
+        # below existed, that second raise went out of a function that had
+        # just promised to return, into the handler building the terminal
+        # snapshot, and the job never landed. The repeat is deliberate: the
+        # type name is the only thing left worth salvaging, and the only way
+        # to avoid re-reading it is to give it up. So it is attempted under
+        # its own guard, and what follows it calls nothing: it is a constant.
         try:
             text = str(type(error).__name__)
         except BaseException:  # noqa: BLE001 - see above
