@@ -13,6 +13,7 @@ import { mountDrawer } from './components/drawer.js';
 import { mountExplore, DEFAULT_SORT, DEFAULT_TOP_N } from './components/explore.js';
 import { mountSetCreator } from './components/set-creator.js';
 import { mountLibrary } from './components/library.js';
+import { mountExport } from './components/export.js';
 
 const store = createStore({
   destination: 'explore',
@@ -63,6 +64,11 @@ mountLibrary({
   onSetCurrent: (trackId) => explore.setCurrent(trackId),
   onClearCurrent: () => explore.clearCurrent(),
 });
+
+// Mounted whatever destination is showing, and it asks `GET /api/jobs` as it
+// mounts. An export started before a reload is still running on the server, and
+// the page that reloaded is the one that has to go and find it again.
+mountExport({ store });
 
 api
   .library()

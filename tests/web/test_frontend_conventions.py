@@ -478,16 +478,61 @@ def test_the_unimplemented_destinations_say_so():
             )
 
 
-def test_the_derived_placeholder_check_can_still_see_a_placeholder():
-    """Guard the guard: if every destination were built, the loop above would
-    pass over an empty list and stop distinguishing anything."""
-    unbuilt = [
-        name
-        for name, markup in _destination_sections(read(INDEX_HTML))
-        if 'class="placeholder"' in markup
-    ]
+def test_the_derived_placeholder_check_still_discriminates():
+    """RETIRED AND REPLACED, which is what its predecessor asked for.
 
-    assert unbuilt, "no placeholders left; retire this check rather than keeping a vacuous one"
+    That test read::
+
+        assert unbuilt, "no placeholders left; retire this check rather than
+                         keeping a vacuous one"
+
+    and it was right to. It existed because ``test_the_unimplemented_destinations_say_so``
+    loops over the unbuilt list, and an empty list makes a loop pass over
+    nothing; while any destination was still a placeholder, asserting that at
+    least one existed kept that loop honest. Export was the last of the five,
+    so on this branch the list is empty by construction and the old assertion
+    can only fail. Keeping it would mean re-adding a placeholder to satisfy a
+    test, which is the tail wagging the dog.
+
+    What replaces it has to be falsifiable in the state the file is actually
+    in, so it checks the two halves separately:
+
+    * against the SHIPPED markup, that nothing is unbuilt and the eyebrow
+      appears nowhere - so re-adding a placeholder, or leaving a stray
+      "Coming in the next PR" behind after building a destination, fails here;
+    * against a SYNTHETIC page, that the derivation still tells a placeholder
+      section from a built one - so a regex that stopped matching, or a marker
+      that was renamed, fails here rather than turning the check above into a
+      pair of assertions about an empty list.
+
+    The second half is the part the old test was really protecting: not that a
+    placeholder exists, but that one would be SEEN.
+    """
+    body = read(INDEX_HTML)
+
+    unbuilt = [
+        name for name, markup in _destination_sections(body) if 'class="placeholder"' in markup
+    ]
+    assert unbuilt == [], f"a destination went back to being a placeholder: {unbuilt}"
+    assert body.count(PLACEHOLDER_EYEBROW) == 0, (
+        f'"{PLACEHOLDER_EYEBROW}" is still in the markup with nothing unbuilt'
+    )
+
+    sample = (
+        '<section class="view" id="view-built" hidden aria-label="Built">'
+        "<div class=\"real\"></div></section>"
+        '<section class="view" id="view-unbuilt" hidden aria-label="Unbuilt">'
+        f'<div class="placeholder"><p class="placeholder__eyebrow">{PLACEHOLDER_EYEBROW}</p>'
+        "</div></section>"
+    )
+    found = _destination_sections(sample)
+
+    assert [name for name, _ in found] == ["built", "unbuilt"], (
+        f"the destination-section regex stopped matching: {found}"
+    )
+    assert [
+        name for name, markup in found if 'class="placeholder"' in markup
+    ] == ["unbuilt"], "the placeholder marker is no longer recognised"
 
 
 def test_the_set_creator_destination_is_no_longer_a_placeholder():
@@ -502,6 +547,28 @@ def test_the_set_creator_destination_is_no_longer_a_placeholder():
     assert '<span class="nav__soon">Soon</span>' not in body.split(
         'data-destination="set-creator"'
     )[1].split("</button>")[0], "the Set Creator nav item still says Soon"
+
+
+def test_the_export_destination_is_no_longer_a_placeholder():
+    """The claim this PR makes about index.html, on its own hunk for the reason
+    the Set Creator's version of it gives: landing a destination must not edit a
+    line another destination's PR is also editing."""
+    body = read(INDEX_HTML)
+    sections = dict(_destination_sections(body))
+
+    assert "export" in sections, "the Export section was renamed or removed"
+    assert 'class="placeholder"' not in sections["export"]
+    assert 'data-destination="export"' in body
+    assert '<span class="nav__soon">Soon</span>' not in body.split(
+        'data-destination="export"'
+    )[1].split("</button>")[0], "the Export nav item still says Soon"
+
+
+def test_nothing_says_soon_now_that_every_destination_is_built():
+    """`.nav__soon` was the badge on an unbuilt destination. Export was the last
+    one wearing it, so a nav item carrying it now is a claim about a destination
+    that does not exist."""
+    assert 'class="nav__soon"' not in read(INDEX_HTML)
 
 
 def test_the_set_creator_status_line_cannot_be_scrolled_out_of_reach():

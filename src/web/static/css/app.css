@@ -579,6 +579,289 @@ button {
   white-space: nowrap;
 }
 
+/* ---- Export destination -------------------------------------------------
+   Inventory §2.6. Three numbered sections in the Tkinter tab's order, then the
+   action, then the progress block, then the outcome panel. */
+
+.exportv {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  max-width: var(--content-max);
+}
+
+.exportv__intro {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.exportv__title {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.02em;
+}
+
+.exportv__description {
+  max-width: 60ch;
+  color: var(--ink-secondary);
+}
+
+.exportv__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-sm);
+}
+
+.exportv__heading {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  color: var(--ink-primary);
+}
+
+.exportv__mode,
+.exportv__formats {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.radio {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--ink-secondary);
+  font-size: var(--text-sm);
+}
+
+.radio__input:disabled + .radio__label {
+  color: var(--ink-tertiary);
+}
+
+/* The selected-track list. Inventory :552 gives it `height=6`; six rows is the
+   intent and a max-height in rem is how that reads in a browser. */
+.exportv__selected {
+  display: flex;
+  flex-direction: column;
+  max-height: 12rem;
+  overflow-y: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+}
+
+.exportv__selected-empty {
+  padding: var(--space-3);
+  color: var(--ink-tertiary);
+  font-size: var(--text-sm);
+}
+
+.exportv__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--ink-secondary);
+}
+
+.exportv__row + .exportv__row {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.exportv__row-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.exportv__row-remove {
+  flex: none;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--ink-tertiary);
+  font-size: var(--text-sm);
+  line-height: 1.8;
+}
+
+.exportv__row-remove:hover {
+  background: var(--surface-3);
+  color: var(--ink-primary);
+}
+
+/* Inventory :558-562. Two tones, and the text carries a glyph as well - a tick
+   or a warning sign - so the state is never colour alone. */
+.exportv__info {
+  font-size: var(--text-sm);
+}
+
+.exportv__info[data-tone="ok"] {
+  color: var(--accent);
+}
+
+.exportv__info[data-tone="warn"] {
+  color: var(--danger);
+}
+
+.exportv__hint {
+  color: var(--ink-tertiary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+.exportv__actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* ---- the progress block -------------------------------------------------
+   Inventory :588-592: hidden until an export starts, and DETERMINATE. A
+   full-collection run is ~6.8 minutes (:640) and the job reports `i` and `N`,
+   so there is no honest reason for an indeterminate bar - §2.13's re-index
+   window showed one while holding exactly that pair. */
+
+.exportv__progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-md);
+}
+
+.exportv__progress[hidden] {
+  display: none;
+}
+
+.progress__label {
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+}
+
+.progress__track {
+  height: 0.5rem;
+  border-radius: var(--radius-pill);
+  background: var(--surface-4);
+  overflow: hidden;
+}
+
+.progress__fill {
+  width: var(--progress, 0%);
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--gradient-score);
+  transition: width var(--motion-base) var(--ease-out);
+}
+
+.progress__status,
+.progress__timing {
+  color: var(--ink-tertiary);
+  font-size: var(--text-sm);
+}
+
+.progress__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-top: var(--space-2);
+}
+
+/* What a stop leaves on disk, said BEFORE the button is pressed. Partial
+   results are KEPT, which is the opposite of what a cancelled index run does,
+   and a user who stops has to know which of the two this is. */
+.progress__note {
+  color: var(--ink-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+/* The account a reloaded page has instead of the dialog it missed. */
+.exportv__outcome {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+}
+
+.exportv__outcome[hidden] {
+  display: none;
+}
+
+.exportv__outcome-body {
+  color: var(--ink-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  white-space: pre-line;
+}
+
+/* ---- the track selector dialog (§2.11) ---------------------------------- */
+
+.track-selector__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: min(34rem, 80vw);
+}
+
+.track-selector__title {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+}
+
+.track-selector__hint {
+  color: var(--ink-tertiary);
+  font-size: var(--text-sm);
+}
+
+.track-selector__count {
+  font-size: var(--text-sm);
+}
+
+.track-selector__count[data-state="empty"] {
+  color: var(--ink-tertiary);
+}
+
+.track-selector__count[data-state="chosen"] {
+  color: var(--accent);
+}
+
+.track-selector__quick {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.track-selector__actions {
+  display: flex;
+  flex-direction: row-reverse;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+/* Inventory :922 - `height=20` against the anchor dialog's 15. */
+.picker--tall {
+  max-height: 22rem;
+}
+
+/* A row already in the export selection, prefixed `✓ ` (:934). The tick is the
+   signal; this only quiets what has already been chosen. */
+.picker__option[data-already="true"] {
+  color: var(--ink-tertiary);
+}
+
 /* ---- form fields shared by the destination and the anchor dialog -------- */
 
 .field {
@@ -700,6 +983,13 @@ button {
   color: var(--ink-secondary);
   font-size: var(--text-md);
   line-height: var(--leading-normal);
+  /* The catalogued bodies are multi-line - inventory :603-611 and :620-634 are
+     specified with their newlines, and `Export Complete` is seven lines of
+     accounting. Collapsed by the default `normal` they run together into one
+     paragraph, which is not the message that was catalogued. `pre-line` keeps
+     the newlines and still collapses runs of spaces, so the single-line
+     messages beside them are unaffected. */
+  white-space: pre-line;
 }
 
 .message-box__actions {
