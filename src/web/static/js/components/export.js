@@ -195,20 +195,40 @@ export function outputDirectoryOf(result) {
  * raises `KeyError` and shows NO dialog at all - a completed export that says
  * nothing. The API does not reproduce the trap: `_export_result_document` sends
  * an explicit `null` for combined mode. So this renders that line from what the
- * mode actually produced - one file, or none when there was nothing to write -
- * and every other line is the catalogued one.
+ * mode actually produced, and every other line is the catalogued one.
+ *
+ * THE PER-SEED COUNT LINE IS GONE, and its absence is the point. `Playlists
+ * created: N` is a claim about the FILESYSTEM, and nothing on this wire counts
+ * files. `playlist_exporter.py:171-173` increments `successful` and
+ * `playlists_created` on adjacent lines inside one `try`, and every other path
+ * increments only `failed` - so in per-seed mode the two counters are the same
+ * number by construction, and the dialog was printing one measurement twice
+ * with the second copy wearing a filesystem label. What that number counts is
+ * WRITE CALLS THAT DID NOT RAISE. Where each write lands is decided by
+ * `playlist_filename(artist, title)`, whose own docstring says two seeds that
+ * sanitise to the same name "overwrite each other silently" - so N writes leave
+ * N files only if the N names are distinct. On the real collection they are
+ * not: 1532 writes, 1529 files. The screen cannot see the directory, so it no
+ * longer says anything about how many things are in it. `Successful:` keeps
+ * the number, under the label that is true of it - seeds processed - and
+ * `Location:` names the folder the user can look in.
+ *
+ * Combined mode KEEPS its line, because there the count is knowable rather
+ * than guessed: one run writes one fixed filename, so the answer is 1, or 0
+ * when there was nothing to write. That line is also what defect #10 is about,
+ * and removing it would remove the fix.
  */
 export function completionMessage({ result, outputDir }) {
   const combined = result.mode === 'combined';
   const created = combined
     ? result.total_recommendations > 0
-      ? '1 (one combined playlist)'
-      : '0 (no recommendations, so no file was written)'
-    : String(result.playlists_created);
+      ? 'Playlists created: 1 (one combined playlist)\n'
+      : 'Playlists created: 0 (no recommendations, so no file was written)\n'
+    : '';
 
   return (
     '✓ Export Complete!\n\n' +
-    `Playlists created: ${created}\n` +
+    created +
     `Successful: ${result.successful}\n` +
     `Total recommendations: ${result.total_recommendations}\n` +
     `Failed: ${result.failed}\n\n` +
@@ -235,6 +255,14 @@ export function completionMessage({ result, outputDir }) {
  * lands after the last seed marks the job cancelled with every playlist
  * written. Told "cancelled" and nothing else, a user would go looking for
  * missing files that are all there.
+ *
+ * PER-SEED CARRIES NO FILE COUNT, for the reason `completionMessage` sets out:
+ * `playlists_created` counts write calls, not files, and this screen cannot
+ * see the directory. The opening line already gives the honest number - tracks
+ * PROCESSED, which is what a stop is measured in - so nothing is lost. The one
+ * count that survives is zero: `successful === 0` means no write call ever
+ * returned, and no writes really does mean no files from this run, so that
+ * branch can say so. Anything above zero is left to `Location`.
  */
 export function cancelledMessage({ result, outputDir }) {
   const combined = result.mode === 'combined';
@@ -251,8 +279,10 @@ export function cancelledMessage({ result, outputDir }) {
         `It holds ${result.total_recommendations} recommendations from the ` +
         `${result.successful} tracks that were processed.`
       : 'No recommendations had been collected yet, so no playlist file was written.'
-    : `${result.playlists_created} playlist(s) were written to ${outputDir} and have been KEPT. ` +
-      'Each one is complete - stopping never leaves a half-written playlist.';
+    : result.successful > 0
+      ? `The playlists this run wrote are in ${outputDir} and have been KEPT. ` +
+        'Each one is complete - stopping never leaves a half-written playlist.'
+      : `No playlist had been written when you stopped, so this run left nothing in ${outputDir}.`;
 
   return `${opening}${written}\n\nNothing was deleted.`;
 }

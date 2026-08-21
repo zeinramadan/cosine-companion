@@ -264,15 +264,17 @@ test('the Confirm Export body is the catalogued one, in both formats', () => {
   );
 });
 
-test('the Export Complete body is the catalogued one', () => {
-  // :620-634, verbatim.
+test('the Export Complete body is the catalogued one, less the count it cannot make', () => {
+  // :620-634 verbatim EXCEPT the opening `Playlists created:` line, which is a
+  // filesystem claim this screen has no way to check. See `completionMessage`
+  // for why per-seed mode cannot honestly print one; the literal below is the
+  // whole body, so re-adding a line here fails rather than merely widening.
   assert.equal(
     completionMessage({
       result: resultDoc(),
       outputDir: '/Users/dj/Desktop/Cosine_Playlists',
     }),
     '✓ Export Complete!\n\n' +
-      'Playlists created: 3\n' +
       'Successful: 3\n' +
       'Total recommendations: 75\n' +
       'Failed: 0\n\n' +
@@ -325,7 +327,13 @@ test('a stopped export is told what is still on disk', () => {
     outputDir: '/Users/dj/Desktop/Cosine_Playlists',
   });
   assert.match(partial, /Stopped after 47 of 1532 tracks\./);
-  assert.match(partial, /47 playlist\(s\) were written to \/Users\/dj\/Desktop\/Cosine_Playlists and have been KEPT\./);
+  // The opening line is where the number belongs: 47 tracks were PROCESSED,
+  // which is knowable. How many files that left is not, so the sentence about
+  // the directory names it without counting what is in it.
+  assert.match(
+    partial,
+    /The playlists this run wrote are in \/Users\/dj\/Desktop\/Cosine_Playlists and have been KEPT\./,
+  );
   // Not only that they were kept - that each one is FINISHED. Per-seed mode
   // breaks at the top of the loop, before a write, so a stop never leaves a
   // half-written playlist and the user does not have to check. Pinned as a
@@ -668,7 +676,7 @@ test('Stop cancels, and the screen says what a stop leaves behind', async () => 
 
   assert.equal(dialogTitle(), 'Export Stopped');
   assert.match(dialogBody(), /Stopped after 2 of 3 tracks\./);
-  assert.match(dialogBody(), /2 playlist\(s\) were written to \/tmp\/out and have been KEPT\./);
+  assert.match(dialogBody(), /The playlists this run wrote are in \/tmp\/out and have been KEPT\./);
 
   control('OK').dispatch('click');
   await settle();
@@ -719,6 +727,160 @@ test('a finished export raises the completion dialog exactly once', async () => 
   assert.equal(fetches.outstanding(jobKey('job-1')), false);
   await tick(10);
   assert.equal(openModalCount(), 0);
+});
+
+test('a combined export raises its completion dialog, MOUNTED - defect #10', async () => {
+  /* The defect is "a successful combined export shows NO dialog at all", and
+   * only a mounted run can miss it. `completionMessage` is a pure function: it
+   * cannot fail to be CALLED, so calling it directly proves the string is
+   * right and proves nothing about whether anything reaches it. Everything
+   * between the radio and the dialog is what defect #10 lives in - the format
+   * the request carries, the mode that comes back, and `finished()` deciding
+   * what to raise for it - so all of it runs here.
+   *
+   * The per-seed twin of this test already existed. That is exactly why this
+   * one has to: a mutant that returned early from `finished()` for combined
+   * successes ONLY left all 26 tests green, because no mounted test had ever
+   * driven a combined job to a terminal state.
+   */
+  await ready();
+  choose('all');
+  choose('combined');
+  outputField().value = '/tmp/out';
+  generateButton().dispatch('click');
+  await settle();
+  // The confirmation is the combined one, so the run under test really is the
+  // combined path and not a per-seed run wearing a combined result.
+  assert.match(dialogBody(), /^This will generate a single combined playlist for 3 track\(s\),\n/);
+  control('Yes').dispatch('click');
+  await settle();
+  assert.equal(postedBody(START_KEY).mode, 'combined');
+
+  fetches.deliver(START_KEY, { job: jobDoc({ mode: 'combined' }) });
+  await settle();
+
+  await tick();
+  /* What the wire really sends for combined mode: `playlists_created` is an
+   * explicit null - `web/api.py::_export_result_document` - and the output is
+   * the FILE, not the directory. Both are the shape defect #10 tripped over. */
+  const done = {
+    job: jobDoc({
+      state: 'succeeded',
+      finished_at: STARTED_AT + 120,
+      progress: { current: 3, total: 3, message: 'Objekt - Ganzfeld' },
+      result: resultDoc({
+        mode: 'combined',
+        output: `/tmp/out/${COMBINED_FILENAME}`,
+        playlists_created: null,
+        total_recommendations: 40,
+      }),
+    }),
+  };
+  fetches.deliver(jobKey('job-1'), done);
+  await settle();
+
+  // A DIALOG EXISTS. This is the assertion the defect is about; the rest is
+  // the dialog being the right one.
+  assert.equal(openModalCount(), 1);
+  assert.equal(dialogTitle(), 'Export Complete');
+  assert.match(dialogBody(), /^✓ Export Complete!\n\nPlaylists created: 1 \(one combined playlist\)\n/);
+  // The directory, recovered from the file path - not the file.
+  assert.match(dialogBody(), /Location: \/tmp\/out\n/);
+  assert.doesNotMatch(dialogBody(), /null/);
+
+  control('OK').dispatch('click');
+  await settle();
+  assert.equal(openModalCount(), 0);
+  assert.equal(generateButton().disabled, false);
+});
+
+test('the completion dialog states no per-seed file count, however the service counts', async () => {
+  /* NOT an echo of the counter. The job below reports `playlists_created:
+   * 9182` against three successful tracks - a document no real export could
+   * produce - so that number can only reach the screen one way: by the screen
+   * reading the service's playlist counter and printing it. Asserting it is
+   * ABSENT fails for any wording that puts that counter in front of a user,
+   * which the previous test could not do: it supplied 3 and asserted 3, so
+   * every possible value of the counter satisfied it.
+   *
+   * Why it must be absent at all: `playlists_created` counts write calls that
+   * did not raise, and `playlist_filename` gives two seeds with the same
+   * "artist - title" the same name, so the writes overwrite. On the real
+   * collection the service reports 1532 and the directory holds 1529. A
+   * dialog that prints the counter under any label a user reads as a file
+   * tally is stating a number the filesystem contradicts.
+   */
+  await ready();
+  choose('all');
+  outputField().value = '/tmp/out';
+  generateButton().dispatch('click');
+  await settle();
+  control('Yes').dispatch('click');
+  await settle();
+  fetches.deliver(START_KEY, { job: jobDoc() });
+  await settle();
+
+  await tick();
+  fetches.deliver(jobKey('job-1'), {
+    job: jobDoc({
+      state: 'succeeded',
+      finished_at: STARTED_AT + 120,
+      progress: { current: 3, total: 3, message: 'Objekt - Ganzfeld' },
+      result: resultDoc({ output: '/tmp/out', successful: 3, playlists_created: 9182 }),
+    }),
+  });
+  await settle();
+
+  assert.equal(dialogTitle(), 'Export Complete');
+  const body = dialogBody();
+  assert.doesNotMatch(body, /9182/, `the service's playlist counter reached the user: ${body}`);
+  /* And no other spelling of a tally either - the sentinel alone would miss a
+   * line that fabricated a count from `successful` instead. The accounting
+   * block is the head of the body, above `Location:`; the catalogued Rekordbox
+   * instruction below it says "Playlist" and ".m3u" while claiming nothing, so
+   * the check is scoped to where a claim would actually be made. In per-seed
+   * mode that block says nothing about playlists at all. */
+  const accounting = body.split('\nLocation:')[0];
+  assert.doesNotMatch(
+    accounting,
+    /playlist/i,
+    `a playlist claim is back in the per-seed accounting block: ${accounting}`,
+  );
+  // What it does still say - the number that IS knowable, and where to look.
+  assert.match(body, /Successful: 3\n/);
+  assert.match(body, /Location: \/tmp\/out\n/);
+});
+
+test('the stopped dialog states no file count either, however the service counts', async () => {
+  // The same probe on the other terminal dialog, which called the counter
+  // "playlist(s) written" and so carried the same claim.
+  const stopped = cancelledMessage({
+    result: resultDoc({
+      cancelled: true,
+      total_tracks: 1532,
+      successful: 398,
+      failed: 0,
+      playlists_created: 9182,
+    }),
+    outputDir: '/tmp/out',
+  });
+  assert.doesNotMatch(stopped, /9182/, `the service's playlist counter reached the user: ${stopped}`);
+  assert.doesNotMatch(
+    stopped,
+    /\d+\s*playlist/i,
+    `a numbered playlist claim is back in the stopped body: ${stopped}`,
+  );
+  // The honest number survives, on the thing a stop is actually measured in.
+  assert.match(stopped, /Stopped after 398 of 1532 tracks\./);
+  assert.match(stopped, /Nothing was deleted\./);
+
+  // Zero is the one count that IS knowable: no write call returned, so this
+  // run left nothing - and saying so is not the same claim.
+  const none = cancelledMessage({
+    result: resultDoc({ cancelled: true, total_tracks: 1532, successful: 0, failed: 0 }),
+    outputDir: '/tmp/out',
+  });
+  assert.match(none, /No playlist had been written when you stopped, so this run left nothing in \/tmp\/out\./);
 });
 
 test('a failed export raises the catalogued error dialog', async () => {
@@ -854,7 +1016,7 @@ test('a job that ended before this page existed gets the panel and no dialog', a
   assert.equal(openModalCount(), 0);
   assert.equal(outcomeBlock().hidden, false);
   assert.match(outcomeBlock().textContent, /Export stopped/);
-  assert.match(outcomeBlock().textContent, /47 playlist\(s\) were written/);
+  assert.match(outcomeBlock().textContent, /The playlists this run wrote are in/);
   assert.match(outcomeBlock().textContent, /Cosine_Playlists and have been KEPT/);
   assert.equal(generateButton().disabled, false);
 });

@@ -40,6 +40,76 @@ def without_comments(text):
     return COMMENT.sub("", text)
 
 
+# A `position: sticky` block is only stuck in the block direction if its offset
+# RESOLVES TO A LENGTH. `auto` - the initial value, and what every one of the
+# CSS-wide keywords falls back to here - leaves no constraint at all, so the
+# element stays in normal flow and scrolls away exactly as if the rule had been
+# deleted. So does a syntactically invalid value: the declaration is dropped and
+# the initial value applies. A guard that only asks whether `bottom:` appears
+# cannot tell any of those from a working offset.
+STICKY_KEYWORDS = {
+    "auto",
+    "inherit",
+    "initial",
+    "unset",
+    "revert",
+    "revert-layer",
+    "normal",
+    "none",
+}
+
+# `0`, `-1.5rem`, `12px`, `4%`, or a `calc()` around them. A bare non-zero
+# number is NOT a length in CSS and is dropped by the parser, so it is not
+# accepted here either.
+LENGTH = r"(?:0|[+-]?(?:\d+\.?\d*|\.\d+)(?:px|rem|em|ex|ch|vh|vw|vmin|vmax|%))"
+STICKY_OFFSET = re.compile(rf"^(?:calc\(.+\)|var\(--[\w-]+\)|{LENGTH})$")
+VAR_REFERENCE = re.compile(r"var\(\s*(--[\w-]+)\s*[,)]")
+
+
+def assert_sticks_to_the_bottom(rule_name, declarations):
+    """Assert `declarations` really pins its block to the bottom of the scrollport.
+
+    Checks the VALUE, not the presence of the property, and follows any custom
+    property it is built from back to `tokens.css` - because a `bottom` of
+    `calc(var(--x) * -1)` is dropped wholesale if `--x` is not a length, which
+    puts the element back in normal flow while the source still reads as though
+    it sticks.
+
+    What this cannot do is lay anything out, so it does not claim to: it proves
+    the bottom constraint EXISTS and resolves, not that the resulting offset
+    puts the block anywhere pleasant. Where it actually lands was measured by
+    hand in a real browser and recorded in the PR description.
+    """
+    assert re.search(r"position\s*:\s*sticky", declarations), (
+        f"{rule_name} is back in the normal flow: {declarations}"
+    )
+
+    match = re.search(r"(?:^|;)\s*bottom\s*:\s*([^;}]+)", declarations)
+    assert match, f"{rule_name} has no bottom offset, so it never sticks: {declarations}"
+    value = match.group(1).strip()
+
+    assert value.lower() not in STICKY_KEYWORDS, (
+        f"{rule_name} has `bottom: {value}`, which leaves no bottom constraint at all - "
+        f"the block returns to normal flow and scrolls out of reach"
+    )
+    assert STICKY_OFFSET.match(value), (
+        f"{rule_name} has `bottom: {value}`, which is not a length CSS will accept; "
+        f"an unparseable offset is dropped and the initial `auto` applies"
+    )
+
+    # Follow the tokens. `calc(var(--space-6) * -1)` is only an offset if
+    # `--space-6` is one.
+    tokens = read(TOKENS_CSS)
+    for name in VAR_REFERENCE.findall(value):
+        declared = re.search(rf"{re.escape(name)}\s*:\s*([^;}}]+)", tokens)
+        assert declared, f"{rule_name}'s bottom offset uses {name}, which tokens.css does not declare"
+        resolved = declared.group(1).strip()
+        assert resolved.lower() not in STICKY_KEYWORDS and re.match(rf"^{LENGTH}$", resolved), (
+            f"{rule_name}'s bottom offset resolves through {name} to `{resolved}`, "
+            f"which is not a length - the whole declaration is dropped and the block scrolls away"
+        )
+
+
 def stylesheets():
     return sorted(CSS.glob("*.css"))
 
@@ -585,9 +655,11 @@ def test_the_set_creator_status_line_cannot_be_scrolled_out_of_reach():
     match = re.search(r"\.setc__status\s*\{([^}]*)\}", body)
 
     assert match, "the Set Creator status rule is gone"
-    declarations = match.group(1)
-    assert re.search(r"position\s*:\s*sticky", declarations), declarations
-    assert re.search(r"\bbottom\s*:", declarations), declarations
+    declarations = " ".join(match.group(1).split())
+    # By value - `bottom: auto` passed the presence check this used to make,
+    # and means the status line scrolls away. Same claim, same guard as the
+    # Export progress block below.
+    assert_sticks_to_the_bottom("the Set Creator status line", declarations)
     # Opaque, or the rows scroll THROUGH the text rather than under it.
     assert re.search(r"background\s*:\s*var\(--surface", declarations), declarations
 
@@ -607,6 +679,13 @@ def test_the_export_progress_block_cannot_be_scrolled_out_of_reach():
 
     A SOURCE-TEXT check - it cannot lay anything out - and the behavioural half
     was done by hand against a real browser and recorded in the PR description.
+
+    THE OFFSET IS CHECKED BY VALUE, not by presence. This test used to ask only
+    whether a `bottom:` declaration existed, and `bottom: auto` satisfies that
+    while meaning the exact opposite: Chrome computes `auto`, the block leaves
+    the sticky constraint behind, and the Stop button renders offscreen - which
+    is the defect the rule was written to fix. A guard a wrong value satisfies
+    is worse than no guard, because it reads as coverage.
     """
     body = without_comments(read(APP_CSS))
     match = re.search(r"\.exportv__progress\s*\{([^}]*)\}", body)
@@ -614,12 +693,7 @@ def test_the_export_progress_block_cannot_be_scrolled_out_of_reach():
     assert match, "the Export progress rule is gone"
     declarations = " ".join(match.group(1).split())
 
-    assert re.search(r"position\s*:\s*sticky", declarations), (
-        f"the progress block is back in the normal flow: {declarations}"
-    )
-    assert re.search(r"bottom\s*:", declarations), (
-        f"a sticky block with no offset never sticks: {declarations}"
-    )
+    assert_sticks_to_the_bottom("the progress block", declarations)
     # Opaque, or the rows scrolling under it read through it.
     assert re.search(r"background\s*:\s*var\(--surface", declarations), (
         f"the progress block is transparent: {declarations}"
@@ -794,9 +868,13 @@ def test_the_message_box_keeps_the_newlines_its_bodies_are_written_with():
     `Confirm Export` (:603-611) is four lines and `Export Complete` (:620-634)
     is seven lines of accounting - "Playlists created", "Successful", "Total
     recommendations", "Failed", then the location and the Rekordbox
-    instructions. Under CSS's default `white-space: normal` every one of those
-    newlines is collapsed to a space and the dialog renders one run-on
-    paragraph, which is not the message that was catalogued.
+    instructions. (The shipped per-seed body is six of those seven: it drops
+    the "Playlists created" line, which claims a file count nothing on the wire
+    can supply - see `completionMessage` and the test below. Combined mode
+    keeps it, and either way the line breaks are the point here.) Under CSS's
+    default `white-space: normal` every one of those newlines is collapsed to a
+    space and the dialog renders one run-on paragraph, which is not the message
+    that was catalogued.
 
     A source-text check, and it is honest about being one: it cannot lay
     anything out. The rendered result was checked by hand and recorded in the
@@ -808,6 +886,43 @@ def test_the_message_box_keeps_the_newlines_its_bodies_are_written_with():
     assert match, "the message-box body rule is gone"
     assert re.search(r"white-space\s*:\s*pre-line\b", match.group(1)), (
         f"the message box collapses its newlines: {' '.join(match.group(1).split())}"
+    )
+
+
+def test_no_screen_renders_the_services_playlist_counter():
+    """`playlists_created` is not a count of files, and the web UI must not read it.
+
+    `playlist_exporter.py:171-173` increments it beside `successful` inside one
+    `try`, so in per-seed mode the two are the same number; what it counts is
+    write calls that did not raise. `playlist_filename(artist, title)` decides
+    where each write lands and its own docstring says two seeds that sanitise
+    to the same name "overwrite each other silently", so N writes leave N files
+    only if the N names are distinct. On the real collection they are not - the
+    service reports 1532 and the directory holds 1529 - and a dialog that
+    prints the counter states a number the filesystem contradicts.
+
+    The behavioural tests probe the two dialogs with a counter no real run
+    could produce and assert it never reaches the user. This is the structural
+    half of the same claim, and it is the stronger one: it fails for ANY new
+    reader of the field, in any component, before anyone has to think of a
+    string to assert against. Comments are stripped first - the reasoning above
+    is written out in `export.js`, and prose about a field must not be what
+    satisfies a check that the field is unused.
+
+    The field stays on the wire, and should: `web/api.py` sends what the
+    service returned, faithfully, and a client that wants it is not this one.
+    """
+    offenders = {}
+    for script in scripts():
+        body = without_comments(read(script))
+        body = re.sub(r"^\s*//.*$", "", body, flags=re.M)
+        if "playlists_created" in body:
+            offenders[script.name] = [
+                line.strip() for line in body.splitlines() if "playlists_created" in line
+            ]
+
+    assert offenders == {}, (
+        f"the service's playlist counter is being rendered again: {offenders}"
     )
 
 
