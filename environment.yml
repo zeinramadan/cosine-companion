@@ -3,8 +3,36 @@ channels:
   - conda-forge
   - defaults
 dependencies:
-  # Python
-  - python=3.10
+  # Python. .python-version is the AUTHORITATIVE SOURCE for the version; the
+  # line below is a CHECKED RESTATEMENT of it. These are the two places in
+  # this repository a TOOL SELECTS an interpreter version from -- setup-python
+  # reads the first, conda reads this one -- and this one has to restate the
+  # literal, because conda takes a literal in the spec and cannot be pointed
+  # at .python-version the way actions/setup-python can.
+  #
+  # Other files mention a version without selecting one, and they are not
+  # covered by any of this: README.md quotes the current value as prose,
+  # setup.py declares python_requires=">=3.8" (a lower bound on
+  # installability, and an inaccurate one) plus classifiers for 3.8-3.11.
+  #
+  # What makes the restatement safe is that it is compared, character for
+  # character, against the source --
+  # tests/test_workflows_do_not_state_a_python_version.py, assertion 5. So
+  # this cannot drift without reddening the suite; an UNCHECKED second
+  # statement of the version is what is ruled out, not a second statement.
+  #
+  # This pinned 3.10 from 2026-01-02 (ab5be5b) while build-macos.yml shipped
+  # the app on 3.11, which it has stated since 2025-10-05. Seven and a half
+  # months in which a contributor's conda environment was a different
+  # interpreter from the one anything was verified on. Nothing compared them.
+  #
+  # The guard accepts exactly one spelling -- `python=<version>`, here at the
+  # top level, no channel prefix and no build string -- and rejects every
+  # other one even when it names the right version. That is deliberate: three
+  # revisions of that check tried to interpret conda's version grammar and
+  # each misread a spec it had never seen. Reformatting this line will fail
+  # the suite; change the version in .python-version instead.
+  - python=3.11
 
   # Core data processing
   - numpy>=1.20.0
