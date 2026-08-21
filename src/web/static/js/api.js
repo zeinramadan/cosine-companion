@@ -114,4 +114,54 @@ export const api = {
       {},
       { method: 'POST', body: { anchors, total_tracks: totalTracks } },
     ),
+
+  /* -- long-running work ---------------------------------------------------
+   *
+   * POLLING, not a stream, and the decision was measured rather than assumed.
+   * A streaming response cannot go through `server.py`'s `_send`, which takes
+   * complete bytes and sets a Content-Length from them, so an SSE channel
+   * would mean a second emission path reimplementing HEAD elision and framing
+   * for one endpoint. `GET /api/jobs/{id}` costs 0.46 ms a call.
+   */
+
+  /** Every remembered job, newest first. What a reloaded page re-attaches from. */
+  jobs: () => request('/api/jobs'),
+
+  /** One job. The document `web/api.py::_job_document` builds. */
+  job: (jobId) => request(`/api/jobs/${encodeURIComponent(jobId)}`),
+
+  /**
+   * Start an export. 202 with the accepted job, or 409 if one is running.
+   *
+   * `trackIds` is OMITTED for the whole library rather than sent in full, and
+   * that is the endpoint's own instruction (`web/api.py::_export_track_ids`):
+   * the real 1,532-id selection is 14.7 KiB newline-delimited against a fixed
+   * 16 KiB body ceiling, so the common case does not fit. Absent means "every
+   * track", resolved server-side against the one snapshot the run executes on.
+   */
+  startExport: ({ mode, outDir, recommendationsPerTrack, trackIds }) => {
+    const payload = {
+      mode,
+      out_dir: outDir,
+      recommendations_per_track: recommendationsPerTrack,
+    };
+    if (trackIds) {
+      payload.track_ids = trackIds.join('\n');
+    }
+    return request('/api/jobs/export', {}, { method: 'POST', body: payload });
+  },
+
+  /**
+   * Ask a job to stop. 200 whether or not it was still running.
+   *
+   * The body is `{}` rather than absent. `server.py` refuses a POST with no
+   * `Content-Type: application/json` (415) and cannot parse an empty payload
+   * (400), so "no fields" has to be spelled as an empty object; `_cancel_job`
+   * accepts exactly that and refuses anything with fields in it.
+   */
+  cancelJob: (jobId) =>
+    request(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, {}, {
+      method: 'POST',
+      body: {},
+    }),
 };
