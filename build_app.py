@@ -22,7 +22,9 @@ def build_with_pyinstaller():
     
     # Build using spec file
     cmd = [
-        "pyinstaller",
+        sys.executable,
+        "-m",
+        "PyInstaller",
         "--clean",     # Clean cache
         "--noconfirm", # Overwrite without asking
         str(spec_file)
