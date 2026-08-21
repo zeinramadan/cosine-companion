@@ -12,6 +12,8 @@ Essentia is never loaded here: the embedder is mocked. A real indexing pass over
 real audio is a separate manual check, recorded in the PR description.
 """
 
+import hashlib
+import json
 import os
 import sys
 import threading
@@ -35,6 +37,7 @@ from services.indexing_service import (  # noqa: E402
     IndexResult,
     ProgressEvent,
 )
+from services.library_session import LibrarySession  # noqa: E402
 from services.settings_store import SettingsStore  # noqa: E402
 
 DIM = 8
@@ -87,13 +90,11 @@ def indexing(tmp_path, monkeypatch):
     audio = tmp_path / "audio"
     audio.mkdir()
 
-    monkeypatch.setattr(loader_module, "META_PQ", data / "meta.parquet")
-    monkeypatch.setattr(loader_module, "EMB_PQ", data / "embeddings.parquet")
-    monkeypatch.setattr(persistence_module, "META_PQ", data / "meta.parquet")
-    monkeypatch.setattr(persistence_module, "EMB_PQ", data / "embeddings.parquet")
-    monkeypatch.setattr(persistence_module, "IDX_NPY", data / "index.npy")
-    monkeypatch.setattr(persistence_module, "IDS_JSON", data / "ids.json")
-    monkeypatch.setattr(deleted_tracks_module, "DELETED_TRACKS_JSON", data / "deleted.json")
+    monkeypatch.setattr(
+        deleted_tracks_module,
+        "DELETED_TRACKS_JSON",
+        data / "deleted_tracks.json",
+    )
     monkeypatch.setattr(pipeline_module, "DiscogsEffnetEmbedder", FakeEmbedder)
     monkeypatch.setattr(pipeline_module, "time", type("T", (), {"sleep": staticmethod(lambda s: None)}))
 
@@ -104,7 +105,9 @@ def indexing(tmp_path, monkeypatch):
         tracks.append((str(1000 + i), f"Title {i}", f"Artist {i}", f))
     xml = _write_xml(tmp_path / "library.xml", tracks)
 
-    service = IndexingService(SettingsStore(data / "settings.json"))
+    service = IndexingService(
+        SettingsStore(data / "settings.json"), data_dir=data
+    )
     return service, xml, data, audio
 
 
@@ -198,10 +201,8 @@ def timeline(events):
     return [(e.phase, e.current, e.total, e.message) for e in events]
 
 
-def data_saved_line():
-    from config import DATA
-
-    return f"   • Data saved to: {DATA}/"
+def data_saved_line(data_dir):
+    return f"   • Data saved to: {data_dir}/"
 
 
 def test_a_first_run_emits_exactly_this_ordered_event_list(indexing):
@@ -212,7 +213,7 @@ def test_a_first_run_emits_exactly_this_ordered_event_list(indexing):
     transcript, and a transcript with the right lines in the wrong order is
     wrong. Every event, in order, with its phase and its current/total.
     """
-    service, xml, _, _ = indexing
+    service, xml, data, _ = indexing
 
     _, events = collect(service, xml)
 
@@ -238,7 +239,7 @@ def test_a_first_run_emits_exactly_this_ordered_event_list(indexing):
         ("complete", 0, 0, "✅ Indexing complete!"),
         ("complete", 0, 0, "   • Total tracks indexed: 5"),
         ("complete", 0, 0, "   • New tracks added: 5"),
-        ("complete", 0, 0, data_saved_line()),
+        ("complete", 0, 0, data_saved_line(data)),
         ("complete", 0, 0, "🚀 Ready to use! Run 'python cosine_companion.py ui' to start the application."),
     ]
 
@@ -875,6 +876,128 @@ def test_writes_the_four_data_files(indexing):
     assert np.load(data / "index.npy").shape == (5, DIM)
 
 
+def test_an_explicit_data_directory_is_the_only_index_write_target(
+    indexing, tmp_path, monkeypatch
+):
+    """The regression: X receives the generation and the default stays exact.
+
+    The four module constants are redirected to a scratch "default" so this
+    test also fails against the former implicit persistence path without ever
+    putting the maintainer's real library at risk.
+    """
+    service, xml, target, _ = indexing
+    wrong_default = tmp_path / "default"
+    wrong_default.mkdir()
+    for name in ("meta.parquet", "embeddings.parquet", "index.npy", "ids.json"):
+        (wrong_default / name).write_bytes(f"sentinel:{name}".encode())
+
+    monkeypatch.setattr(loader_module, "META_PQ", wrong_default / "meta.parquet")
+    monkeypatch.setattr(loader_module, "EMB_PQ", wrong_default / "embeddings.parquet")
+    monkeypatch.setattr(
+        persistence_module, "META_PQ", wrong_default / "meta.parquet", raising=False
+    )
+    monkeypatch.setattr(
+        persistence_module,
+        "EMB_PQ",
+        wrong_default / "embeddings.parquet",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        persistence_module, "IDX_NPY", wrong_default / "index.npy", raising=False
+    )
+    monkeypatch.setattr(
+        persistence_module, "IDS_JSON", wrong_default / "ids.json", raising=False
+    )
+    monkeypatch.setattr(
+        deleted_tracks_module,
+        "DELETED_TRACKS_JSON",
+        wrong_default / "deleted_tracks.json",
+    )
+    service.settings = SettingsStore(wrong_default / "settings.json")
+
+    def fingerprint(directory):
+        return {
+            path.name: (
+                path.stat().st_mtime_ns,
+                hashlib.sha256(path.read_bytes()).hexdigest(),
+            )
+            for path in sorted(directory.iterdir())
+            if path.is_file()
+        }
+
+    default_before = fingerprint(wrong_default)
+    result = service.run(str(xml), force_full=True, progress=lambda event: None)
+
+    assert result.status == STATUS_INDEXED
+    assert LibrarySession.load(target).ids == [
+        "1001",
+        "1002",
+        "1003",
+        "1004",
+        "1005",
+    ]
+    assert fingerprint(wrong_default) == default_before
+
+
+def test_the_four_persisted_values_share_one_row_mapping(indexing, tmp_path):
+    """A failed embed is absent everywhere; every remaining row maps exactly."""
+    service, _, data, audio = indexing
+    broken = audio / "broken-row.mp3"
+    broken.write_bytes(b"\x00")
+    xml = _write_xml(
+        tmp_path / "partial.xml",
+        [
+            ("left", "Left", "A", audio / "track1.mp3"),
+            ("failed", "Failed", "B", broken),
+            ("right", "Right", "C", audio / "track2.mp3"),
+        ],
+    )
+
+    service.run(str(xml), force_full=True, progress=lambda event: None)
+
+    meta = pd.read_parquet(data / "meta.parquet")
+    embeddings = pd.read_parquet(data / "embeddings.parquet")
+    ids = json.loads((data / "ids.json").read_text(encoding="utf-8"))
+    matrix = np.load(data / "index.npy")
+    vector_columns = [f"v{index}" for index in range(matrix.shape[1])]
+
+    assert meta["track_id"].tolist() == ids == ["left", "right"]
+    assert embeddings["track_id"].tolist() == ids
+    np.testing.assert_array_equal(
+        embeddings[vector_columns].to_numpy(dtype="float32"), matrix
+    )
+
+
+def test_a_committed_index_refreshes_before_a_later_delete(indexing, tmp_path):
+    """A delete after reindex starts from the new six-track snapshot, not five."""
+    first_service, xml, data, audio = indexing
+    first_service.run(str(xml), progress=lambda event: None)
+    library = LibrarySession.load(data)
+    assert library.track_count == 5
+
+    added = audio / "track6.mp3"
+    added.write_bytes(b"\x00")
+    tracks = [
+        (str(1000 + index), f"Title {index}", f"Artist {index}", audio / f"track{index}.mp3")
+        for index in range(1, 7)
+    ]
+    expanded_xml = _write_xml(tmp_path / "expanded.xml", tracks)
+    service = IndexingService(
+        first_service.settings, data_dir=data, library=library
+    )
+
+    result = service.run(str(expanded_xml), progress=lambda event: None)
+
+    assert result.status == STATUS_INDEXED
+    assert library.track_count == 6
+    assert library.ids[-1] == "1006"
+
+    assert library.delete_tracks(["1001"]) == 1
+    reloaded = LibrarySession.load(data)
+    assert reloaded.track_count == 5
+    assert "1006" in reloaded.ids
+
+
 def test_the_embedder_is_only_constructed_when_there_is_work(indexing):
     service, xml, _, _ = indexing
     service.run(str(xml), progress=lambda e: None)
@@ -894,8 +1017,8 @@ def test_pipeline_still_prints_when_no_callback_is_given(indexing, capsys):
     """python cosine_companion.py index <xml> must be unchanged."""
     from processing.pipeline import index_library
 
-    _, xml, _, _ = indexing
-    index_library(str(xml))
+    service, xml, _, _ = indexing
+    index_library(str(xml), data_dir=service.data_dir)
 
     out = capsys.readouterr().out
     assert "🎵 Cosine Companion - Incremental Indexing" in out

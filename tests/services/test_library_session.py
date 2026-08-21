@@ -525,16 +525,12 @@ def test_a_completed_indexing_write_uses_the_same_generation_commit(
     assert (tmp_library / "library_index.json").is_file()
     deletion_generation = read_index_generation(tmp_library)
 
-    monkeypatch.setattr(loader, "META_PQ", tmp_library / "meta.parquet")
-    existing_meta, existing_embeddings = loader.load_existing_data()
+    existing_meta, existing_embeddings = loader.load_existing_data(tmp_library)
     assert len(existing_meta) == len(existing_embeddings) == 3
 
-    monkeypatch.setattr(persistence, "META_PQ", tmp_library / "meta.parquet")
-    monkeypatch.setattr(persistence, "EMB_PQ", tmp_library / "embeddings.parquet")
-    monkeypatch.setattr(persistence, "IDX_NPY", tmp_library / "index.npy")
-    monkeypatch.setattr(persistence, "IDS_JSON", tmp_library / "ids.json")
     replacement = LibrarySession.load(tmp_library).snapshot()
     persistence.save_index_data(
+        tmp_library,
         replacement.meta,
         replacement.emb_ix.reset_index(),
         replacement.vectors,
@@ -643,10 +639,6 @@ from core.loader import load_all
 data_dir = Path(sys.argv[1])
 port = int(sys.argv[2])
 meta, _meta_ix, emb_ix, _index, vectors, ids = load_all(data_dir)
-persistence.META_PQ = data_dir / "meta.parquet"
-persistence.EMB_PQ = data_dir / "embeddings.parquet"
-persistence.IDX_NPY = data_dir / "index.npy"
-persistence.IDS_JSON = data_dir / "ids.json"
 real_lock = index_store._index_lock
 
 @contextlib.contextmanager
@@ -660,7 +652,7 @@ def paused_lock(lock_data_dir, exclusive):
         yield
 
 index_store._index_lock = paused_lock
-persistence.save_index_data(meta, emb_ix.reset_index(), vectors, ids)
+persistence.save_index_data(data_dir, meta, emb_ix.reset_index(), vectors, ids)
 """
     child_environment = os.environ.copy()
     child_environment["PYTHONPATH"] = os.pathsep.join(

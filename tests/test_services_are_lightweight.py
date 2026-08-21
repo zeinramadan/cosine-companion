@@ -181,7 +181,7 @@ def test_the_indexing_service_still_reaches_the_pipeline_when_it_runs():
         "calls = []\n"
         "pipeline.index_library = lambda *a, **k: calls.append((a, k)) or "
         "{'status': 'up_to_date', 'new_tracks_found': 0}\n"
-        "result = IndexingService(None).run('/nope.xml')\n"
+        "result = IndexingService(None, '/tmp/data').run('/nope.xml')\n"
         "assert calls, 'run() never called index_library'\n"
         "print(result.status)\n"
     )

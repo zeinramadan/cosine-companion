@@ -163,7 +163,13 @@ class ReindexWindow(tk.Toplevel):
             # construction.
             self.message_queue.put(('log', event.message))
 
-        service = IndexingService(SettingsStore(DATA / "settings.json"))
+        library = getattr(self.parent_app, "library", None)
+        data_dir = library.data_dir if library is not None else DATA
+        service = IndexingService(
+            SettingsStore(data_dir / "settings.json"),
+            data_dir=data_dir,
+            library=library,
+        )
 
         try:
             # Run indexing with structured progress instead of a process-global

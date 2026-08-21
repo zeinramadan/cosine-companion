@@ -33,6 +33,7 @@ tests/test_services_are_ui_free.py, which enforces that with an AST walk.
 """
 
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -88,6 +89,11 @@ class LibrarySession:
         self._vectors: Optional[np.ndarray] = None
         self._ids: Optional[List[str]] = None
         self._lock = threading.RLock()
+        # Indexing is long-running, so readers must keep serving the current
+        # immutable view while it builds. Mutations are different: a deletion
+        # must not commit from the old view after indexing has committed a new
+        # generation but before reload publishes it here.
+        self._mutation_lock = threading.RLock()
 
     @classmethod
     def load(cls, data_dir: Optional[Path] = None) -> "LibrarySession":
@@ -98,6 +104,11 @@ class LibrarySession:
 
     def reload(self) -> None:
         """Re-read all four data files from disk, replacing the in-memory state."""
+        with self._mutation_lock:
+            self._reload_locked()
+
+    def _reload_locked(self) -> None:
+        """Build a replacement privately and publish it under the read lock."""
         loaded = load_all(self.data_dir)
         with self._lock:
             (
@@ -108,6 +119,22 @@ class LibrarySession:
                 self._vectors,
                 self._ids,
             ) = loaded
+
+    @contextmanager
+    def refresh_after_indexing(self):
+        """Serialize an indexing run with mutations and refresh on success.
+
+        Readers continue using their current snapshots while the pipeline does
+        its long private build. A deletion waits on ``_mutation_lock`` until a
+        normally completed run has loaded and published the committed
+        generation, so it can never persist from the pre-index snapshot.
+
+        If indexing raises (including ``KeyboardInterrupt``), execution never
+        reaches the refresh and the previous in-memory view remains published.
+        """
+        with self._mutation_lock:
+            yield
+            self._reload_locked()
 
     # -- read accessors ----------------------------------------------------
 
@@ -159,7 +186,7 @@ class LibrarySession:
         Objects from the old generation remain alive for readers that already
         captured them; deletion never mutates those objects in place.
         """
-        with self._lock:
+        with self._mutation_lock, self._lock:
             return LibrarySnapshot(
                 meta=self._meta,
                 meta_ix=self._meta_ix,

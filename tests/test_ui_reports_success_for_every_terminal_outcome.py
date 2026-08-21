@@ -48,6 +48,7 @@ below exactly as it is, bug and all.
 import ast
 import queue
 import types
+from pathlib import Path
 
 import pytest
 
@@ -103,8 +104,12 @@ class RecordingService:
         self.result = result
         self.raises = raises
         self.calls = []
+        self.constructions = []
 
-    def __call__(self, settings):  # used in place of the IndexingService class
+    def __call__(
+        self, settings, data_dir, library=None
+    ):  # used in place of the IndexingService class
+        self.constructions.append((settings, Path(data_dir), library))
         return self
 
     def run(self, xml_path, **kwargs):
@@ -141,12 +146,14 @@ def _reindex_stub(cancel_requested=False):
     """
     import threading
 
+    library = types.SimpleNamespace(data_dir=Path("/tmp/data"))
     return types.SimpleNamespace(
         message_queue=queue.Queue(),
         xml_path="/tmp/library.xml",
         force_full=False,
         cancel_event=threading.Event(),
         cancel_requested=cancel_requested,
+        parent_app=types.SimpleNamespace(library=library),
     )
 
 
@@ -224,6 +231,9 @@ def test_reindex_window_still_passes_progress_and_cancel_through(monkeypatch):
     assert kwargs["cancel"] is stub.cancel_event
     assert kwargs["force_full"] is False
     assert callable(kwargs["progress"])
+    (_, data_dir, library), = service.constructions
+    assert data_dir == stub.parent_app.library.data_dir
+    assert library is stub.parent_app.library
 
 
 # ---------------------------------------------------------------------------
