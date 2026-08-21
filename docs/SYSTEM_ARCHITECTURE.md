@@ -1283,9 +1283,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
         with:
-          python-version: '3.11'
+          python-version-file: .python-version   # never state it inline
           cache: 'pip'
       - run: pip install -r requirements.txt
       - run: python build_app.py

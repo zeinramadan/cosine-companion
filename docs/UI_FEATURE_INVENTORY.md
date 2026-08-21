@@ -1521,11 +1521,12 @@ nothing in §1–§5 above describes behaviour that changed.
 This section records **which catalogued controls the web UI reimplements**, so
 the rewrite can be reviewed against the contract rather than against a demo.
 It adds no claim about the Tkinter app. PR 3a implemented Explore; the small
-write-surface follow-up adds only the Rekordbox XML path from Settings. Set
-Creator, Library and Export still render a labelled placeholder, so §2.5, §2.6
-and §2.7 are entirely outstanding.
+write-surface follow-up adds only the Rekordbox XML path from Settings; the Set
+Creator follow-up adds §2.5 and the §2.12 dialog it opens (§6.6, §6.7), and the
+Library follow-up adds §2.7 (§6.3). Export still renders a labelled placeholder,
+so §2.6 is entirely outstanding.
 
-The line numbers below are §2.4 and §3 coordinates in this document.
+The line numbers below are coordinates in this document.
 
 ### 6.1 Explore controls reimplemented
 
@@ -1562,12 +1563,12 @@ omission is on the record rather than left for a reviewer to notice.
 | Selection-error dialogs | :431-437 | `No Selection`, `No Recommendations` and `Invalid selection.` have no web equivalent; a row can only be clicked when it is rendered |
 | Suggestions list as a `tk.Listbox` | :340-341 | The web list is a scrollable container of buttons; the mouse-wheel-only scrolling noted in §2.4 does not carry over |
 
-Outside §2.4, the whole of §2.1, §2.3, §2.5, §2.6, §2.9, §2.10, §2.11,
-§2.12 and §2.13 are outstanding, and the two placeholder destinations say so
-on screen. Section 2.7 is implemented as recorded in §6.3. Within §2.8,
-library statistics, deleted-track management and both
-reindex actions remain outstanding; this follow-up implements only reading and
-changing `xml_path`.
+Outside §2.4, the whole of §2.1, §2.3, §2.6, §2.9, §2.10, §2.11 and §2.13 are
+outstanding, and the one remaining placeholder destination says so on screen.
+§2.5 and §2.12 are covered by §6.6 and §6.7 below, and §2.7 is implemented as
+recorded in §6.3. Within §2.8, library statistics, deleted-track management and
+both reindex actions remain outstanding; this follow-up implements only reading
+and changing `xml_path`.
 
 ### 6.3 Library controls reimplemented
 
@@ -1595,7 +1596,9 @@ controls.
 ### 6.4 Deliberate divergences
 
 Places where the web UI does something different on purpose. Each is a
-change of behaviour, not an omission, and is called out for that reason.
+change of behaviour, not an omission, and is called out for that reason. The
+Set Creator destination's divergences are listed with that destination, in
+§6.7.
 
 **Library list semantics and dialogs.** The Tk list is a `tk.Listbox`; the web
 list is a scrollable set of native buttons carrying `role="option"`, because a
@@ -1738,10 +1741,16 @@ distinction is the whole of what those tests are worth — they can say what a
 module did, not what a user saw — and it is stated at the top of the shim as
 well as here.
 
-The frontend-behaviour dependency in the web suite is `node`, for those nine
-suites. When it is absent they skip with a reason naming the file that did not
-run, one named skip per JavaScript file. With Node 20 and pywebview installed,
-the current web suite gives **404 passed and 0 skipped**. One of the nine,
+The environmental dependencies in the web suite are `node`, for the JavaScript
+suites, and pywebview, for the host module. When node is absent those suites
+skip with a reason naming the file that did not run, one named skip per
+JavaScript file, and those files are what `tests/web/test_frontend_behaviour.py`
+discovers; the digit-parity comparisons in
+`tests/web/test_integer_parsing_matches_python.py`, which reach `int()` through
+node, skip with a reason of their own. On the interpreter `build-*.yml` freezes,
+with node 20 and pywebview installed, the current web suite gives **471 passed
+and 0 skipped**; without node on PATH, **454 passed and 17 skipped** — eleven
+JavaScript files and six parity comparisons. One of the JavaScript suites,
 `globals.test.mjs`, has the
 shim itself as its subject rather than any shipped module — CI runs node 24,
 where `globalThis.navigator` is a getter-only accessor the runtime owns, and
@@ -1790,3 +1799,568 @@ may skip with it.
 | Four-file row alignment and empty-library reload | `tests/web/test_api_library_delete.py::test_committed_generation_stays_row_aligned_and_reloads`, `…::test_deleting_the_last_track_commits_a_reloadable_empty_matrix` |
 | Pre-commit failures preserving the prior generation | `tests/services/test_library_session.py::test_a_failure_before_the_manifest_commit_preserves_the_old_generation`, `…::test_a_failed_manifest_replace_preserves_the_previous_generation` |
 | Export snapshot capture not straddling delete publication | `tests/services/test_library_session.py::test_snapshot_cannot_land_inside_the_delete_publication` |
+
+### 6.6 Set Creator controls reimplemented
+
+§2.5 and the §2.12 dialog it opens. Line numbers are §2.5, §2.12 and §2.2
+coordinates in this document.
+
+| Control | line | How it appears in the web UI |
+|---|---|---|
+| `Total Tracks:` label and entry | :448-449 | A text field, default `"10"` held as a STRING so :501's "not an integer" check is still reachable. Pinned by `tests/web/js/set_creator.test.mjs` |
+| `Generate Set` | :450 | The primary button. Disabled while a request is in flight |
+| `Clear Set` | :451 | The button beside it. No confirmation, per :519 |
+| `Anchor Tracks:` label | :454 | The anchor section heading |
+| `+ Add Anchor` | :455 | Opens the §2.12 dialog. The macOS re-styling workaround at :456 has no web counterpart and is not one — §3.5, §4 #8 |
+| Anchor listbox | :457 | A single-selection list, ascending by position |
+| `Remove` | :458 | Removes the selected anchor, or warns (:523). The anchor list is a keyboard-operable listbox, or this control could be pressed and never satisfied without a mouse |
+| `Generated Set:` label | :461 | The set section heading |
+| Generated-set listbox | :462 | The generated rows |
+| `Export to Clipboard` | :463 | The button below them |
+| Anchor row format | :471 | `{position}. {artist} – {title}`, built unconditionally as `update_anchor_listbox` builds it (`src/ui/set_creator_tab.py:90`), so a blank artist keeps the leading separator |
+| Ascending position order | :473 | Sorted numerically, not by the string the position renders as |
+| Generated row fields | :479-489 | Position, icon, `display_name` and the match percentage, laid out as a row rather than padded into one string — see §6.7. `display_name` and `icon` are computed by `SetTrack` and sent over the wire, so the four-branch resolution order at :484-486 has exactly one implementation |
+| Score suffix rule | :487-489 | ` ({score:.0%} match)` for non-anchors scoring above zero, and for nothing else. Anchors carry `score=1.0` and show none; the unfillable placeholder carries `0.0` and shows none. One condition, not two special cases |
+| `:.0%` rounding | :488 | Reproduced exactly, including the tie rule: Python rounds a tie to EVEN and both JavaScript roundings do not, which differs on 96 of 21,215 sampled values. `format.wholePercent`, pinned by `tests/web/js/set_creator.test.mjs` |
+| Unfillable slot row | :490-495 | Rendered from the placeholder's own fields, so it reads `No suitable track found – (Unknown Title)` with no score suffix. Pinned by `tests/web/test_api_set.py::test_an_unfillable_slot_arrives_with_the_fields_the_row_is_built_from` |
+| The three pre-generation checks | :501-503 | Made in the catalogued order with the catalogued titles and bodies, as modal dialogs. The ORDER is pinned by cases that make two conditions wrong at once |
+| `total == len(anchors)` is allowed | :505 | The check is `<`, and the web check is `<` |
+| `Generation Error` | :506-508 | `Failed to generate set: {error}`, carrying the service's own `ValueError` text over the wire as `set_generation_failed`. Pinned by `tests/web/test_api_set.py::test_an_anchor_past_the_end_is_the_generation_error_inventory_names` |
+| The four status strings | :510-514 | `🎵 Generating set... This may take a moment.`, `✅ Generated {n}-track set successfully!`, `❌ Set generation failed.` and `🧹 Set cleared.`, in a status line inside the destination |
+| Set Creator status hint | :271 | The resting text of that status line, verbatim |
+| The status bar staying visible | :244, :1293 | `packed side="bottom"` "so a short window cannot hide it" is a property of the control, so the web status line is sticky to the bottom of the scrolling viewport. Left in the flow it sat under the generated rows and was off screen at the moment it announced the set. Pinned by `tests/web/test_frontend_conventions.py::test_the_set_creator_status_line_cannot_be_scrolled_out_of_reach` |
+| `Remove` with no selection | :523 | `No Selection` / `Please select an anchor track to remove.` |
+| `Export to Clipboard` with no set | :529 | `No Set` / `Please generate a set first.` |
+| Clipboard contents | :530-533 | One `display_name` per line, no positions, icons or scores, and every row whose display name contains `No suitable track found` left out. Then `Exported` / `Copied {n} tracks to clipboard!` |
+| `AddAnchorDialog`, modal | :946 | A modal dialog whose `aria-modal` is backed by an inert shell and a Tab trap, as the palette's is |
+| `Position in Set:` entry, blank | :948 | Blank by default. It is not pre-filled with the next free slot, because :966 says the dialog does not know the set's length |
+| `Search for Track:` entry | :949 | Filters as you type, debounced 120 ms and sequenced by keystroke, as the palette is |
+| Results list, single selection | :950 | Nothing is selected until a row is chosen, which is what keeps :961 reachable. Both web lists are operable from the keyboard - roving tabindex, arrows to move, Enter or Space to choose - because `role="option"` on an unfocusable row is a promise the row cannot keep |
+| `<Double-Button-1>` = `Add to Set` | :951 | Double-clicking a row adds it |
+| `Add to Set` / `Cancel`, Cancel rightmost | :952 | Both, in that visual order |
+| Search implementation A, `limit=50` | :954 | `GET /api/tracks/search?limit=50`, which is `LibrarySession.search_tracks` — implementation A unchanged. What the ROWS render is **not** parity and is declared as a divergence in §6.7: a blank field is dropped, and the separator with it |
+| The four dialog checks | :961-964 | In the catalogued order with the catalogued strings. `Position Taken` is a Yes/No question whose No returns to the dialog with the selection and the typed position intact |
+| No upper bound on the position | :966 | The dialog accepts 9999 against a 10-track set; the builder is what refuses it, as :506-508 says |
+| The same track at several positions | :967 | The dialog permits it. What GENERATION then does with it is not catalogued anywhere in §2.5 or §2.12 — see §6.7 |
+
+**What pins it.**
+
+| Area | Pinned by |
+|---|---|
+| The generated set matching committed golden sequences over the API | `tests/web/test_api_set.py::test_the_endpoint_returns_the_golden_sequence` |
+| `display_name` and `icon` surviving serialisation | `…::test_the_two_computed_strings_survive_serialisation` |
+| The set length cap being refused rather than clamped | `…::test_a_set_longer_than_the_cap_is_refused_rather_than_quietly_shortened` |
+| A position below 1 being refused before it lands on the last slot | `…::test_position_zero_would_otherwise_land_on_the_last_slot` |
+| `POST /api/set` needing the token like every other API path | `…::test_the_set_endpoint_needs_the_token_like_every_other_api_path` |
+| The three pre-generation checks running in the catalogued order | `tests/web/test_frontend_behaviour.py::test_frontend_behaviour` (`set_creator.test.mjs`) |
+| The four dialog checks running in the catalogued order | `…::test_frontend_behaviour` (`anchor_dialog.test.mjs`) |
+| `Export to Clipboard` leaving the unfillable rows out | `…::test_frontend_behaviour` (`set_creator.test.mjs`) |
+| A message box over the dialog making the DIALOG inert as well as the shell | `…::test_frontend_behaviour` (`anchor_dialog.test.mjs`) |
+| The Set Creator destination no longer rendering a placeholder | `tests/web/test_frontend_conventions.py::test_the_set_creator_destination_is_no_longer_a_placeholder` |
+
+### 6.7 Set Creator: deferred, divergent, and found along the way
+
+**Deferred.** Everything catalogued under §2.5 or §2.12 that this follow-up does
+not reimplement, so the omission is on the record.
+
+| Control | line | Note |
+|---|---|---|
+| Widget geometry, fonts and colours | :448-463, :946-952 | `Helvetica 10 bold`, `bg="lightgreen"`, `height=4`, `height=15`, `width=5`, `padx=(0, 80)`, `500x500`. The web UI is built from the design tokens in `tokens.css`; the layout intent — a narrow numeric field, a short anchor list, a long set list, an affirmative primary button — is carried, the measurements are not |
+| `+ Add Anchor` re-styling | :455-456, §2.2 | One of the ~350 lines of macOS Tk workarounds (§3.5, §4 #8). There is nothing to work around here |
+| No scrollbar widgets on either listbox | :465-466 | Both web lists scroll normally, with a scrollbar. §2.7's table row is a Tk fact |
+| An anchor row skipped when its `track_id` has left `meta_ix` | :473 | The web anchor carries the artist and title read from the library at the moment it was chosen, so there is no second lookup to fail. Not reachable in the web UI in this PR: nothing in it deletes a track. Workflow 22e (:1483) remains a Tkinter row |
+| Parsing the position back out of the anchor row text | :524-525 | The web row keeps its position as data, so the split-on-first-`.` and its silently-ignored failure have nothing to do. Same observable behaviour |
+| Window title `Add Anchor Track`, 500×500, resizable | :946 | The dialog is a panel in the page, not a window. The title is rendered as its heading |
+
+**Divergences.** Each is a change of behaviour on purpose, not an omission.
+
+*The blank query opens on a browse, not on nothing.* :955 records that the
+dialog opens EMPTY, because search implementation A returns `[]` for a blank
+query — §4 defect #9. The web dialog lists the first 50 tracks instead, from the
+same browse endpoint the ⌘K palette uses and for the same reason (§6.4). The
+service is untouched and the characterisation of defect #9 still holds.
+
+*The generated row is a row, not a padded string.* :479 specifies
+`[{position:2d}] {icon} {display_name}{score_text}`. The web row renders the
+same four fields in columns: the position right-aligned in its own column, which
+is what the two-character field buys on screen and which still reads at three
+digits, then the icon, the name and the suffix. This is the same decision §6.1
+records for the Explore row at :356-366. The clipboard, which is where the
+string actually matters, is byte-for-byte :530-533.
+
+*A set length has an upper bound.* :501-503 lists three checks and a maximum is
+not among them, so the Tkinter tab will accept `100000` and freeze for as long
+as it takes. `POST /api/set` refuses anything over `MAX_SET_TRACKS` (500, about
+1.2 s of work at the measured ~2.3 ms per slot) with a 400 naming the cap. It is
+refused rather than clamped, because a silently shortened set is not the set
+that was asked for.
+
+*A position below 1 is refused at the API as well as in the dialog.* :963 is a
+dialog rule, and `generate_set` has no equivalent: it assigns
+`set_slots[position - 1]`, so position `0` is Python's index `-1` and the anchor
+silently becomes the LAST track of the set. The endpoint applies :963's rule at
+the layer that can be reached without the dialog. Derivation pinned by
+`tests/web/test_api_set.py::test_position_zero_would_otherwise_land_on_the_last_slot`.
+
+*Enter submits the anchor dialog.* §2.12 catalogues no keyboard binding, so this
+is an addition rather than a reimplementation of one.
+
+*A blank field is dropped from the Add Anchor dialog's rows, and the separator
+with it.* :954 says the rows render `{artist} – {title}`, and Tk builds that
+string unconditionally: `search_tracks` composes it as `f"{artist} – {title}"`
+(`recommendations/search.py:38`) and the dialog inserts the result as it stands
+(`ui/dialogs.py:90`). A track whose artist is blank therefore opens its row with
+a separator and nothing to the left of it. This dialog composes the row from the
+fields the track actually has — `format.displayName`, the same helper the ⌘K
+palette and the Explore rows already use — so that track reads as its title
+alone.
+
+This is not a corner case in this library. **69 of its 1,532 tracks carry an
+artist of `''`** — 4.5 %, measured on the `data/meta.parquet` this branch was
+developed against. `Skee Mask - Reviver` is one of them: the artist field is
+empty and the artist's name is inside the title, which is why the missing left
+half is not obvious on screen but the dangling separator is.
+
+Two consequences worth stating rather than leaving to be discovered. The first
+is that the SET CREATOR'S ANCHOR ROW does not follow: :471 catalogues
+`{position}. {artist} – {title}` and `update_anchor_listbox` builds it
+unconditionally (`ui/set_creator_tab.py:90`), that row is delivered as
+catalogued, and so the same blank-artist track reads `Skee Mask - Reviver` in
+the dialog and `1.  – Skee Mask - Reviver` once it is an anchor. Two renderings
+of one track, a few centimetres apart. The second is that this is the same
+decision §6.4 records for `Copy`, taken for the same reason and against the same
+69 tracks; it is declared separately because it is a different control on a
+different surface.
+
+The rows the two implementations produce, which
+`tests/web/js/anchor_dialog.test.mjs` reads out of this table rather than
+restating in its assertions, and whose Tk column
+`tests/web/test_anchor_row_contract.py` re-derives from
+`recommendations/search.py` rather than trusting:
+
+| artist | title | Tk's row (`recommendations/search.py:38`) | this dialog's row |
+|---|---|---|---|
+| `Blawan` | `Why They Hide` | `Blawan – Why They Hide` | `Blawan – Why They Hide` |
+| | `Skee Mask - Reviver` | ` – Skee Mask - Reviver` | `Skee Mask - Reviver` |
+| `Skee Mask` | | `Skee Mask – ` | `Skee Mask` |
+
+*A generation in flight is abandoned when the configuration it was built from
+stops being the one on screen.* The Tkinter tab cannot reach this: generation
+runs on the Tk main thread behind `self.update()` (`ui/set_creator_tab.py:111`),
+so the window takes no input for the duration and there is nothing to change
+mid-build. The web destination stays live, which means `Clear Set`, `+ Add
+Anchor`, `Remove` and `Total Tracks` are all operable while a set is being
+built. A set is written only if `configurationKey()` — the anchors in position
+order plus the length as it PARSES — still reads the same when the response
+lands;
+otherwise the response is dropped without a message, because the action that
+changed the configuration has already had its say. `Generate Set` is disabled
+for the duration of a build either way, so at most one is ever outstanding.
+Pinned by the five cases in `tests/web/js/set_creator.test.mjs` that change
+something WHILE the generation is in flight and answer it afterwards — two of
+them positive controls that change the configuration and change it back — one by removing and re-adding the anchor, one by retyping the
+same length as `030` and then in Arabic-Indic digits — where the response is
+still valid and IS written.
+
+**Both numeric controls read Python's integer grammar, not JavaScript's.**
+`Total Tracks` (:501) and the anchor dialog's `Position in Set` (:962) are each
+a bare `int()` in Tkinter whose `ValueError` IS the branch that raises the
+dialog, so "not an integer" is a question CPython answers. Both go through one
+helper, `format.parseIntegerStrictly`, and what it accepts is catalogued here
+rather than left to be discovered per control:
+
+| input | `int()` | why it is not obvious |
+| --- | --- | --- |
+| `1_0` | `10` | Python's literal grammar allows single underscores BETWEEN digits; `_10`, `10_` and `1__0` all raise |
+| `١٠` (Arabic-Indic) | `10` | `int()` takes every Unicode decimal digit, not `0-9`. An Arabic macOS keyboard produces these when you type a ten, and this library's owner has one |
+| `𝟙𝟘` (mathematical) | `10` | five ten-blocks run together at U+1D7CE..U+1D7FF, so place value cannot be found by walking back to the previous non-digit |
+| `\u008510` | `10` | U+0085 NEXT LINE is stripped by `int()` and NOT by `String.prototype.trim()` |
+| `\ufeff10` | `ValueError` | U+FEFF is stripped by `trim()` and NOT by `int()` — the pair runs both ways |
+| `10.0`, `0x10`, `1e3`, `3 apples`, `""` | `ValueError` | all of them are things `Number()` or `parseInt` accept |
+| `-2` | `-2` | it must PARSE so :963 can reject it as "Position must be 1 or greater" rather than :962 rejecting it as "not a valid position number" — the order of the two dialogs is observable |
+
+*The digit set is CPython's, enumerated, and it did not used to be.* The helper
+wrote its digit class as `\p{Nd}`, which resolves against the Unicode tables of
+whichever runtime evaluates it — and those version independently from CPython's:
+
+| runtime | Unicode | `Nd` code points |
+| --- | --- | --- |
+| CPython 3.11 (what `build-*.yml` freezes) | 14.0 | 660 |
+| node 20.20 / ICU 78 | 17.0 | 770 |
+
+So 110 code points — Kawi, Nag Mundari, Kirat Rai and nine other blocks — were
+digits to the browser and `ValueError` to `int()`. A Kawi ten
+(`U+11F51 U+11F50`) parsed as 10 in `Total Tracks` and generated a ten-track
+set, where the Tkinter tab shows "Invalid Input". Reachable through BOTH
+controls. `format.js` now carries the 62-run CPython table and
+`tests/web/test_integer_parsing_matches_python.py` re-derives it from the
+running interpreter, in both directions.
+
+*Which CPython, which is the part that was wrong.* A compiled-in table is
+exactly one Unicode version, so "CPython's table" does not finish the sentence
+until it names an interpreter. The first version of it was generated from the
+one that runs the TESTS, and at that time the app shipped on a different one —
+`.github/workflows/test-macos.yml` set up 3.10 while every `build-*.yml` froze
+3.11. PR #21 has since aligned the test workflow to 3.11, so both now name the
+same interpreter; the divergence below is what made the defect possible.
+Measured on real interpreters:
+
+| CPython | `unicodedata` | `Nd` | `int("𖫁𖫀")` (Tangsa ten) |
+| --- | --- | --- | --- |
+| 3.10.18 | 13.0.0 | 650 | `ValueError` |
+| 3.11.14 | 14.0.0 | 660 | `10` |
+
+So the shipped parser refused ten code points that the `int()` frozen into the
+same bundle accepts: 120 false acceptances were closed by opening ten false
+refusals, in the configuration users actually run. The table is now generated
+from the interpreter the build workflows freeze, and `format.js` exports
+`PYTHON_UNICODE_VERSION` naming it.
+
+*What the divergence costs, stated accurately.* Both directions of it are a
+contract violation and neither is a crash, because the typed string never
+reaches Python in this destination: `api.js` sends `total_tracks` as a NUMBER
+and `api.py:_set_total_tracks` requires an `int` already, so nothing raises
+`ValueError` on the server and no request 400s. What breaks is that the same
+keystrokes get different answers from the web destination and from the Tkinter
+tab, which really does read them with a bare `int()`
+(`src/ui/set_creator_tab.py:96`, `src/ui/dialogs.py:107`). Reproducing that tab
+is what this document is for, so a disagreement with it is the defect whichever
+way it points.
+
+*How the property is pinned.* "The shipped parser must not disagree with the
+shipped interpreter, in membership or in value" is checked against the RUNNING
+interpreter — exactly, over every code point there is, in both directions and
+with the values
+(`tests/web/test_integer_parsing_matches_python.py::test_the_helper_accepts_exactly_the_shipped_interpreters_digits`).
+
+That check is not unconditional, and saying "it runs on every CI run" would be
+the comfortable version. It drives the real `format.js` through a `node`
+script, and its file SKIPS rather than fails when `node` is missing or older
+than 18 — measured, on 3.11 with `node` off `PATH`: 2 passed, 6 skipped, and
+this check is one of the six. `.github/workflows/test-macos.yml` sets up Python
+and has no `setup-node` step, so what makes the ship-blocking comparison
+actually happen on CI is the macOS runner image carrying `node` — which is true
+today and is stated by nothing in this repository.
+
+*And what is NOT pinned, stated plainly.* That the interpreter the app is BUILT
+on is the one the tests run on is **not** verified — not by that test, and not
+anywhere else. It is a real gap and it is tracked separately. A check that read
+`.github/workflows/` to close it was deleted from
+`tests/web/test_integer_parsing_matches_python.py`: over four review rounds it
+answered confidently and wrongly four times, most recently on a `setup-python`
+step taking its version from `python-version-file:` while an unrelated step
+carried a literal `python-version`, and each round's fix taught it one more
+GitHub Actions shape without converging. It was deleted outright rather than
+skipped, because a skip exits zero and reads exactly like a pass. The case that
+MOTIVATED the removal: changing `build-macos.yml`'s Python without changing
+`test-macos.yml`'s would leave the table proved for an interpreter the app no
+longer ships on, with nothing to report it. Today both name 3.11, so every CI
+run does prove the table correct for the shipped interpreter.
+
+*That was not the whole cost, and two earlier drafts of this section understated
+it.* The deleted test —
+`test_every_workflow_names_exactly_one_python_this_file_can_resolve` — enforced
+six further properties, and nothing in this repository enforces any of them now:
+
+1. `.github/workflows/test-macos.yml` exists. Renaming it was a failure; it is
+   now silence.
+2. At least one `build-*` workflow exists at all.
+3. Every workflow the shipped-interpreter answer depends on names a Python **at
+   all** — a build that stops setting `python-version`, because the
+   `setup-python` step lost it or now takes its version from somewhere the
+   reader did not look, was a failure with its own message and its own fix.
+4. …and names no **more** than one, so "the interpreter this workflow uses"
+   never becomes an ambiguous phrase.
+5. Every `python-version` anywhere under `.github/workflows/` resolves to a
+   literal CPython version — not a matrix expression, not an `env` lookup, and
+   not an unquoted `3.10`, which YAML reads as the float `3.1`.
+6. Every `.yml`/`.yaml` in that directory parses as YAML at all.
+
+*That list is derived from the deleted code, and has to be.* It said four while
+listing five, then five while there were six — both times because the losses
+were enumerated by reading this prose rather than the source it describes. The
+mechanical check is to walk
+`git show d5b358f^:tests/web/test_integer_parsing_matches_python.py` from the
+deleted test into every helper it calls and count the reachable `assert` and
+`raise` sites. There are nine — lines 702, 777, 816, 822, 838, 1095, 1100, 1110
+and 1145 of that revision — mapping onto the six above as 777 → 6, 816 → 3, 822
+and 1145 → 5, 838 → 4, 1100 → 1, 1110 → 2. The other three are accounted for,
+not dropped: 702 fires when PyYAML is missing, which guarded the deleted code's
+own dependency rather than anything about this repository (no test imports
+`yaml` now); 1095 refuses an empty workflows directory, which is strictly
+entailed by 1 and 2; and 822 and 1145 are one property reported twice, at two
+scopes, so 5 states the wider one.
+
+Reproduced rather than recalled: with the deleted test restored beside the
+current one in a copy of the tree, each of those six mutations turns it red at
+the site it is meant to, with the workflow directory's sha recorded either side
+of every mutation so a probe that silently failed to apply could not be read as
+a finding. Under every one of them the surviving parity file stays at exactly
+its unmutated result — 8 passed on 3.11, and 1 failed / 7 passed on 3.10 where
+the failure is the version refusal below — because nothing in it imports `yaml`
+and no code in it opens or reads anything under `.github/`. So malformed YAML
+in a workflow, a renamed test workflow, a build naming two interpreters, and a
+build naming none are now things this suite goes green over.
+
+*What went is the apparatus, not the mentions, and the distinction is the
+whole claim.* An earlier draft of the sentence above said the parity file does
+not "name a path under `.github/` at all", and the file refutes it: parse
+`tests/web/test_integer_parsing_matches_python.py`, strip the docstrings, and
+one string literal survives — the failure message inside
+`…::test_the_helper_accepts_exactly_the_shipped_interpreters_digits`, which
+tells a reader on the wrong interpreter that
+`.github/workflows/test-macos.yml` naming the shipped one is what makes the
+suite green on CI. The docstrings name that directory throughout besides —
+twelve times as the file stands. What is actually gone is every way of READING
+it: the module has no `yaml` import and zero
+`open`/`read_text`/`glob`/`iterdir`/`safe_load` call sites, which is the
+mechanical reason the workflow mutations above cannot reach it. A printed path
+is not a path anything opens.
+
+*Property 3 is the one the two earlier drafts missed, and it hides for a
+reason.* Removing only `build-macos.yml`'s `python-version` line leaves the
+other five true — the test workflow is still there, a build still exists,
+nothing names several, every value still present still resolves, every file
+still parses — and the restored test fails anyway, with `build-macos.yml sets
+no python-version at all`. "Names exactly one" is two properties, and only the
+"no more than one" half had been written down.
+
+*And the removal reads differently beside what would replace it.* The open
+change that gives the Python version one source of truth — every workflow
+dropping `python-version:` for `python-version-file: .python-version`, so that
+no workflow states a version and divergence becomes impossible rather than
+detected — produces a tree in which every workflow "sets no python-version at
+all". The deleted roll call would have gone **red** on it: restored from
+`tests/web/test_integer_parsing_matches_python.py` at `d5b358f^` beside the
+current one, over a copy of the tree with that shape applied, it fails with
+`build-macos-intel.yml sets no python-version at all`. A check whose purpose
+was catching build/test interpreter divergence would have blocked the
+structural fix for that exact divergence, because the property it enforced —
+property 3, that every workflow **the answer depends on** names its own
+interpreter — is precisely the one such a fix removes.
+
+*That scope is narrower than "every workflow", and the deleted code says so
+itself.* Beside the wider check, at lines 1135-1138 of `d5b358f^`, sits the
+comment: "A workflow with no python-version is fine - not every workflow needs
+one - but one that sets an unresolvable value would be a form this file would
+have to be taught before it appeared in a build." The two scopes are two
+different assert sites. 816 lives in `_the_one_python_it_sets`, reached only
+for the workflows named `build-*` plus `TEST_WORKFLOW`, and it demands a
+version exists. 1145 is the wide one: it ranges over every workflow parsed and
+constrains only the form of a version already set, never requires one. (822 is
+that same form constraint at the narrow scope — which is why property 5 states
+1145's wider one.) The property that reached every workflow is therefore
+satisfied by a workflow that sets nothing.
+
+Measured rather than read off the comment: `dependency-canary.yml` is neither
+a build nor the test workflow, and it sets `python-version: "3.11"` today
+without ever having been required to. Delete that line in a copy of the tree
+and the restored roll call still passes; delete `build-macos.yml`'s instead
+and it fails at 816. Same edit, two files, opposite verdicts, with the
+workflow directory's sha proving each mutation applied — which is the scope
+distinction reproduced rather than asserted.
+
+That is a better reason for the deletion than four wrong answers, and it is
+the one worth keeping.
+
+
+There is no allowance for running the suite on an older interpreter, and the
+absence is the design rather than an omission. One lived there for two rounds
+and let a wrong table through a green 3.10 suite each time — first by excusing
+the ten Tangsa code points' ABSENCE, then by pinning which ten they are and
+never their VALUES, so a table whose Tangsa run was split in two answered `0`
+for a Tangsa ten and passed everything. The check now FAILS on any interpreter
+whose `unicodedata` is not the version the table declares, with a message saying
+that parity with the shipped interpreter was not proved there.
+That cost one red test on CI until `.github/workflows/test-macos.yml` named the
+interpreter `build-*.yml` freezes. PR #21 aligned them, so every CI run is now a
+total proof, and it required no change to this test file. Running the suite on
+3.10 locally still fails that one test, by design and with the message above.
+
+*The other limit, unchanged:* magnitude. Python's integers are unbounded and
+these arrive as a float64, so a value past `Number.MAX_SAFE_INTEGER` loses
+precision. `Number.parseInt` did too, and both are some fifteen orders of
+magnitude past `MAX_SET_TRACKS`.
+
+*A failed regeneration keeps the set that is already on screen.* This is
+Tkinter's behaviour and an earlier version of this destination diverged from it
+silently. `generate_set_ui` assigns the RESULT of `build()` to
+`self.generated_set` (`ui/set_creator_tab.py:113`), so a raise never reaches the
+assignment and never reaches `update_set_listbox` either: the last good set
+stays in the listbox behind the `Generation Error` dialog. The web destination
+now leaves `generatedSet` alone on the failure path for the same reason — a
+regenerate that fails should not cost the user the set they already had.
+
+*An anchored track that is deleted from the library keeps its row here, and Tk
+drops it.* :473 says an anchor is "skipped entirely if its `track_id` is no
+longer in `meta_ix`", and that is what `update_anchor_listbox` does: it holds a
+bare `Dict[int, str]` and looks the artist and title up at render time
+(`ui/set_creator_tab.py:88-90`), so a row it cannot look up is not drawn. This
+destination captures the artist and title from the search result the anchor was
+chosen from, so nothing a delete does can reach the row. It therefore survives —
+but it does not survive UNCHANGED: the next accepted build marks it, for the
+reasons set out further down this section.
+
+This PR shipped saying the case was unreachable, which is not true any more. The
+sibling Library destination adds a reachable DELETE, and `delete_tracks`
+(`services/library_session.py:183`) takes the row out of `meta_ix` for good; a
+delete and a set build are two requests served off the Tk main thread rather
+than two turns of one event loop, so a track can be anchored on this tab and
+deleted on that one.
+
+What GENERATION does is the same either way, and it is the part that matters:
+the anchor is dropped. `generate_set` places one only `if track_id in
+meta_ix.index` (`recommendations/set_generator.py:55`), so the slot is filled by
+an ordinary generated pick and the set comes back one anchor short, with no
+error and no message. The only thing the two implementations disagree about is
+whether the anchor LIST still shows the row, and showing it is the more useful
+of the two answers: a row on screen is a row that can be selected and `Remove`d,
+where Tk's vanishes without a word and leaves the dead id in `self.anchors` to
+be dropped again on every subsequent build.
+
+**The row is MARKED, and the previous entry here was wrong about why it could
+not be.** Round 2 declined to touch the stale row, on the stated grounds that
+the drop could not be inferred from what comes back — that :967's duplicate
+anchor "produces the identical shape — a requested position with no anchor on
+it, for a track the library still has — so a frontend rule keyed on that shape
+would remove the wrong row", and that telling them apart would need new response
+surface.
+
+That is false, and this document already contained the two facts that make it
+false, four paragraphs apart. Probed against the real endpoint on the
+twelve-track fixture, five tracks:
+
+| request | response | the requested position |
+| --- | --- | --- |
+| duplicate `{1: f01, 4: f01}` | 4 tracks, positions `[1, 2, 3, 5]` | **absent** — de-duplication filters the assembled list, so the slot goes with the row (`set_generator.py:176-187`) |
+| deleted `{1: f06, 4: f01}` | 5 tracks, positions `[1, 2, 3, 4, 5]` | **present**, `f02`, `is_anchor: false` — the anchor is dropped before placement (`set_generator.py:55`) and an ordinary pick fills the slot |
+
+Two independent signals, both already in the response: the requested position is
+absent for a duplicate and reassigned for a deletion, and the duplicated id is
+still anchored at its surviving position where a deleted id is anchored nowhere.
+`set-creator.js` keys on both, in that order. No new API field.
+
+*The treatment: marked, not removed.* The row keeps its position and its name
+and gains `⚠️ no longer in the library — this anchor was not used`, with
+`data-dropped="true"` for the stylesheet. Removing it would take away the only
+record of what the user had chosen and the `Remove` that clears it; leaving it
+alone means a row asserting "this track is anchored at position 4" directly
+above a set with an ordinary generated track at position 4, which is worse than
+either. The note is in the row text, so it reaches a screen reader through the
+option's accessible name rather than through colour alone. The mark is a
+statement about the LAST accepted build: a build that honours the anchor again
+clears it, and neither a failed build nor one the screen has moved on from sets
+it, because neither carries information about what the library has.
+
+Tk still differs, and the divergence is now smaller rather than larger: Tk drops
+the row (:473) and this keeps it, marked.
+
+*What pins it.* `tests/web/test_api_set.py::test_a_dropped_anchor_and_a_duplicate_anchor_are_different_response_shapes`
+pins the premise against the real service — a change that renumbered the
+duplicate's rows to close :967's gap turns it red — and five cases in
+`tests/web/js/set_creator.test.mjs` pin the treatment, including the duplicate
+answered in a shape the service does not currently produce, which is the only
+case that reaches the second signal.
+
+**Found along the way.** Two things the code does that §2.5 and §2.12 do not
+say, reported rather than changed.
+
+*The same track anchored twice loses the second anchor AND its slot.* :967 says
+"The same track may be anchored at several positions", which is true of the
+dialog — §2.12 has no such check — and says nothing about generation.
+`generate_set` places both anchors, then its final de-duplication pass
+(`src/recommendations/set_generator.py:176-187`) keeps only the first occurrence
+of a repeated id. The dropped one takes its whole slot with it, because the pass
+filters the assembled list rather than refilling the position. A five-track
+request with the same track anchored at 1 and 4 therefore returns FOUR tracks
+whose positions read 1, 2, 3, 5 — a visible gap in the rendered rows — plus
+`⚠️  Warning: Duplicate tracks detected in generated set` on stdout, which no UI
+shows. Pinned as current behaviour by
+`tests/web/test_api_set.py::test_the_same_track_anchored_twice_loses_the_second_anchor_and_its_slot`.
+
+**Known defect, declared here rather than fixed: the library can change under
+an in-flight operation, and nothing notices.** One defect, two places it shows.
+Half 1 was CLOSED by PR #19 while this PR was in review; Half 2 remains open and
+is not fixed in this PR.
+
+*Half 1 — CLOSED by PR #19. `SetBuilder.build` now captures the library
+atomically.*
+`build` takes one `LibrarySession.snapshot()`, and `snapshot()`
+(`services/library_session.py:154`) takes `self._lock` (`:162`) around all six
+reads. `delete_tracks` (`:190`) holds the SAME lock (`:201`) while publishing
+its new references, so a capture is wholly before or wholly after that
+publication, and deletion never mutates a captured object in place. Pinned by
+`tests/services/test_library_session.py:182`,
+`test_snapshot_cannot_land_inside_the_delete_publication`.
+
+The rest of this half is the HISTORICAL record of the defect and why it was
+missed, kept because the way it was missed is the reusable part. Both
+interleavings below were reproduced against the PRE-PR-#19 code, when
+`snapshot()` was six unlocked sequential attribute reads and `delete_tracks`
+rebound `_meta_ix`, then `_emb_ix`, then `_index` without a lock. Neither is
+reachable now. On the twelve-track fixture library, `{1: f01}` over five tracks:
+
+| interleaving | result |
+| --- | --- |
+| delete lands between two of `snapshot()`'s reads — pre-delete `meta_ix`, post-delete `index` | the set changes silently, `['f01','f02','f03','f05','f04']` → `['f01','f02','f03','f12','f10']` |
+| the reader lands inside `delete_tracks`, after the `meta_ix` rebind (`:202`) and before the index rebuild (`:220`) — post-delete `meta_ix`, pre-delete `index` | `KeyError: 'f05'` out of `SetBuilder.build` |
+
+The second is the one that raises, and it is NOT the one a probe on
+`snapshot()`'s own reads produces — it needs the reader interleaved into the
+delete rather than the delete into the reader. Both WERE reachable for the same
+reason: a delete and a build are two requests served off the Tk main thread
+rather than two turns of one event loop. That reason still holds; what changed
+is that the lock now makes the two operations mutually exclusive.
+
+Round 2 shipped a test named
+`test_a_delete_between_the_property_reads_cannot_be_observed_half_applied`
+asserting this was closed. It was not. The test patched the PUBLIC `meta_ix`
+property and `snapshot()` reads the private attribute, so the delete never fired
+and `fired == []` recorded only that the capture went through `snapshot()`. The
+test is kept — the capture route is worth pinning — under a name that says so,
+and `SetBuilder.build`'s docstring no longer claims the capture narrowed the
+window from three reads to one. It never did: the previous code read the three
+properties as three arguments of one call, which is already one window per
+build. The per-seed-to-per-run reduction is `ExportService`'s alone.
+
+*Half 2 — the Set Creator's `configurationKey()` does not capture the library.*
+`configurationKey()` (`set-creator.js:154-186`) is a derived key over the
+anchors and the parsed length. That covers every input of the REQUEST — `POST
+/api/set` takes exactly those two fields (`web/api.py:325-339`) — and none of
+the server state the answer also depends on. Refresh the Library destination
+while a generation is outstanding and the anchors and the length are unchanged,
+so the key compares EQUAL and a set built against a library that has since moved
+on is accepted and rendered. A sequence counter would not have caught this
+either: it is a missing INPUT, not a misplaced bump site.
+
+It cannot be closed from the frontend as the API stands. `POST /api/set` returns
+`{tracks: [...]}` with no library identity, and `GET /api/library` exposes
+`track_count` but no revision — and a count is not a revision, since a delete
+followed by a reindex restores it.
+
+*The approach originally proposed for both halves — NOT what happened.* Atomic
+publish in `LibrarySession`: one immutable snapshot object rebound as a unit, so
+a reader's single attribute read is atomic by construction and the object it
+gets can carry the revision the response needs to echo. This codebase has used that shape three times already — PR #15 (the
+transitions vector cache, built privately and published by rebinding an
+immutable tuple), PR #17 (`_Generation` + `MappingProxyType`) and PR #19
+(generation files behind a manifest pointer).
+
+What actually happened: the sibling Library PR (#19) merged first and took the
+LOCK route rather than the atomic-publish route — `snapshot()` and
+`delete_tracks` now hold the same `RLock`. That closes Half 1 completely, and it
+is why this section's Half 1 is marked CLOSED above. It does NOT close Half 2: a
+lock makes the capture atomic, but it still hands back no IDENTITY, so the
+frontend has nothing to echo and no way to tell that the library moved. Closing
+Half 2 needs a revision on the snapshot and in the `POST /api/set` response,
+which is a core-services plus API change and deserves its own review rather than
+riding inside a UI destination. It is deliberately not in this PR.
+
+*The 2.76 s at :511-512 is no longer the number.* That figure was captured
+before the transition-vector work. Measured on this branch against the same
+`SetBuilder` the Tkinter tab calls, on the 1,532-track library: a 30-track set
+takes **0.064 s**, a 100-track set 0.222 s and a 500-track set 1.154 s. The
+sentence it sits in — that the window is unresponsive for the duration, because
+generation runs on the Tk main thread behind `self.update()` — is unchanged and
+still true; only the duration is different. This is why the web destination has
+no progress stream and no cancellation: there is nothing to report.

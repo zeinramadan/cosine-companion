@@ -65,6 +65,33 @@ def search_b(meta, query):
     ].head(50)
 
 
+def regex_error_type(meta):
+    """What THIS pandas raises when ``str.contains`` is handed a bad regex.
+
+    Measured, not named. pandas 2 evaluates the expression with Python's
+    ``re`` and raises ``re.error``; pandas 3 stores the column as arrow-backed
+    ``str`` and the same call raises ``pyarrow.lib.ArrowInvalid``. The two
+    share no base class below ``Exception``, and widening the assertion to
+    ``pytest.raises(Exception)`` would let a typo in the test pass as readily
+    as the behaviour it is meant to pin - so the type is taken from the same
+    expression, on the same frame, at the moment of the test.
+
+    Guard the guard: if ``str.contains`` ever stops raising and starts
+    returning an empty result, the test below would pass for the wrong reason
+    - so a probe that does NOT raise is an error here, not a shrug.
+    """
+    try:
+        meta["artist"].str.lower().str.contains("(", na=False)
+    except Exception as exc:  # noqa: BLE001 - the type IS the measurement
+        return type(exc)
+    raise AssertionError(
+        "str.contains accepted an unbalanced '(' instead of raising. B no "
+        "longer propagates a regex error, which is a change in what the "
+        "Explore 'Set Current Track' prompt does with bad input, not a "
+        "change in what this test should assert."
+    )
+
+
 def library_rows(meta_ix):
     """What library_tab.refresh_library builds, in the order it builds it."""
     rows = [
@@ -223,9 +250,17 @@ def test_b_reads_the_query_as_a_regular_expression(fixture_library):
 
 
 def test_b_propagates_a_regex_error_out_of_the_tk_callback(fixture_library):
-    """An unbalanced '(' is a re.error, not an empty result. pick_current does
-    not catch it, so it surfaces as a Tk traceback. Current behaviour."""
-    with pytest.raises(re.error):
+    """An unbalanced '(' raises, rather than returning an empty result.
+    pick_current does not catch it, so it surfaces as a Tk traceback. Current
+    behaviour, and still current under pandas 3 - only the CLASS moved.
+
+    pandas 2 raises ``re.error`` from Python's engine; pandas 3 evaluates the
+    same expression through pyarrow and raises ``ArrowInvalid``. The user-
+    visible behaviour is identical either way (an uncaught exception out of
+    the Tk callback), so the class is measured rather than written down. What
+    is pinned is that B propagates at all: wrap the expression in a
+    try/except returning an empty frame and this test fails."""
+    with pytest.raises(regex_error_type(fixture_library.meta)):
         ids_b(fixture_library, "(")
 
 

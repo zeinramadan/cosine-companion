@@ -37,6 +37,7 @@ from services.explore_session import ExploreSession
 from services.export_service import ExportService
 from services.indexing_service import IndexingService
 from services.playlist_service import IMPORT_COMMAND, PlaylistService
+from services.set_builder import SetBuilder
 from services.settings_store import XML_PATH_KEY
 
 from web.jobs import JobInProgress, JobRegistry, WorkOutcome
@@ -105,6 +106,20 @@ EXPORT_BODY_FIELDS = frozenset(
     {"mode", "out_dir", "recommendations_per_track", "track_ids"}
 )
 REINDEX_BODY_FIELDS = frozenset({"force_full"})
+
+#: The longest set ``POST /api/set`` will build. The Tkinter tab has no upper
+#: bound at all (inventory :501-503 lists three validations and this is not one
+#: of them), so typing 100000 into ``Total Tracks`` freezes that window for as
+#: long as it takes. Generation is ~2.3 ms per slot on the 1,532-track library,
+#: so 500 is ~1.2 s - long enough to be useful, short enough that a loopback
+#: request cannot be turned into a stall. Over the cap is REFUSED rather than
+#: clamped: a silently shortened set is not the set that was asked for.
+MAX_SET_TRACKS = 500
+
+#: The two fields ``POST /api/set`` accepts, named once so the parser and its
+#: error messages cannot disagree about them.
+SET_ANCHORS_KEY = "anchors"
+SET_TOTAL_TRACKS_KEY = "total_tracks"
 
 
 class ApiError(Exception):
@@ -492,6 +507,99 @@ def _int_field(
 
 
 # ---------------------------------------------------------------------------
+# Set requests
+# ---------------------------------------------------------------------------
+
+
+def _set_track(track) -> Dict[str, Any]:
+    """One ``SetTrack`` as JSON, carrying its two computed strings.
+
+    ``display_name`` and ``icon`` are ``@property``, so ``dataclasses.asdict``
+    does not see them and the wire format would lose both. They are sent rather
+    than recomputed in JavaScript on purpose: ``display_name`` has a four-branch
+    resolution order ending in ``Track #{track_id}`` for an all-digit id
+    (``recommendations/models.py:18-30``, inventory :484-486), and a second copy
+    of it in the frontend is a second thing to keep in step with the first. The
+    unfillable-slot row inventory :490-495 describes is produced entirely by
+    that property, from an artist and an empty title.
+    """
+    detail = dataclasses.asdict(track)
+    detail["display_name"] = track.display_name
+    detail["icon"] = track.icon
+    return detail
+
+
+def _set_anchors(raw: Any) -> Dict[int, str]:
+    """``{"3": "f01"}`` from JSON into ``{3: "f01"}``.
+
+    JSON object keys are strings, so the positions arrive as text and have to
+    be converted before ``generate_set`` indexes with them.
+
+    A position below 1 is refused. ``generate_set`` does not check it - it
+    assigns ``set_slots[position - 1]``, so 0 writes to the LAST slot and -1 to
+    the one before it, silently putting the anchor somewhere nobody asked for.
+    Inventory :963 states the rule the dialog enforces ("Position must be 1 or
+    greater"), and this is the same rule at the layer that can be reached
+    without the dialog.
+    """
+    if not isinstance(raw, dict):
+        raise bad_request(f"{SET_ANCHORS_KEY} must be an object of position -> track id.")
+
+    anchors: Dict[int, str] = {}
+    for key, track_id in raw.items():
+        try:
+            position = int(str(key))
+        except (TypeError, ValueError):
+            raise bad_request(
+                f"{SET_ANCHORS_KEY} keys must be integer positions, got {key!r}."
+            ) from None
+        if position < 1:
+            raise bad_request(
+                f"{SET_ANCHORS_KEY} positions must be 1 or greater, got {position}."
+            )
+        if not isinstance(track_id, str) or not track_id:
+            raise bad_request(
+                f"{SET_ANCHORS_KEY}[{key!r}] must be a non-empty track id."
+            )
+        anchors[position] = track_id
+    return anchors
+
+
+def _set_total_tracks(raw: Any) -> int:
+    """The requested length, refused rather than clamped when it is over the cap.
+
+    ``isinstance(True, int)`` is True in Python, so booleans are excluded
+    explicitly: ``total_tracks: true`` would otherwise mean a one-track set.
+    """
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        raise bad_request(f"{SET_TOTAL_TRACKS_KEY} must be an integer, got {raw!r}.")
+    if raw > MAX_SET_TRACKS:
+        raise bad_request(
+            f"{SET_TOTAL_TRACKS_KEY} must not exceed {MAX_SET_TRACKS}, got {raw}."
+        )
+    return raw
+
+
+def _set_request(body: Any) -> Tuple[Dict[int, str], int]:
+    """Both fields of a set request, or a 400 naming what is wrong.
+
+    Exactly these two keys, as ``_update_settings`` requires exactly its one:
+    an unrecognised field is far more likely to be a caller that thinks it is
+    configuring something than a field to ignore.
+    """
+    expected = {SET_ANCHORS_KEY, SET_TOTAL_TRACKS_KEY}
+    if not isinstance(body, dict) or set(body) != expected:
+        raise bad_request(
+            "The JSON body must contain exactly two fields: "
+            f"{SET_ANCHORS_KEY} and {SET_TOTAL_TRACKS_KEY}."
+        )
+
+    return _set_anchors(body[SET_ANCHORS_KEY]), _set_total_tracks(
+        body[SET_TOTAL_TRACKS_KEY]
+    )
+
+
+# ---------------------------------------------------------------------------
 # The API
 # ---------------------------------------------------------------------------
 
@@ -505,6 +613,7 @@ class CocoApi:
         settings,
         explore=None,
         playlists=None,
+        sets=None,
         jobs=None,
         export_service=None,
         indexing_service=None,
@@ -517,6 +626,21 @@ class CocoApi:
             explore: an ``ExploreSession``; built from ``library`` when absent,
                 which is all the default construction ever is. Injectable so a
                 test can watch the arguments it is called with.
+            playlists: a ``PlaylistService``. Built over the library's own data
+                directory when absent, so the playlist tables are looked for
+                beside the index they describe rather than in the configured
+                directory - a library opened with ``--data-dir`` must not read
+                another directory's playlists. Constructing one touches no
+                disk; a library object with no ``data_dir`` (the in-memory
+                doubles two tests use for the browse and search caps) falls
+                back to the configured directory, which is where a real
+                deployment's is anyway.
+            sets: a ``SetBuilder``. Built over ``library`` when absent, which
+                is all the default construction ever is - the builder holds a
+                reference and reads ``meta_ix``/``emb_ix``/``index`` live, so
+                one built here follows an index rebuild. Injectable for the
+                same reason ``explore`` is: so a test can watch the anchors and
+                the length it is actually handed.
             jobs: a ``web.jobs.JobRegistry``. One per API, holding the
                 long-running work; built here when absent. Injectable so a
                 test can supply a fake clock and deterministic ids.
@@ -527,15 +651,6 @@ class CocoApi:
                 when absent, and injectable for the same reason - the real one
                 takes ~11.5 minutes and needs Essentia, which CI does not
                 have.
-            playlists: a ``PlaylistService``. Built over the library's own data
-                directory when absent, so the playlist tables are looked for
-                beside the index they describe rather than in the configured
-                directory - a library opened with ``--data-dir`` must not read
-                another directory's playlists. Constructing one touches no
-                disk; a library object with no ``data_dir`` (the in-memory
-                doubles two tests use for the browse and search caps) falls
-                back to the configured directory, which is where a real
-                deployment's is anyway.
         """
         self.library = library
         self.settings = settings
@@ -545,6 +660,7 @@ class CocoApi:
             if playlists is not None
             else PlaylistService(getattr(library, "data_dir", None))
         )
+        self.sets = sets if sets is not None else SetBuilder(library)
 
         self.jobs = jobs if jobs is not None else JobRegistry()
         # Both are cheap to construct and hold no state between runs:
@@ -567,10 +683,13 @@ class CocoApi:
     # -- routing -----------------------------------------------------------
     #
     # An ordered list of (method, pattern, handler name). No routing library:
-    # the ordering constraints are that /api/tracks/search is matched before
-    # /api/tracks/{track_id} and that the literal /api/jobs/export and
-    # /api/jobs/reindex are matched before /api/jobs/{job_id}, which a list
-    # expresses better than a dependency would.
+    # the table is short. Two ordering constraints: /api/tracks/search is
+    # matched before /api/tracks/{track_id}, and the literal /api/jobs/export
+    # and /api/jobs/reindex are matched before /api/jobs/{job_id}. A list
+    # expresses that better than a dependency would. Deliberately no count in
+    # this comment: the destinations still to be built each add rows, so a
+    # number here is a merge conflict and a wrong fact the moment one of them
+    # lands.
 
     ROUTES = [
         ("GET", re.compile(r"^/api/health$"), "_health"),
@@ -595,6 +714,7 @@ class CocoApi:
         ("GET", re.compile(r"^/api/jobs/(?P<job_id>[^/]+)$"), "_job"),
         ("GET", re.compile(r"^/api/settings$"), "_settings"),
         ("POST", re.compile(r"^/api/settings$"), "_update_settings"),
+        ("POST", re.compile(r"^/api/set$"), "_generate_set"),
         ("GET", re.compile(r"^/api/tracks$"), "_browse"),
         ("GET", re.compile(r"^/api/tracks/search$"), "_search"),
         (
@@ -1038,6 +1158,56 @@ class CocoApi:
             if track_id not in membership:
                 raise unknown_track(track_id)
         return track_ids
+
+    def _generate_set(self, query, body):
+        """Build a DJ set around ``{position: track_id}`` anchors.
+
+        POST, and the body is the reason. The request is an anchor MAP plus a
+        length; a query string can carry that only by inventing an encoding for
+        a mapping, and the one place this app already encodes structure - the
+        settings write - does it as JSON in a body. Nothing is stored: the set
+        is computed and returned, and the client owns it from there. That is
+        why there is no ``GET /api/set/{id}`` to go with this.
+
+        No progress stream and no cancellation, deliberately. Generation is
+        ~2.3 ms per slot on the 1,532-track library - 0.064 s for the 30-track
+        set inventory :511-512 recorded at 2.76 s before the transition-vector
+        work - so the whole ``MAX_SET_TRACKS`` ceiling is about 1.2 s. Building
+        a progress channel for that would cost more than the wait it reports.
+
+        Emptiness is checked first, for the reason ``_recommendations`` gives:
+        a library with no index cannot answer this, and the 409 says why rather
+        than blaming the anchors.
+
+        Validation of the REQUEST is here; validation of the USER'S INPUT is
+        not. Inventory :501-503 lists three checks the Tkinter tab makes before
+        it calls the builder - a non-integer length, no anchors, a length below
+        the anchor count - and each raises a named dialog. Those belong to the
+        control that owns the entry field, so the web Set Creator makes them in
+        the same order with the same strings (``set-creator.js``). What this
+        method refuses is a request no control could have produced: a body of
+        the wrong shape, a position that is not a positive integer, a length
+        over the cap. Everything the builder itself rejects - no anchors, an
+        anchor past the end - is left to the builder so there is exactly one
+        implementation of it, and comes back as ``set_generation_failed``
+        carrying the service's own message.
+        """
+        if self.library.is_empty:
+            raise empty_library()
+
+        anchors, total_tracks = _set_request(body)
+
+        try:
+            tracks = self.sets.build(anchors, total_tracks)
+        except ValueError as error:
+            # The two the service raises are "At least one anchor track is
+            # required" and "Anchor track position exceeds total tracks"
+            # (set_generator.py:41-44). Inventory :506-508 sends the second one
+            # to the "Generation Error" dialog as "Failed to generate set:
+            # {error}", so the message travels rather than being replaced.
+            raise ApiError(400, "set_generation_failed", str(error)) from None
+
+        return 200, _jsonable({"tracks": [_set_track(track) for track in tracks]})
 
     # -- helpers -----------------------------------------------------------
 

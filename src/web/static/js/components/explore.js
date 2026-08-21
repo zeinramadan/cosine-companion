@@ -28,6 +28,7 @@
  */
 
 import { api, ApiError } from '../api.js';
+import { copyToClipboard } from '../clipboard.js';
 import {
   bpm as formatBpm,
   displayName,
@@ -106,35 +107,6 @@ export function sortRecommendations(recommendations, sortName) {
     if (a > b) return 1 * sort.direction;
     return 0;
   });
-}
-
-async function copyToClipboard(text) {
-  // navigator.clipboard needs a secure context; 127.0.0.1 qualifies. The
-  // execCommand path is the fallback for a WKWebView that refuses it.
-  if (navigator.clipboard && window.isSecureContext) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return true;
-    } catch (error) {
-      /* fall through */
-    }
-  }
-
-  const scratch = document.createElement('textarea');
-  scratch.value = text;
-  scratch.setAttribute('readonly', '');
-  scratch.style.position = 'fixed';
-  scratch.style.opacity = '0';
-  document.body.append(scratch);
-  scratch.select();
-  let copied = false;
-  try {
-    copied = document.execCommand('copy');
-  } catch (error) {
-    copied = false;
-  }
-  scratch.remove();
-  return copied;
 }
 
 /**

@@ -421,17 +421,119 @@ def test_the_shell_uses_real_landmarks():
 
 
 def test_all_five_destinations_are_present():
-    """Explore, Library and Settings ship; two placeholders stay explicit."""
+    """Every catalogued destination has a nav item, built or not.
+
+    This asserted a count of what is still a placeholder, and that number is
+    wrong the moment any destination lands - the Library and Set Creator
+    branches each edited it, from opposite sides, in the same merge. Which
+    destinations are still placeholders is DERIVED from the markup by
+    ``test_the_unimplemented_destinations_say_so``; this one only asks that
+    none of the five disappeared.
+    """
     body = read(INDEX_HTML)
 
     for destination in ("explore", "set-creator", "library", "export", "settings"):
         assert f'data-destination="{destination}"' in body
 
 
+#: The eyebrow every not-yet-built destination carries.
+PLACEHOLDER_EYEBROW = "Coming in the next PR"
+
+
+def _destination_sections(body):
+    """``(name, markup)`` for every ``<section class="view" id="view-...">``."""
+    return re.findall(
+        r'<section class="view" id="view-([a-z-]+)"[^>]*>(.*?)</section>', body, re.S
+    )
+
+
 def test_the_unimplemented_destinations_say_so():
+    """DERIVED, not counted.
+
+    This asserted ``== 3``. That number is wrong the moment any destination
+    lands, so every such PR has to edit this one line - and two of them are in
+    flight at once, which makes it a guaranteed conflict in a file neither PR is
+    really changing. Worse, resolving that conflict by picking a number is
+    exactly the edit that could silently drop a placeholder nobody has built.
+
+    So the count comes from the markup: whatever still renders a placeholder
+    must say it is coming, and nothing else may claim to.
+    """
+    body = read(INDEX_HTML)
+    sections = _destination_sections(body)
+    assert sections, "no destination sections found; the regex stopped matching"
+
+    unbuilt = [name for name, markup in sections if 'class="placeholder"' in markup]
+
+    assert body.count(PLACEHOLDER_EYEBROW) == len(unbuilt), (
+        f"{len(unbuilt)} destinations still render a placeholder ({unbuilt}) but "
+        f'"{PLACEHOLDER_EYEBROW}" appears {body.count(PLACEHOLDER_EYEBROW)} times'
+    )
+    for name, markup in sections:
+        if name in unbuilt:
+            assert PLACEHOLDER_EYEBROW in markup, f"{name} has a silent placeholder"
+        else:
+            assert PLACEHOLDER_EYEBROW not in markup, (
+                f"{name} is built but still says it is coming"
+            )
+
+
+def test_the_derived_placeholder_check_can_still_see_a_placeholder():
+    """Guard the guard: if every destination were built, the loop above would
+    pass over an empty list and stop distinguishing anything."""
+    unbuilt = [
+        name
+        for name, markup in _destination_sections(read(INDEX_HTML))
+        if 'class="placeholder"' in markup
+    ]
+
+    assert unbuilt, "no placeholders left; retire this check rather than keeping a vacuous one"
+
+
+def test_the_set_creator_destination_is_no_longer_a_placeholder():
+    """The claim this PR makes about index.html, on its own so that landing it
+    does not edit a line another destination's PR is also editing."""
+    body = read(INDEX_HTML)
+    sections = dict(_destination_sections(body))
+
+    assert "set-creator" in sections, "the Set Creator section was renamed or removed"
+    assert 'class="placeholder"' not in sections["set-creator"]
+    assert 'data-destination="set-creator"' in body
+    assert '<span class="nav__soon">Soon</span>' not in body.split(
+        'data-destination="set-creator"'
+    )[1].split("</button>")[0], "the Set Creator nav item still says Soon"
+
+
+def test_the_set_creator_status_line_cannot_be_scrolled_out_of_reach():
+    """Inventory :244 and :1293 - the Tk status bar is packed ``side="bottom"``
+    "so a short window cannot hide it". That is a property of the control, not
+    of Tk's geometry manager, and it has to survive the port.
+
+    Left in the normal flow the line sat under the generated rows, so with a
+    500-row set the message announcing the set was off screen. This is a
+    SOURCE-TEXT check - it cannot lay anything out - and the behavioural half
+    was done by hand against real Chrome and recorded in the PR description.
+    """
+    body = without_comments(read(APP_CSS))
+    match = re.search(r"\.setc__status\s*\{([^}]*)\}", body)
+
+    assert match, "the Set Creator status rule is gone"
+    declarations = match.group(1)
+    assert re.search(r"position\s*:\s*sticky", declarations), declarations
+    assert re.search(r"\bbottom\s*:", declarations), declarations
+    # Opaque, or the rows scroll THROUGH the text rather than under it.
+    assert re.search(r"background\s*:\s*var\(--surface", declarations), declarations
+
+
+def test_the_modal_layer_the_dialogs_mount_into_exists():
+    """`modal.js` looks this up by id; a rename would leave every dialog
+    building nodes into nothing and failing silently at the moment a user
+    presses `+ Add Anchor`."""
     body = read(INDEX_HTML)
 
-    assert body.count("Coming in the next PR") == 2
+    assert 'id="modal-layer"' in body
+    assert 'getElementById(LAYER_ID)' in read(JS / "modal.js")
+    assert "const LAYER_ID = 'modal-layer';" in read(JS / "modal.js")
 
 
 def test_the_drawer_renders_playlists_from_the_field_it_is_given():

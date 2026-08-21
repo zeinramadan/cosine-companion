@@ -58,6 +58,24 @@ export function buildSettingsDom() {
   return { form, input, submit, status };
 }
 
+/** Build the Set Creator's mount point, the shell and the modal layer.
+ *
+ * Mirrors index.html: `#view-set-creator` inside `#app`, and `#modal-layer` as
+ * a SIBLING of the shell. The sibling relationship is the whole mechanism -
+ * `modal.js` makes `#app` inert while a dialog is open, and a dialog parked
+ * inside the shell would make itself inert along with everything else.
+ */
+export function buildSetCreatorDom() {
+  const app = withId(new Node('div'), 'app');
+  const root = withId(new Node('section'), 'view-set-creator');
+  app.append(root);
+
+  const modalLayer = withId(new Node('div'), 'modal-layer');
+
+  document.body.append(app, modalLayer);
+  return { app, root, modalLayer };
+}
+
 /** Build the Library destination's fixed controls. Mirrors index.html. */
 export function buildLibraryDom() {
   const root = withId(new Node('section'), 'view-library');
@@ -92,7 +110,11 @@ export function installFetch() {
     const path = url.pathname;
     const query = url.searchParams.get('q') || '';
     const key = `${path}?q=${query}`;
-    requests.push({ path, query, key, options });
+    // Every parameter, not only `q`: the caps are part of the contract too
+    // (`search_tracks(..., limit=50)`, inventory :954), and a test cannot
+    // assert one it was never handed.
+    const params = Object.fromEntries(url.searchParams.entries());
+    requests.push({ path, query, params, key, options });
     return new Promise((resolve, reject) => {
       pending.set(key, { resolve, reject });
     });
@@ -111,6 +133,25 @@ export function installFetch() {
       }
       pending.delete(key);
       waiting.resolve({ ok: true, status: 200, json: async () => body });
+    },
+    /** Answer one outstanding request with a non-2xx status and an API error.
+     *
+     * `deliver` always resolves `ok: true`, so without this the only failure a
+     * test could stage is a dropped connection - and the message the UI shows
+     * for a refused set ("Failed to generate set: {error}", inventory :507) is
+     * the SERVER'S message, which only reaches the frontend down this path.
+     */
+    deliverError(key, status, code, message) {
+      const waiting = pending.get(key);
+      if (!waiting) {
+        throw new Error(`no outstanding request for ${key}; have ${[...pending.keys()]}`);
+      }
+      pending.delete(key);
+      waiting.resolve({
+        ok: false,
+        status,
+        json: async () => ({ error: { code, message } }),
+      });
     },
     /** Fail one outstanding request as a network error. */
     reject(key, error = new Error('network failure')) {
