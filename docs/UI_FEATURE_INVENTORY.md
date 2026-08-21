@@ -2547,8 +2547,8 @@ refusal ends with the screen showing the export that caused it.
 
 *The registry is what makes a reload survivable, and the frontend has to ask.*
 `JobRegistry` outlives the request that created it and remembers
-`MAX_REMEMBERED_JOBS` finished jobs (`web/jobs.py:116-120`), so a ⌘R during the
-measured 6.8-minute run (:640) does not stop the export — but the page loses the
+`MAX_REMEMBERED_JOBS` finished jobs (`web/jobs.py:116-120`), so a ⌘R part way
+through a run does not stop the export — but the page loses the
 id it was handed, which is the whole reason `GET /api/jobs` exists
 (`web/api.py:966-975`). `mountExport` asks for it as it mounts, whatever
 destination is showing, and re-attaches to a running export. A job that reached a
@@ -2569,6 +2569,39 @@ complete bytes and sets a `Content-Length` from them, so SSE would mean a second
 emission path reimplementing HEAD elision and framing for one endpoint. A poll
 of `GET /api/jobs/{id}` was measured at 0.46 ms, and the destination polls twice
 a second while a job is running and stops when it ends.
+
+*The 6.8 minutes at :640 is no longer the number.* Measured on this branch
+against the real 1,532-track library, through the shipped `POST
+/api/jobs/export` and `GET /api/jobs/{id}`: a full-collection export at 25
+recommendations per track takes **11.9 s** — 7.8 ms a seed, 1,532 playlists and
+38,300 recommendations. :640's figure predates the transition-vector work, in
+exactly the way §6.7 records for the 2.76 s set-generation figure at :511-512,
+which is now 0.064 s. The sentences :640 sits in are otherwise unchanged and
+still true: there is still no cancel control in the Tkinter tab, and closing the
+window there still kills a daemon thread part way through a write.
+
+Nothing about this destination's design turns on which number it is. Twelve
+seconds is still long enough that a frozen window would be wrong, still long
+enough that a user can want it stopped, and still long enough for a reload to
+land in the middle of it — and the ceiling is not fixed: 50 recommendations per
+track over a larger library scales from here. What it does settle is the poll
+budget. At half a second the counter moves about two dozen times over a run,
+which is a bar that moves rather than a slideshow, and 24 polls at the measured
+0.46 ms is 11 ms of server time for the whole export.
+
+*The progress block had to be pinned to the bottom of the scrollport.* Found in
+the browser, not in a test. The window opens at 1280×840 (`web/host.py:34-36`)
+and the three numbered sections plus the action button fill it, so in the normal
+flow the progress block and the Stop button rendered BELOW the fold at the exact
+moment an export started — measured in headless Chrome at 1280×980, a taller
+window than the app opens with, where the block began at y=985 against a
+viewport ending at 980. The one control a user might urgently want was off
+screen and the bar reporting the run they had just begun was invisible unless
+they scrolled. It is `position: sticky` with a bottom offset now, which is the
+same treatment §6.7 records for the Set Creator status line and for the same
+reason inventory :244 and :1293 give about the Tk status bar being packed
+`side="bottom"`. Pinned by
+`tests/web/test_frontend_conventions.py::test_the_export_progress_block_cannot_be_scrolled_out_of_reach`.
 
 *Three of this PR's own tests could not fail, and mutation is what found them.*
 The tick-prefix assertion built its expected string out of the constant it was

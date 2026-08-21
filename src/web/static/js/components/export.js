@@ -35,9 +35,23 @@
  *
  * WHY THIS SCREEN IS DIFFERENT FROM THE OTHER FOUR
  * ------------------------------------------------
- * A full-collection export was measured at ~6.8 minutes (:640). It is the only
- * long-running thing in the application, so the progress display and the Stop
- * button are the feature and not decoration:
+ * It is the longest-running thing in the application, and the only one with a
+ * cancel, so the progress display and the Stop button are the feature and not
+ * decoration.
+ *
+ * HOW LONG IT ACTUALLY TAKES, because :640's number is stale. Inventory :640
+ * records ~6.8 minutes for a full-collection export. Measured on this branch
+ * against the real 1,532-track library, through the shipped endpoints: **11.9
+ * s**, 7.8 ms a seed, 1,532 playlists and 38,300 recommendations written. The
+ * figure at :640 predates the transition-vector work, exactly as the 2.76 s
+ * set-generation figure at :511-512 did before §6.7 corrected it to 0.064 s.
+ * Recorded in §6.9 rather than left as a number this file repeats.
+ *
+ * None of the design below changes: twelve seconds is still long enough that a
+ * frozen window would be wrong, a user can still want it stopped, and a reload
+ * can still land in the middle of it. What it does change is the poll budget -
+ * at half a second the counter moves about two dozen times over a run, which
+ * is a moving bar rather than a slideshow.
  *
  * * The bar is DETERMINATE, because the run knows `i` and `N` and reports both.
  *   §2.13's re-index window showed an indeterminate bar while holding exactly

@@ -723,12 +723,33 @@ button {
 }
 
 /* ---- the progress block -------------------------------------------------
-   Inventory :588-592: hidden until an export starts, and DETERMINATE. A
-   full-collection run is ~6.8 minutes (:640) and the job reports `i` and `N`,
-   so there is no honest reason for an indeterminate bar - §2.13's re-index
-   window showed one while holding exactly that pair. */
+   Inventory :588-592: hidden until an export starts, and DETERMINATE. The job
+   reports `i` and `N`, so there is no honest reason for an indeterminate bar -
+   §2.13's re-index window showed one while holding exactly that pair. (:640's
+   6.8 minutes is stale; a full run measures 11.9 s on this branch. See §6.9.) */
 
+/* STUCK TO THE BOTTOM OF THE SCROLLPORT, for the reason inventory :244 and
+   :1293 give about the Tk status bar - it is packed `side="bottom"` "so a short
+   window cannot hide it", and that is a property of the control rather than a
+   detail of Tk's geometry manager. The Set Creator's status line already
+   carries the same treatment for the same reason.
+
+   It matters more here than there. The window ships at 1280x840
+   (`web/host.py:34-36`) and the three numbered sections plus the action button
+   already fill it, so left in the normal flow the progress block and the Stop
+   button appeared BELOW the fold at the exact moment an export started: the
+   one control a user might urgently want was off screen, and the bar reporting
+   a run they had just begun was invisible unless they scrolled. Measured in
+   headless Chrome at 1280x980 - the block began at y=985 with the viewport
+   ending at 980 - which is a taller window than the app opens with.
+
+   Sticky rather than fixed, so it sits inside the destination's own column
+   instead of over the sidebar, and opaque, so rows pass under it rather than
+   through it. */
 .exportv__progress {
+  position: sticky;
+  bottom: calc(var(--space-6) * -1);
+  z-index: 1;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
@@ -736,7 +757,7 @@ button {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
   background: var(--surface-2);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-lg);
 }
 
 .exportv__progress[hidden] {

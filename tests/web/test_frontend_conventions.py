@@ -592,6 +592,40 @@ def test_the_set_creator_status_line_cannot_be_scrolled_out_of_reach():
     assert re.search(r"background\s*:\s*var\(--surface", declarations), declarations
 
 
+def test_the_export_progress_block_cannot_be_scrolled_out_of_reach():
+    """The same claim as the Set Creator status line, for the control that
+    needs it most.
+
+    §2.6's progress block holds the only Stop button in the application, and
+    the window opens at 1280x840 (``web/host.py:34-36``). The three numbered
+    sections and the action button fill that on their own, so in the normal
+    flow the block appeared BELOW the fold at the moment an export started -
+    measured in headless Chrome at 1280x980, a taller window than the app
+    opens with, where the block began at y=985 against a viewport ending at
+    980. A progress bar nobody can see is not a progress bar, and a Stop
+    button nobody can reach is worse.
+
+    A SOURCE-TEXT check - it cannot lay anything out - and the behavioural half
+    was done by hand against a real browser and recorded in the PR description.
+    """
+    body = without_comments(read(APP_CSS))
+    match = re.search(r"\.exportv__progress\s*\{([^}]*)\}", body)
+
+    assert match, "the Export progress rule is gone"
+    declarations = " ".join(match.group(1).split())
+
+    assert re.search(r"position\s*:\s*sticky", declarations), (
+        f"the progress block is back in the normal flow: {declarations}"
+    )
+    assert re.search(r"bottom\s*:", declarations), (
+        f"a sticky block with no offset never sticks: {declarations}"
+    )
+    # Opaque, or the rows scrolling under it read through it.
+    assert re.search(r"background\s*:\s*var\(--surface", declarations), (
+        f"the progress block is transparent: {declarations}"
+    )
+
+
 def test_the_modal_layer_the_dialogs_mount_into_exists():
     """`modal.js` looks this up by id; a rename would leave every dialog
     building nodes into nothing and failing silently at the moment a user
