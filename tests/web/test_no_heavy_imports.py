@@ -33,7 +33,7 @@ FORBIDDEN_ROOTS = ("webview", "tkinter", "essentia", "tensorflow")
 
 # host.py is the one module allowed to import webview - it is the pywebview
 # host. Everything else under src/web/ is checked.
-HEADLESS_MODULES = ("web", "web.assets", "web.server", "web.api")
+HEADLESS_MODULES = ("web", "web.assets", "web.server", "web.api", "web.jobs")
 
 
 def _loaded_forbidden_after(import_statements):
@@ -63,6 +63,7 @@ def test_the_guard_has_modules_to_guard():
     assert WEB_DIR.is_dir(), f"{WEB_DIR} does not exist"
     assert (WEB_DIR / "server.py").is_file()
     assert (WEB_DIR / "api.py").is_file()
+    assert (WEB_DIR / "jobs.py").is_file()
 
 
 @pytest.mark.parametrize("module", HEADLESS_MODULES)

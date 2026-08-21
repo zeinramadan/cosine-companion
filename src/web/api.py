@@ -34,8 +34,12 @@ import numpy as np
 import pandas as pd
 
 from services.explore_session import ExploreSession
+from services.export_service import ExportService
+from services.indexing_service import IndexingService
 from services.playlist_service import IMPORT_COMMAND, PlaylistService
 from services.settings_store import XML_PATH_KEY
+
+from web.jobs import JobInProgress, JobRegistry, WorkOutcome
 
 
 API_VERSION = 1
@@ -67,6 +71,40 @@ MAX_RECOMMENDATION_LIMIT = 200
 # Filesystem limits differ, but a path longer than this is not useful on any
 # platform the desktop app supports and can raise from a later UI callback.
 MAX_XML_PATH_CHARACTERS = 4096
+
+#: The two long operations, as ``JobSnapshot.kind`` values.
+JOB_KIND_EXPORT = "export"
+JOB_KIND_REINDEX = "reindex"
+
+#: Export writes one playlist per seed into a directory, or every seed's
+#: recommendations into one de-duplicated file. Same names the service uses.
+EXPORT_MODE_PER_SEED = "per_seed"
+EXPORT_MODE_COMBINED = "combined"
+EXPORT_MODES = (EXPORT_MODE_PER_SEED, EXPORT_MODE_COMBINED)
+
+#: Combined mode's filename inside the chosen directory. The literal is
+#: ``ui/playlist_export_tab.py:407``'s, so both front ends write and overwrite
+#: the same file rather than leaving two differently-named exports behind.
+#: (``export_service.COMBINED_PLAYLIST_NAME`` is a different string: the
+#: playlist's *display name* written inside the M3U.)
+COMBINED_EXPORT_FILENAME = "Cosine_Recommendations.m3u"
+
+#: The Tkinter combo offers 10-50 (``playlist_export_tab.py:141``). The API is
+#: not going to enforce a combo box's list, but it does refuse zero - which
+#: would run the whole export and write empty playlists - and a value large
+#: enough to be a typo rather than a request.
+MIN_RECOMMENDATIONS_PER_TRACK = 1
+MAX_RECOMMENDATIONS_PER_TRACK = 100
+DEFAULT_RECOMMENDATIONS_PER_TRACK = 10
+
+#: Accepted fields per job-start body. Unknown fields are refused rather than
+#: ignored, matching ``_update_settings`` and ``_delete_library_tracks``: a
+#: misspelled ``out_dir`` must not silently start a seven-minute export into
+#: the wrong place.
+EXPORT_BODY_FIELDS = frozenset(
+    {"mode", "out_dir", "recommendations_per_track", "track_ids"}
+)
+REINDEX_BODY_FIELDS = frozenset({"force_full"})
 
 
 class ApiError(Exception):
@@ -103,6 +141,32 @@ def empty_library() -> ApiError:
         409,
         "empty_library",
         "The library has no index. Index a Rekordbox collection first.",
+    )
+
+
+def unknown_job(job_id: str) -> ApiError:
+    """404 rather than 410 for a job that has been evicted.
+
+    ``JobRegistry`` remembers a bounded number of finished jobs, so an id can
+    stop resolving. The caller cannot act on the difference between "never
+    existed" and "forgotten" - both mean *there is nothing here to poll* - and
+    a 410 would invite a UI to distinguish two states it cannot verify.
+    """
+    return ApiError(404, "unknown_job", f"No job with id {job_id!r}.")
+
+
+def job_in_progress(running) -> ApiError:
+    """409 for the second job, naming the first.
+
+    Conflict, not rate limiting: 429 would tell a caller to retry after a
+    delay, and the honest instruction is "cancel or wait for that job". The
+    running job's id is in the message so the UI can offer exactly that.
+    """
+    return ApiError(
+        409,
+        "job_in_progress",
+        f"A {running.kind} job ({running.job_id}) is already running. "
+        "Wait for it to finish or cancel it first.",
     )
 
 
@@ -191,6 +255,122 @@ def _jsonable(value: Any) -> Any:
 
 
 # ---------------------------------------------------------------------------
+# Job documents
+# ---------------------------------------------------------------------------
+
+
+def _job_document(snapshot) -> Dict[str, Any]:
+    """One job, as JSON, from ONE ``JobSnapshot``.
+
+    Takes the snapshot as an argument rather than a ``Job`` so the "one read,
+    answer everything from it" rule is enforced by the signature: there is no
+    ``job`` in scope here to re-read a field from. That is the bug
+    ``PlaylistService.lookup`` was rewritten for, and job state changes far
+    more often than a playlist manifest does.
+
+    ``dict(snapshot.result)`` is not cosmetic. ``JobSnapshot.result`` is a
+    ``MappingProxyType`` so a published generation cannot be mutated by a
+    reader, and a ``MappingProxyType`` is **not** a ``dict`` subclass: it
+    misses ``_jsonable``'s dict branch and would fall through to the final
+    ``str()`` fallback, putting a Python repr on the wire where the frontend
+    expects an object. Pinned by
+    tests/web/test_api_jobs_wire.py::test_a_job_result_arrives_as_a_json_object.
+    """
+    return {
+        "id": snapshot.job_id,
+        "kind": snapshot.kind,
+        "state": snapshot.state,
+        "progress": {
+            "current": snapshot.current,
+            "total": snapshot.total,
+            "message": snapshot.message,
+        },
+        "cancel_requested": snapshot.cancel_requested,
+        "started_at": snapshot.started_at,
+        "finished_at": snapshot.finished_at,
+        "result": None if snapshot.result is None else dict(snapshot.result),
+        "error": snapshot.error,
+    }
+
+
+def _export_result_document(result, mode: str, output: str) -> Dict[str, Any]:
+    """An ``ExportResult`` as JSON, including what a cancel left behind.
+
+    WHAT CANCELLING A HALF-FINISHED EXPORT LEAVES ON DISK
+    ----------------------------------------------------
+    It leaves it. That is a decision, and it is the opposite of indexing's -
+    a cancelled index run discards every embedding it computed (inventory
+    defect #4) - because the two produce different kinds of artefact:
+
+    * Per-seed mode writes one complete ``.m3u`` per seed as it goes, and
+      ``export_recommendations_as_playlists`` breaks at the *top* of its loop,
+      before a write. So every file on disk when a cancel lands is a whole,
+      importable playlist. Deleting them would mean the job layer removing
+      files from a directory the **user** chose and may keep their own files
+      in - a destructive act performed by a Stop button. No.
+    * Combined mode accumulates in memory and writes one file *after* the
+      loop, cancel or not (``playlist_exporter.py:266-269``), so a cancelled
+      combined export still produces a playlist - a shorter one. That is the
+      service's behaviour and this PR does not change services; what it can do
+      is stop it being a surprise.
+
+    So the honest part is the reporting, and that is what this document is
+    for: ``cancelled`` beside the real counts and the path written to, so a UI
+    can say "cancelled - 47 of 1,532 playlists written to ~/Desktop/..."
+    rather than "cancelled" and nothing. A partial result the user is told
+    about is a result; the same files with no accounting are what feels like
+    corruption.
+
+    ``playlists_created`` is explicitly ``None`` in combined mode rather than
+    absent. ``ExportResult.as_legacy_stats`` *omits* the key there, which is
+    what makes the Tkinter tab raise ``KeyError`` and show no completion
+    dialog (inventory defect #10) - a defect of that **caller**, preserved at
+    the service boundary. Reproducing the missing key on a new JSON surface
+    would recreate the defect for a consumer that never had it; an explicit
+    null says the same thing without arming the trap.
+    """
+    return {
+        "mode": mode,
+        "output": output,
+        "total_tracks": result.total_tracks,
+        "successful": result.successful,
+        "failed": result.failed,
+        "total_recommendations": result.total_recommendations,
+        "playlists_created": result.playlists_created,
+        "cancelled": result.cancelled,
+    }
+
+
+def _index_result_document(result) -> Dict[str, Any]:
+    """An ``IndexResult`` as JSON, including the outcome the Tkinter UI hides.
+
+    ``status`` and ``failed`` travel. On ``main`` all three terminal outcomes
+    read as "Indexing completed successfully!" in both Tk windows, including
+    ``no_embeddings`` - new tracks were found and *not one* could be embedded.
+    ``tests/test_ui_reports_success_for_every_terminal_outcome.py`` pins that
+    unchanged behaviour and statically forbids ``src/ui/*.py`` and
+    ``src/cosine_companion.py`` from reaching these fields; ``src/web/`` is
+    deliberately outside that guard (its ``_ui_sources`` is that list), which
+    is what ``IndexResult``'s docstring means by "PR 3 needs in order to fix
+    the defect deliberately".
+
+    This PR does not decide how the outcome is *rendered* - there is no UI in
+    it. It carries the distinction to the surface a UI can read, and stops
+    there. The job's own ``state`` stays ``succeeded`` for a ``no_embeddings``
+    run, because the job ran to completion and did not raise; a ``failed``
+    job with a null ``error`` would be a worse lie than the one being fixed.
+    """
+    return {
+        "status": result.status,
+        "up_to_date": result.up_to_date,
+        "failed": result.failed,
+        "total_tracks_indexed": result.total_tracks_indexed,
+        "new_tracks_added": result.new_tracks_added,
+        "new_tracks_found": result.new_tracks_found,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Query-parameter parsing
 # ---------------------------------------------------------------------------
 
@@ -234,6 +414,84 @@ def _int_param(
 
 
 # ---------------------------------------------------------------------------
+# JSON-body field parsing
+# ---------------------------------------------------------------------------
+#
+# The query-string helpers above take ``dict[str, list[str]]`` and every value
+# is text. A JSON body carries real types, so these are separate rather than
+# overloaded - conflating them is how ``recommendations_per_track: "10"``
+# starts being accepted by one endpoint and not another.
+
+
+def _body_fields(body: Any, allowed: frozenset) -> Dict[str, Any]:
+    """Validate a JSON object body and return it.
+
+    Unknown fields are refused, matching ``_update_settings`` and
+    ``_delete_library_tracks``. Silently ignoring them means a caller that
+    misspells ``out_dir`` starts an export into the *default* location and
+    finds out when it finishes.
+
+    ``None`` is accepted as an empty object so a caller with nothing to say
+    can POST the literal ``null`` rather than being required to know that
+    ``{}`` is the spelling.
+    """
+    if body is None:
+        return {}
+    if not isinstance(body, dict):
+        raise bad_request("The JSON body must be an object.")
+    unknown = sorted(set(body) - allowed)
+    if unknown:
+        raise bad_request(
+            f"Unknown field(s): {', '.join(repr(name) for name in unknown)}. "
+            f"Allowed: {', '.join(sorted(allowed))}."
+        )
+    return body
+
+
+def _path_field(fields: Dict[str, Any], name: str) -> str:
+    """A required, non-blank, length-capped filesystem path from a body.
+
+    The same ceiling ``_update_settings`` puts on the XML path, for the same
+    reason: longer than this is not useful on any supported platform and can
+    raise from somewhere far away from the request that carried it.
+    """
+    value = fields.get(name)
+    if not isinstance(value, str) or not value.strip():
+        raise bad_request(f"{name} must be a non-blank string.")
+    value = value.strip()
+    if len(value) > MAX_XML_PATH_CHARACTERS:
+        raise bad_request(
+            f"{name} must not exceed {MAX_XML_PATH_CHARACTERS} characters."
+        )
+    return value
+
+
+def _int_field(
+    fields: Dict[str, Any], name: str, default: int, minimum: int, maximum: int
+) -> int:
+    """A bounded integer from a body. Out of range is a 400, not a clamp.
+
+    Deliberately unlike ``_int_param``, which clamps a too-large ``limit``
+    because "as many as you have" is a sensible reading of it. There is no
+    such reading here: ``recommendations_per_track: 100000`` is a typo, and
+    silently exporting 100 instead would hide it behind a seven-minute run.
+
+    ``bool`` is rejected explicitly - it is an ``int`` subclass in Python, so
+    ``True`` would otherwise be accepted and mean 1.
+    """
+    if name not in fields:
+        return default
+    value = fields[name]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise bad_request(f"{name} must be an integer, got {value!r}.")
+    if not minimum <= value <= maximum:
+        raise bad_request(
+            f"{name} must be between {minimum} and {maximum}, got {value}."
+        )
+    return value
+
+
+# ---------------------------------------------------------------------------
 # The API
 # ---------------------------------------------------------------------------
 
@@ -241,7 +499,16 @@ def _int_param(
 class CocoApi:
     """Routes JSON requests onto the services layer."""
 
-    def __init__(self, library, settings, explore=None, playlists=None):
+    def __init__(
+        self,
+        library,
+        settings,
+        explore=None,
+        playlists=None,
+        jobs=None,
+        export_service=None,
+        indexing_service=None,
+    ):
         """Bind to a library and a settings store.
 
         Args:
@@ -250,6 +517,16 @@ class CocoApi:
             explore: an ``ExploreSession``; built from ``library`` when absent,
                 which is all the default construction ever is. Injectable so a
                 test can watch the arguments it is called with.
+            jobs: a ``web.jobs.JobRegistry``. One per API, holding the
+                long-running work; built here when absent. Injectable so a
+                test can supply a fake clock and deterministic ids.
+            export_service: an ``ExportService``. Built over ``library`` when
+                absent. Injectable because the real one takes ~6.8 minutes
+                over the full collection, which no test may spend.
+            indexing_service: an ``IndexingService``. Built over ``settings``
+                when absent, and injectable for the same reason - the real one
+                takes ~11.5 minutes and needs Essentia, which CI does not
+                have.
             playlists: a ``PlaylistService``. Built over the library's own data
                 directory when absent, so the playlist tables are looked for
                 beside the index they describe rather than in the configured
@@ -269,14 +546,30 @@ class CocoApi:
             else PlaylistService(getattr(library, "data_dir", None))
         )
 
+        self.jobs = jobs if jobs is not None else JobRegistry()
+        # Both are cheap to construct and hold no state between runs:
+        # ``ExportService`` snapshots the library per export and
+        # ``IndexingService`` defers its Essentia-bearing import into ``run``.
+        # Building them here rather than per request keeps the request path
+        # free of construction that could raise.
+        self.export_service = (
+            export_service if export_service is not None else ExportService(library)
+        )
+        self.indexing_service = (
+            indexing_service
+            if indexing_service is not None
+            else IndexingService(settings)
+        )
+
         self._settings_write_lock = threading.Lock()
         self._library_write_lock = threading.Lock()
 
     # -- routing -----------------------------------------------------------
     #
     # An ordered list of (method, pattern, handler name). No routing library:
-    # there are eight routes and the only ordering constraint is that
-    # /api/tracks/search is matched before /api/tracks/{track_id}, which a list
+    # the ordering constraints are that /api/tracks/search is matched before
+    # /api/tracks/{track_id} and that the literal /api/jobs/export and
+    # /api/jobs/reindex are matched before /api/jobs/{job_id}, which a list
     # expresses better than a dependency would.
 
     ROUTES = [
@@ -288,6 +581,18 @@ class CocoApi:
             re.compile(r"^/api/library/tracks/delete$"),
             "_delete_library_tracks",
         ),
+        # Jobs. The literal POST routes are listed before the ``{job_id}``
+        # ones so ``/api/jobs/export`` is a route and not a job called
+        # "export"; ``handle`` matches in order.
+        ("GET", re.compile(r"^/api/jobs$"), "_jobs"),
+        ("POST", re.compile(r"^/api/jobs/export$"), "_start_export"),
+        ("POST", re.compile(r"^/api/jobs/reindex$"), "_start_reindex"),
+        (
+            "POST",
+            re.compile(r"^/api/jobs/(?P<job_id>[^/]+)/cancel$"),
+            "_cancel_job",
+        ),
+        ("GET", re.compile(r"^/api/jobs/(?P<job_id>[^/]+)$"), "_job"),
         ("GET", re.compile(r"^/api/settings$"), "_settings"),
         ("POST", re.compile(r"^/api/settings$"), "_update_settings"),
         ("GET", re.compile(r"^/api/tracks$"), "_browse"),
@@ -521,6 +826,218 @@ class CocoApi:
                 _jsonable(dataclasses.asdict(rec)) for rec in ranked[:limit]
             ],
         }
+
+    # -- jobs --------------------------------------------------------------
+
+    def _jobs(self, query):
+        """Every remembered job, newest first.
+
+        The endpoint a page uses on load: a reload during a seven-minute
+        export must be able to find the export again, and it does not know the
+        id it was given before the reload.
+        """
+        return 200, _jsonable(
+            {"jobs": [_job_document(job.snapshot()) for job in self.jobs.all()]}
+        )
+
+    def _job(self, query, job_id):
+        """One job. The endpoint a UI polls; see ``web.jobs`` on why polling."""
+        job = self.jobs.get(job_id)
+        if job is None:
+            raise unknown_job(job_id)
+        return 200, _jsonable({"job": _job_document(job.snapshot())})
+
+    def _cancel_job(self, query, job_id, body):
+        """Ask a job to stop, and answer with its state *after* the request.
+
+        200 rather than 409 for a job that has already finished. Pressing Stop
+        as a run completes is a race the user cannot avoid, and an error there
+        would be an error about nothing. The returned document is unambiguous
+        either way: ``cancel_requested`` is true only if the signal really was
+        delivered, and ``state`` says what the job actually did.
+
+        The body must be empty. A cancel takes no arguments, and accepting
+        fields nobody reads is how an endpoint acquires ones somebody does.
+        """
+        if body not in (None, {}):
+            raise bad_request("The cancel request takes no fields.")
+
+        job = self.jobs.get(job_id)
+        if job is None:
+            raise unknown_job(job_id)
+        # ONE call: request_cancel returns the snapshot it published, so the
+        # response describes the state this request produced rather than
+        # whatever a second read would have found.
+        return 200, _jsonable({"job": _job_document(job.request_cancel())})
+
+    def _start_export(self, query, body):
+        """Start an export job. 202, or 409 if a job is already running.
+
+        The whole request is validated - the mode, the directory, the count
+        and every track id - **before** the job starts, so a mistyped field is
+        a 400 the caller sees now rather than a job that fails seven minutes
+        later. Track ids are resolved against ONE ``library.snapshot()``, the
+        same capture discipline ``ExportService`` uses internally.
+        """
+        fields = _body_fields(body, EXPORT_BODY_FIELDS)
+
+        mode = fields.get("mode", EXPORT_MODE_PER_SEED)
+        if mode not in EXPORT_MODES:
+            raise bad_request(
+                f"mode must be one of {', '.join(EXPORT_MODES)}, got {mode!r}."
+            )
+
+        out_dir = _path_field(fields, "out_dir")
+        per_track = _int_field(
+            fields,
+            "recommendations_per_track",
+            DEFAULT_RECOMMENDATIONS_PER_TRACK,
+            MIN_RECOMMENDATIONS_PER_TRACK,
+            MAX_RECOMMENDATIONS_PER_TRACK,
+        )
+        track_ids = self._export_track_ids(fields)
+
+        if mode == EXPORT_MODE_COMBINED:
+            # The directory is not created for combined mode - the exporter
+            # never has (``export_service`` module docstring, "Combined mode
+            # does not create its output directory"), and this PR changes no
+            # service. A missing directory surfaces as a failed job carrying
+            # the OSError's own message rather than as a silent no-op.
+            output = str(Path(out_dir) / COMBINED_EXPORT_FILENAME)
+        else:
+            output = out_dir
+
+        service = self.export_service
+
+        def work(report, cancel):
+            if mode == EXPORT_MODE_COMBINED:
+                result = service.export_combined(
+                    track_ids, output, per_track, progress=report, cancel=cancel
+                )
+            else:
+                result = service.export_per_seed(
+                    track_ids, output, per_track, progress=report, cancel=cancel
+                )
+            return WorkOutcome(
+                cancelled=result.cancelled,
+                result=_export_result_document(result, mode, output),
+            )
+
+        return self._start(
+            JOB_KIND_EXPORT,
+            work,
+            total=len(track_ids),
+            message=f"Exporting {len(track_ids)} tracks",
+        )
+
+    def _start_reindex(self, query, body):
+        """Start a re-index job. 202, or 409 if a job is already running.
+
+        The XML path comes from the settings store, not the request body, for
+        the same reason ``_update_settings`` is the only way to change it:
+        there is one configured collection and both front ends must agree
+        about which one it is. A blank path is a 409 rather than a 400 -
+        nothing is wrong with the *request*; the application is not configured
+        yet, which is the same shape as ``empty_library``.
+        """
+        fields = _body_fields(body, REINDEX_BODY_FIELDS)
+
+        force_full = fields.get("force_full", False)
+        if not isinstance(force_full, bool):
+            raise bad_request("force_full must be true or false.")
+
+        xml_path = self.settings.get(XML_PATH_KEY)
+        if not isinstance(xml_path, str) or not xml_path.strip():
+            raise ApiError(
+                409,
+                "no_xml_path",
+                "No Rekordbox XML is configured. Set one in Settings first.",
+            )
+        xml_path = xml_path.strip()
+
+        service = self.indexing_service
+
+        def work(report, cancel):
+            # ``IndexingService`` emits a ProgressEvent with a phase; the job
+            # layer carries three fields, so the phase is dropped here rather
+            # than widening the job record for one producer. ``total`` is 0
+            # outside the embedding phase, which a UI reads as indeterminate -
+            # the same information the pipeline has.
+            def on_event(event):
+                report(event.current, event.total, event.message)
+
+            result = service.run(
+                xml_path, force_full=force_full, progress=on_event, cancel=cancel
+            )
+            # Never ``cancelled=True`` here. A cancel that the pipeline
+            # observes raises KeyboardInterrupt out of ``run`` and ``Job._run``
+            # lands it as cancelled; a cancel it never observes completes the
+            # run for real (inventory defect #17), and reporting that as
+            # cancelled would claim work was discarded that was in fact kept.
+            # The terminal snapshot still carries ``cancel_requested``, which
+            # is how that case stays visible.
+            return WorkOutcome(cancelled=False, result=_index_result_document(result))
+
+        return self._start(
+            JOB_KIND_REINDEX,
+            work,
+            message="Full re-index" if force_full else "Checking for new tracks",
+        )
+
+    def _start(self, kind, work, total=0, message=""):
+        """Register a job, or turn the one-at-a-time refusal into a 409."""
+        try:
+            job = self.jobs.start(kind, work, total=total, message=message)
+        except JobInProgress as conflict:
+            raise job_in_progress(conflict.running) from None
+        # 202: the response describes work that has been accepted and is not
+        # finished. A 200 would say the export is done.
+        return 202, _jsonable({"job": _job_document(job.snapshot())})
+
+    def _export_track_ids(self, fields) -> List[str]:
+        """The seeds to export, validated against one library snapshot.
+
+        ``track_ids`` absent means the whole library, which is both the
+        measured 6.8-minute case and the one that does not fit on the wire:
+        the full 1,532-id selection is 14.7 KiB newline-delimited (see
+        ``_delete_library_tracks``) against a fixed 16 KiB request-body
+        ceiling, leaving under 2 KiB for the directory path and everything
+        else. Omitting the field removes that cliff for the common case
+        instead of engineering around it.
+
+        Ids are checked for membership up front. The exporter counts an
+        unknown id as ``failed`` and carries on, which on a seven-minute run
+        means the caller learns about a typo at the end; a 404 now is the same
+        verdict, earlier, and matches ``_delete_library_tracks``.
+        """
+        # ONE capture. Re-reading ``self.library.meta_ix`` per check would let
+        # a concurrent delete land between the membership test and the count.
+        snapshot = self.library.snapshot()
+        known = snapshot.meta_ix
+
+        raw = fields.get("track_ids")
+        if raw is None:
+            if known is None or len(known.index) == 0:
+                raise empty_library()
+            return [str(track_id) for track_id in known.index]
+
+        if not isinstance(raw, str) or not raw:
+            raise bad_request(
+                "track_ids must be a non-empty newline-delimited string."
+            )
+        track_ids = raw.split("\n")
+        if any(not track_id for track_id in track_ids):
+            raise bad_request("track_ids must not contain blank track IDs.")
+        if len(set(track_ids)) != len(track_ids):
+            raise bad_request("track_ids must not contain duplicates.")
+
+        if known is None:
+            raise empty_library()
+        membership = {str(track_id) for track_id in known.index}
+        for track_id in track_ids:
+            if track_id not in membership:
+                raise unknown_track(track_id)
+        return track_ids
 
     # -- helpers -----------------------------------------------------------
 
