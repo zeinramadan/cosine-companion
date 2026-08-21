@@ -185,7 +185,7 @@ def main():
     print(f"output       {out_root}\n")
 
     exports = GatedExportService(library, pause_at=arguments.pause_at)
-    api = CocoApi(library, settings, export_service=exports)
+    api = CocoApi(library, settings, export_service_factory=lambda _: exports)
     server = CocoServer(api, assets.static_dir())
     server.start()
     client = Client(server)

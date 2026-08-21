@@ -32,10 +32,20 @@ WAIT = 5.0
 
 
 class FakeExportService:
-    """Records its call, holds it open until released, returns a fixed result."""
+    """Records its call, holds it open until released, returns a fixed result.
+
+    Doubles as the FACTORY ``CocoApi`` is given: ``__call__`` takes the
+    library the API pinned for this request and returns this double, so a
+    test can read ``libraries`` and see which view the run was handed. The
+    idiom is the one ``tests/test_ui_reports_success_for_every_terminal_
+    outcome.py`` already uses to stand in for a service class.
+    """
 
     def __init__(self, result=None, raises=None):
         self.calls = []
+        #: One entry per accepted export: the library the factory was
+        #: called with. A ``_PinnedLibrary``, not the session.
+        self.libraries = []
         self.entered = threading.Event()
         self.release = threading.Event()
         self.result = result or ExportResult(
@@ -48,6 +58,10 @@ class FakeExportService:
         self.raises = raises
         self.progress = None
         self.cancel = None
+
+    def __call__(self, library):
+        self.libraries.append(library)
+        return self
 
     def _run(self, name, track_ids, target, per_track, progress, cancel):
         self.calls.append(
@@ -88,7 +102,7 @@ def exports():
 
 @pytest.fixture
 def api(web_library, settings, exports):
-    return CocoApi(web_library, settings, export_service=exports)
+    return CocoApi(web_library, settings, export_service_factory=exports)
 
 
 # -- helpers ---------------------------------------------------------------
@@ -301,7 +315,7 @@ def test_combined_mode_reports_playlists_created_as_an_explicit_null(api):
             playlists_created=None,
         )
     )
-    api = CocoApi(api.library, api.settings, export_service=exports)
+    api = CocoApi(api.library, api.settings, export_service_factory=exports)
     status, body = start_export(api, mode="combined", out_dir="/tmp/here")
     job = settle(api, exports, body["job"]["id"])
 
@@ -314,7 +328,7 @@ def test_a_service_that_raises_lands_the_job_in_failed_with_the_message(api):
     exports = FakeExportService(
         raises=FileNotFoundError(2, "No such file or directory", "/nope/out.m3u")
     )
-    api = CocoApi(api.library, api.settings, export_service=exports)
+    api = CocoApi(api.library, api.settings, export_service_factory=exports)
     status, body = start_export(api, mode="combined", out_dir="/nope")
     job = settle(api, exports, body["job"]["id"])
 
@@ -361,7 +375,7 @@ def test_a_cancelled_export_keeps_and_reports_what_it_wrote(api):
             cancelled=True,
         )
     )
-    api = CocoApi(api.library, api.settings, export_service=exports)
+    api = CocoApi(api.library, api.settings, export_service_factory=exports)
     status, body = start_export(api, out_dir="/tmp/here")
     job_id = body["job"]["id"]
     assert exports.entered.wait(timeout=WAIT)
@@ -395,7 +409,7 @@ def test_a_cancel_the_service_never_observed_is_reported_beside_the_success(api)
             cancelled=False,
         )
     )
-    api = CocoApi(api.library, api.settings, export_service=exports)
+    api = CocoApi(api.library, api.settings, export_service_factory=exports)
     status, body = start_export(api)
     job_id = body["job"]["id"]
     assert exports.entered.wait(timeout=WAIT)
@@ -535,7 +549,7 @@ def test_a_non_object_export_body_is_refused(api):
 def test_exporting_a_library_with_no_index_is_409_empty_library(
     empty_library, settings, exports
 ):
-    api = CocoApi(empty_library, settings, export_service=exports)
+    api = CocoApi(empty_library, settings, export_service_factory=exports)
 
     status, response = api.handle("POST", "/api/jobs/export", {}, {"out_dir": "/tmp/x"})
 

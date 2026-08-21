@@ -355,6 +355,54 @@ def _export_result_document(result, mode: str, output: str) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# One library view per job
+# ---------------------------------------------------------------------------
+
+
+
+class _PinnedLibrary:
+    """A library frozen on one already-captured ``LibrarySnapshot``.
+
+    ``ExportService`` asks the library it was built over for ONE snapshot at
+    the top of each run (``export_service`` module docstring, "One snapshot per
+    run"). That is the whole of what it needs from a library, and it is the
+    whole of what this provides - so handing it one of these is not a service
+    change and not a new pattern. It is the same capture, taken earlier.
+
+    Earlier is the point. ``_start_export`` validates the request against a
+    snapshot: it decides how many seeds there are and whether every id is
+    real, and the 202 reports that count. Left to take its own capture, the
+    service would answer the same question again when the worker got round to
+    it - and a ``POST /api/library/tracks/delete`` in between made the two
+    answers differ. The request accepted two seeds and returned ``total: 2``;
+    the run found one and reported ``successful: 1, failed: 1`` under a
+    ``succeeded`` state. Pinned, there is one answer, and the 202 describes the
+    work that is actually done.
+
+    Safe to hold for the length of a run because of what PR #19 established:
+    ``LibrarySession.snapshot()`` and ``delete_tracks`` take one ``RLock``, so
+    a capture is wholly before or wholly after a deletion's publication, and
+    the deletion **rebinds** rather than mutating - the objects inside a
+    captured snapshot are never edited under a reader. Holding the lock across
+    the export instead would make the same two answers agree by making Delete
+    unusable for 6.8 minutes.
+
+    This is deliberately NOT a ``LibrarySession``. It has one method, it is
+    read-only, and nothing can reload or mutate it - a job holding one cannot
+    accidentally acquire the ability to change the library it is reading.
+    """
+
+    __slots__ = ("_snapshot",)
+
+    def __init__(self, snapshot):
+        self._snapshot = snapshot
+
+    def snapshot(self):
+        """The captured view. The same object every time, by construction."""
+        return self._snapshot
+
+
+# ---------------------------------------------------------------------------
 # Query-parameter parsing
 # ---------------------------------------------------------------------------
 
@@ -584,7 +632,7 @@ class CocoApi:
         playlists=None,
         sets=None,
         jobs=None,
-        export_service=None,
+        export_service_factory=None,
     ):
         """Bind to a library and a settings store.
 
@@ -612,9 +660,16 @@ class CocoApi:
             jobs: a ``web.jobs.JobRegistry``. One per API, holding the
                 long-running work; built here when absent. Injectable so a
                 test can supply a fake clock and deterministic ids.
-            export_service: an ``ExportService``. Built over ``library`` when
-                absent. Injectable because the real one takes ~6.8 minutes
-                over the full collection, which no test may spend.
+            export_service_factory: called with one library and returning an
+                export service; ``ExportService`` itself when absent. A
+                FACTORY rather than an instance because each export is
+                built over the snapshot its own request accepted - see
+                ``_PinnedLibrary`` - so there is no one library for a
+                single instance to have been bound to. Injectable because
+                the real export takes ~6.8 minutes over the full
+                collection, which no test may spend; a double injected
+                this way is handed the pinned view too, so a test can see
+                which library the run really got.
         """
         self.library = library
         self.settings = settings
@@ -627,11 +682,15 @@ class CocoApi:
         self.sets = sets if sets is not None else SetBuilder(library)
 
         self.jobs = jobs if jobs is not None else JobRegistry()
-        # Cheap to construct and holds no state between runs - it snapshots
-        # the library per export. Building it here rather than per request
-        # keeps the request path free of construction that could raise.
-        self.export_service = (
-            export_service if export_service is not None else ExportService(library)
+        # The class IS the default factory: ``ExportService(library)`` is
+        # exactly the call ``_start_export`` makes, with a pinned view in
+        # place of the session. Construction is cheap and holds no state
+        # between runs, so building one per accepted request costs nothing
+        # and is what makes the run's view the request's view.
+        self.export_service_factory = (
+            export_service_factory
+            if export_service_factory is not None
+            else ExportService
         )
 
         self._settings_write_lock = threading.Lock()
@@ -951,8 +1010,12 @@ class CocoApi:
         The whole request is validated - the mode, the directory, the count
         and every track id - **before** the job starts, so a mistyped field is
         a 400 the caller sees now rather than a job that fails seven minutes
-        later. Track ids are resolved against ONE ``library.snapshot()``, the
-        same capture discipline ``ExportService`` uses internally.
+        later. Track ids are resolved against ONE ``library.snapshot()``, and that
+        same capture is what the run executes against: the export service is
+        built over a ``_PinnedLibrary`` holding it, so ``ExportService``'s own
+        snapshot call returns the view this request was accepted on. A delete
+        arriving between the 202 and the run therefore changes neither the
+        count that was promised nor the playlists that get written.
         """
         fields = _body_fields(body, EXPORT_BODY_FIELDS)
 
@@ -970,7 +1033,11 @@ class CocoApi:
             MIN_RECOMMENDATIONS_PER_TRACK,
             MAX_RECOMMENDATIONS_PER_TRACK,
         )
-        track_ids = self._export_track_ids(fields)
+        # ONE capture, and it is the one the run gets. Any read of
+        # ``self.library`` below this line would be a second generation
+        # answering a question this one has already answered.
+        accepted = self.library.snapshot()
+        track_ids = self._export_track_ids(fields, accepted)
 
         if mode == EXPORT_MODE_COMBINED:
             # The directory is not created for combined mode - the exporter
@@ -982,7 +1049,10 @@ class CocoApi:
         else:
             output = out_dir
 
-        service = self.export_service
+        # Built HERE, over the accepted snapshot, and captured by the closure
+        # below - so the worker has no route back to ``self.library`` even by
+        # accident.
+        service = self.export_service_factory(_PinnedLibrary(accepted))
 
         def work(report, cancel):
             if mode == EXPORT_MODE_COMBINED:
@@ -1066,8 +1136,14 @@ class CocoApi:
         # finished. A 200 would say the export is done.
         return 202, _jsonable({"job": _job_document(job.snapshot())})
 
-    def _export_track_ids(self, fields) -> List[str]:
+    def _export_track_ids(self, fields, snapshot) -> List[str]:
         """The seeds to export, validated against one library snapshot.
+
+        The snapshot is an ARGUMENT, taken by the caller. It has to be: the
+        same capture also becomes the view the run executes against, and a
+        capture taken privately here could not be handed on. Passing it in
+        is also what makes 'one capture' checkable by reading the caller
+        rather than trusting two functions to agree.
 
         ``track_ids`` absent means the whole library, which is both the
         measured 6.8-minute case and the one that does not fit on the wire:
@@ -1082,9 +1158,6 @@ class CocoApi:
         means the caller learns about a typo at the end; a 404 now is the same
         verdict, earlier, and matches ``_delete_library_tracks``.
         """
-        # ONE capture. Re-reading ``self.library.meta_ix`` per check would let
-        # a concurrent delete land between the membership test and the count.
-        snapshot = self.library.snapshot()
         known = snapshot.meta_ix
 
         raw = fields.get("track_ids")

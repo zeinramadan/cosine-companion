@@ -43,6 +43,10 @@ class HeldExportService:
         self.release = threading.Event()
         self.cancel = None
 
+    def __call__(self, library):
+        """The factory call ``CocoApi`` makes per accepted export."""
+        return self
+
     def export_per_seed(
         self, track_ids, out_dir, recommendations_per_track, progress=None, cancel=None
     ):
@@ -69,7 +73,7 @@ def exports():
 
 @pytest.fixture
 def job_server(web_library, settings, exports, static_dir):
-    api = CocoApi(web_library, settings, export_service=exports)
+    api = CocoApi(web_library, settings, export_service_factory=exports)
     running = CocoServer(api, static_dir)
     running.start()
     try:
