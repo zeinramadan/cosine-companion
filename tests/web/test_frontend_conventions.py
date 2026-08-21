@@ -47,6 +47,12 @@ def without_comments(text):
 # deleted. So does a syntactically invalid value: the declaration is dropped and
 # the initial value applies. A guard that only asks whether `bottom:` appears
 # cannot tell any of those from a working offset.
+#
+# This set is a MESSAGE, not a check, and is deliberately not asserted against
+# separately: an identifier is rejected by `_Typer.unit` whether or not it is
+# listed here, because no bare identifier types as a length. Naming the common
+# ones only buys a failure that says WHICH mistake was made. A second assert
+# over this set would look like a guard and catch nothing the first did not.
 STICKY_KEYWORDS = {
     "auto",
     "inherit",
@@ -58,27 +64,221 @@ STICKY_KEYWORDS = {
     "none",
 }
 
-# `0`, `-1.5rem`, `12px`, `4%`, or a `calc()` around them. A bare non-zero
-# number is NOT a length in CSS and is dropped by the parser, so it is not
-# accepted here either.
-LENGTH = r"(?:0|[+-]?(?:\d+\.?\d*|\.\d+)(?:px|rem|em|ex|ch|vh|vw|vmin|vmax|%))"
-STICKY_OFFSET = re.compile(rf"^(?:calc\(.+\)|var\(--[\w-]+\)|{LENGTH})$")
-VAR_REFERENCE = re.compile(r"var\(\s*(--[\w-]+)\s*[,)]")
+LENGTH_UNIT = r"(?:px|rem|em|ex|ch|vh|vw|vmin|vmax|%)"
+NUMBER = r"(?:\d+\.?\d*|\.\d+)"
+ZERO = re.compile(rf"^[+-]?{NUMBER}$")
+
+# Operands, brackets and operators of a CSS maths expression. ORDER MATTERS
+# twice over. A signed dimension has to win over a signed number, and both over
+# a bare `+`/`-`, so that `calc(1px -1px)` tokenises as two operands in a row -
+# which is what CSS does with it, and why CSS drops it. And `--space-6` has to
+# win over the `-` operator, which is why the identifier alternative sits above
+# it and why a bare identifier must start with a letter: otherwise the leading
+# `-` of every custom property parses as a subtraction.
+_VALUE_TOKEN = re.compile(
+    rf"""
+      (?P<ws>\s+)
+    | (?P<open>calc\(|var\(|\()
+    | (?P<close>\))
+    | (?P<comma>,)
+    | (?P<dimension>[+-]?{NUMBER}{LENGTH_UNIT})
+    | (?P<number>[+-]?{NUMBER})
+    | (?P<ident>--[\w-]+|[a-zA-Z_][\w-]*)
+    | (?P<operator>[*/+-])
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+
+class _NotALength(Exception):
+    """The value does not type as a length, with the reason CSS would drop it."""
+
+
+def _custom_property(name, tokens):
+    """The declared value of `name` in tokens.css, or raise saying it is absent."""
+    declared = re.search(rf"{re.escape(name)}\s*:\s*([^;}}]+)", tokens)
+    if not declared:
+        raise _NotALength(f"uses {name}, which tokens.css does not declare")
+    return declared.group(1).strip()
+
+
+def _tokenise(value):
+    tokens = []
+    position = 0
+    while position < len(value):
+        match = _VALUE_TOKEN.match(value, position)
+        if not match:
+            raise _NotALength(f"contains `{value[position:]}`, which is not CSS the parser accepts")
+        position = match.end()
+        kind = match.lastgroup
+        if kind != "ws":
+            tokens.append((kind, match.group(), match.start()))
+        elif tokens:
+            tokens[-1] = tokens[-1] + ("space-after",)
+    return tokens
+
+
+class _Typer:
+    """CSS's maths type algebra, as much of it as `bottom` can be written with.
+
+    `number` and `length` are the only types that reach here; a percentage is
+    folded into `length` because `bottom` takes a `<length-percentage>` and
+    resolves one against the containing block either way.
+
+    Anything this does not recognise - `min()`, `env()`, `attr()`, a bare
+    identifier - raises rather than passing. That direction is deliberate: an
+    unrecognised value can only ever produce a loud false RED, whereas letting
+    one through is precisely the hole this replaced.
+    """
+
+    def __init__(self, tokens, custom_properties, depth, inside_maths):
+        self.tokens = tokens
+        self.custom_properties = custom_properties
+        self.depth = depth
+        # Unitless zero is a length in a property VALUE and a plain number
+        # inside `calc()` - `bottom: 0` is valid and `bottom: calc(0)` is not.
+        # That is the only thing this flag decides.
+        self.inside_maths = inside_maths
+        self.at = 0
+
+    def peek(self):
+        return self.tokens[self.at] if self.at < len(self.tokens) else None
+
+    def take(self):
+        token = self.peek()
+        if token is None:
+            raise _NotALength("ends in the middle of an expression")
+        self.at += 1
+        return token
+
+    def sum(self):
+        """`a + b` and `a - b`: CSS requires BOTH operands to be the same type."""
+        left = self.product()
+        while True:
+            token = self.peek()
+            if token is None or token[0] != "operator" or token[1] not in "+-":
+                return left
+            # `calc(1px+1px)` and `calc(1px -1px)` are both invalid CSS: the
+            # additive operators must be surrounded by whitespace, which is why
+            # the tokeniser records what followed each token.
+            if "space-after" not in token or "space-after" not in self.tokens[self.at - 1]:
+                raise _NotALength(
+                    f"has `{token[1]}` without whitespace on both sides, which CSS does not parse"
+                )
+            self.take()
+            right = self.product()
+            if left != right:
+                raise _NotALength(f"adds a {left} to a {right}, which has no type")
+        return left
+
+    def product(self):
+        """`a * b` needs one side to be a number; `a / b` needs the divisor to be."""
+        left = self.unit()
+        while True:
+            token = self.peek()
+            if token is None or token[0] != "operator" or token[1] not in "*/":
+                return left
+            operator = self.take()[1]
+            right = self.unit()
+            if operator == "*":
+                if left == "number":
+                    left = right
+                elif right != "number":
+                    raise _NotALength("multiplies a length by a length, which has no type")
+            else:
+                if right != "number":
+                    raise _NotALength(f"divides by a {right}, which CSS does not allow")
+        return left
+
+    def unit(self):
+        kind, text, *_ = self.take()
+        if kind == "dimension":
+            return "length"
+        if kind == "number":
+            if not self.inside_maths and ZERO.match(text) and float(text) == 0:
+                return "length"
+            return "number"
+        if kind == "open" and text.lower() in ("calc(", "("):
+            outer, self.inside_maths = self.inside_maths, True
+            inner = self.sum()
+            self.inside_maths = outer
+            closing = self.take()
+            if closing[0] != "close":
+                raise _NotALength(f"has `{closing[1]}` where a `)` belongs")
+            return inner
+        if kind == "open" and text.lower() == "var(":
+            return self.variable()
+        if kind == "ident" and text.lower() in STICKY_KEYWORDS:
+            raise _NotALength(f"is the keyword `{text}`, which is not a length at all")
+        raise _NotALength(f"has `{text}` where a number or a length belongs")
+
+    def variable(self):
+        name = self.take()
+        if name[0] != "ident" or not name[1].startswith("--"):
+            raise _NotALength(f"has `var({name[1]}`, which names no custom property")
+        # A fallback is SKIPPED rather than typed. tokens.css is meant to be the
+        # one place the offset comes from, so a `var(--x, 0px)` whose `--x` is
+        # undeclared stays red here even though a browser would accept it -
+        # stricter than CSS, and only ever in the loud direction.
+        depth = 1
+        while depth:
+            token = self.peek()
+            if token is None:
+                raise _NotALength(f"leaves `var({name[1]}` unclosed")
+            if token[0] == "close":
+                depth -= 1
+            elif token[0] == "open":
+                depth += 1
+            self.take()
+        # A custom property is a token stream substituted where it is used, so
+        # it is bare exactly when the `var()` referencing it is.
+        return _type_of(
+            _custom_property(name[1], self.custom_properties),
+            self.custom_properties,
+            self.depth + 1,
+            bare=not self.inside_maths,
+        )
+
+
+def _type_of(value, custom_properties, depth=0, bare=True):
+    """`length`, `number`, or raise `_NotALength` saying why CSS would drop it.
+
+    `bare` says the value sits directly in the property rather than inside a
+    maths expression. CSS has no arithmetic outside `calc()`, so a bare value is
+    a SINGLE operand - `bottom: 1px + 1px` is as invalid as `bottom: nonsense`.
+    """
+    if depth > 8:
+        raise _NotALength("nests custom properties more than eight deep")
+    typer = _Typer(_tokenise(value), custom_properties, depth, inside_maths=not bare)
+    result = typer.unit() if bare else typer.sum()
+    if typer.peek() is not None:
+        raise _NotALength(
+            f"has `{typer.peek()[1]}` after the value, and CSS has no arithmetic "
+            f"outside calc()"
+        )
+    return result
 
 
 def assert_sticks_to_the_bottom(rule_name, declarations):
     """Assert `declarations` really pins its block to the bottom of the scrollport.
 
-    Checks the VALUE, not the presence of the property, and follows any custom
-    property it is built from back to `tokens.css` - because a `bottom` of
-    `calc(var(--x) * -1)` is dropped wholesale if `--x` is not a length, which
-    puts the element back in normal flow while the source still reads as though
-    it sticks.
+    Checks the VALUE, not the presence of the property, and TYPES it rather
+    than pattern-matching it: the offset is run through CSS's maths type
+    algebra, following every custom property back to `tokens.css`, and the
+    expression has to come out a length. That is what distinguishes the shipped
+    `calc(var(--space-6) * -1)` from `calc(5)` - both are `calc(...)`, but the
+    second types as a NUMBER, so a browser drops the declaration and the
+    initial `auto` applies, putting the element back in normal flow.
 
-    What this cannot do is lay anything out, so it does not claim to: it proves
-    the bottom constraint EXISTS and resolves, not that the resulting offset
-    puts the block anywhere pleasant. Where it actually lands was measured by
-    hand in a real browser and recorded in the PR description.
+    WHAT THIS ESTABLISHES, exactly: the declared value is a length under CSS's
+    type algebra, with every `var()` in it declared in `tokens.css` and itself a
+    length. Nothing more. It does not lay anything out, does not know the
+    stacking or scrollport the rule lands in, and cannot tell a useful offset
+    from a silly one - where the block actually lands was measured by hand in a
+    real browser and recorded in the PR description. Values written with syntax
+    this does not model - `min()`, `clamp()`, `env()`, and a trailing
+    `!important` - are REJECTED, not passed: erring loud costs a maintainer one
+    obvious failure, and erring quiet is what let `calc(5)` through.
     """
     assert re.search(r"position\s*:\s*sticky", declarations), (
         f"{rule_name} is back in the normal flow: {declarations}"
@@ -88,26 +288,19 @@ def assert_sticks_to_the_bottom(rule_name, declarations):
     assert match, f"{rule_name} has no bottom offset, so it never sticks: {declarations}"
     value = match.group(1).strip()
 
-    assert value.lower() not in STICKY_KEYWORDS, (
-        f"{rule_name} has `bottom: {value}`, which leaves no bottom constraint at all - "
-        f"the block returns to normal flow and scrolls out of reach"
-    )
-    assert STICKY_OFFSET.match(value), (
-        f"{rule_name} has `bottom: {value}`, which is not a length CSS will accept; "
-        f"an unparseable offset is dropped and the initial `auto` applies"
-    )
+    try:
+        resolved = _type_of(value, read(TOKENS_CSS))
+    except _NotALength as why:
+        raise AssertionError(
+            f"{rule_name} has `bottom: {value}`, which {why} - so the declaration is "
+            f"dropped, the initial `auto` applies, and the block scrolls out of reach"
+        ) from None
 
-    # Follow the tokens. `calc(var(--space-6) * -1)` is only an offset if
-    # `--space-6` is one.
-    tokens = read(TOKENS_CSS)
-    for name in VAR_REFERENCE.findall(value):
-        declared = re.search(rf"{re.escape(name)}\s*:\s*([^;}}]+)", tokens)
-        assert declared, f"{rule_name}'s bottom offset uses {name}, which tokens.css does not declare"
-        resolved = declared.group(1).strip()
-        assert resolved.lower() not in STICKY_KEYWORDS and re.match(rf"^{LENGTH}$", resolved), (
-            f"{rule_name}'s bottom offset resolves through {name} to `{resolved}`, "
-            f"which is not a length - the whole declaration is dropped and the block scrolls away"
-        )
+    assert resolved == "length", (
+        f"{rule_name} has `bottom: {value}`, which types as a {resolved} rather than a "
+        f"length - CSS drops the declaration and the initial `auto` applies, so the "
+        f"block returns to normal flow and scrolls out of reach"
+    )
 
 
 def stylesheets():
@@ -698,6 +891,83 @@ def test_the_export_progress_block_cannot_be_scrolled_out_of_reach():
     assert re.search(r"background\s*:\s*var\(--surface", declarations), (
         f"the progress block is transparent: {declarations}"
     )
+
+
+# Offsets a browser really does resolve to a length, and offsets it drops. The
+# two lists are the guard's actual claim, written out: the tests above only ever
+# run it against the ONE value app.css currently ships, so every rule in the
+# type algebra that the shipped value does not exercise would otherwise be
+# unpinned. Gutting the length-times-length rule, for instance, left the whole
+# file green until this table existed.
+OFFSETS_THAT_RESOLVE = [
+    "calc(var(--space-6) * -1)",  # what both sticky rules actually ship
+    "0",  # unitless zero IS a length in a property value
+    "0px",
+    "-0.5rem",
+    "4%",  # `bottom` takes a length-percentage
+    "calc(0px - var(--space-6))",
+    "calc(var(--space-6) / 2)",
+    "calc((var(--space-6) + 4px) * -1)",
+    "calc(-1 * var(--space-6))",  # number on the left of the multiply
+]
+
+OFFSETS_A_BROWSER_DROPS = [
+    "auto",  # the initial value: no bottom constraint at all
+    "inherit",
+    "initial",
+    "unset",
+    "revert",
+    "5",  # a bare non-zero number is not a length
+    "calc(5)",  # a calc that types as a NUMBER, which `bottom` will not take
+    "calc(0)",  # zero is a plain number once it is inside calc()
+    "calc(var(--space-6) + 1)",  # length plus number: no type
+    "calc(var(--space-6) * var(--space-6))",  # length times length: no type
+    "calc(var(--space-6) / var(--space-6))",  # division by a length
+    "calc(1px+1px)",  # `+` needs whitespace on both sides or CSS drops it
+    "calc(1px -1px)",  # tokenises as two operands, exactly as CSS reads it
+    # The two that the whitespace rule alone rejects. Without them the rule is
+    # dead code: the signed-dimension tokens above are already caught by the
+    # parser reading them as two operands in a row, so deleting the whitespace
+    # check left the suite green until these were listed.
+    "calc(1px -var(--space-6))",  # space before the `-` but not after
+    "calc(var(--space-6)- 1px)",  # space after the `-` but not before
+    "1px + 1px",  # arithmetic outside calc() is not a thing
+    "calc(var(--nope) * -1)",  # a custom property tokens.css does not declare
+    "var(--nope)",
+    "var(--ink-primary)",  # declared, but a colour rather than a length
+    "min(var(--space-6), 0px)",  # syntax the checker does not model
+    "calc(var(--space-6) * -1",  # unclosed
+    # A bare identifier that is not one of the keywords named above. Without it
+    # the catch-all in `_Typer.unit` is dead: every other identifier here is
+    # either a listed keyword or followed by a `(`, and both are rejected
+    # somewhere else, so replacing the catch-all with `return "length"` left the
+    # suite green.
+    "fit-content",
+    # Text the tokeniser cannot read at all. Same story: making `_tokenise`
+    # silently skip what it does not recognise stayed green until this was here.
+    '"0px"',
+    "",  # no value at all
+]
+
+
+@pytest.mark.parametrize("offset", OFFSETS_THAT_RESOLVE)
+def test_the_sticky_guard_accepts_every_offset_that_really_resolves(offset):
+    """A guard that rejects working CSS is a guard someone will delete."""
+    assert_sticks_to_the_bottom("a rule", f"position: sticky; bottom: {offset};")
+
+
+@pytest.mark.parametrize("offset", OFFSETS_A_BROWSER_DROPS)
+def test_the_sticky_guard_rejects_every_offset_a_browser_would_drop(offset):
+    """Each of these leaves the element at `bottom: auto` in a real browser.
+
+    The failure has to NAME the offset it rejected. `pytest.raises` on its own
+    would be satisfied by the helper raising for any reason at all - including
+    a typo in the helper itself - which is the same shape of hole as a guard
+    that matches a pattern instead of establishing a property.
+    """
+    with pytest.raises(AssertionError) as raised:
+        assert_sticks_to_the_bottom("a rule", f"position: sticky; bottom: {offset};")
+    assert offset in str(raised.value) or "no bottom offset" in str(raised.value)
 
 
 def test_the_modal_layer_the_dialogs_mount_into_exists():
