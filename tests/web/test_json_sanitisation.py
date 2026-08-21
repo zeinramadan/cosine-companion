@@ -126,11 +126,35 @@ def test_a_real_numpy_temporal_scalar_survives_as_text(value, expected):
 def test_a_frame_of_dates_round_trips_through_the_sanitiser():
     """The realistic route in: a metadata column pandas has typed as
     datetime64, holding a gap. Reading a row out of one yields the numpy
-    scalars above, not the pandas ones."""
+    scalars above, not the pandas ones.
+
+    The trailing digits are NOT pinned. pandas 2 builds this column at
+    nanosecond resolution and pandas 3 at microsecond, so
+    ``2020-01-02T00:00:00.000000000`` and ``2020-01-02T00:00:00.000000`` are
+    the same instant written by two versions of pandas - the resolution is
+    theirs to choose, and ``_jsonable`` deliberately does not touch it (an
+    integer conversion would drop the unit silently, which is what the
+    comment beside that branch says).
+
+    So the instant is asserted by parsing the text back, which is stricter
+    than the literal it replaces: a bare epoch integer, a truncated date, or
+    the string "NaT" all satisfied "is a string" and none of them survive
+    ``np.datetime64(...) == values[0]``.
+    """
     frame = pd.DataFrame({"added": pd.to_datetime(["2020-01-02", None])})
     values = frame["added"].to_numpy()
 
-    assert dumps(_jsonable(list(values))) == '["2020-01-02T00:00:00.000000000", null]'
+    converted = _jsonable(list(values))
+
+    assert len(converted) == 2
+    # The gap is null, not the four-character string "NaT".
+    assert converted[1] is None
+    # The date is ISO 8601 text naming the instant that went in.
+    assert isinstance(converted[0], str)
+    assert np.datetime64(converted[0]) == values[0]
+    assert converted[0].startswith("2020-01-02T00:00:00")
+    # And the pair still survives the server's allow_nan=False serialiser.
+    assert json.loads(dumps(converted)) == [converted[0], None]
 
 
 @pytest.mark.parametrize("value", [float("inf"), float("-inf"), np.float64("inf")])
