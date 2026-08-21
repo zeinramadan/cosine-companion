@@ -666,6 +666,179 @@ def test_a_failure_that_cannot_DESCRIBE_itself_still_publishes_the_failure(
     capsys.readouterr()
 
 
+# -- nothing may escape: the guards themselves ------------------------------
+#
+# Every test below drives a failure that an ``except Exception`` does NOT
+# catch and an ``except BaseException`` does, or a call that the guard above
+# it does not cover at all. An ordinary exception cannot tell those apart, so
+# an ordinary exception cannot pin them - which is why the whole suite stayed
+# green while each of these guards was narrowed or removed.
+
+
+class _UnnameableMeta(type):
+    """A metaclass that raises while resolving a class's ``__name__``.
+
+    ``type(error).__name__`` reads like a plain attribute access and is not
+    one. A metaclass may define ``__name__`` as a data descriptor, and a data
+    descriptor on the metaclass wins over ``type``'s own slot - so the one
+    expression ``_describe`` falls back to when the message is unavailable is
+    itself user code, and it can raise for the same reason the message did.
+    """
+
+    @property
+    def __name__(cls):
+        raise RuntimeError("this exception's type cannot be named")
+
+
+class UnnameableError(Exception, metaclass=_UnnameableMeta):
+    """An exception whose type name cannot be read at all."""
+
+
+class _ExitingNameMeta(type):
+    """The same, raising a ``BaseException`` instead of an ``Exception``."""
+
+    @property
+    def __name__(cls):
+        raise SystemExit("naming this exception's type exits the interpreter")
+
+
+class ExitingNameError(Exception, metaclass=_ExitingNameMeta):
+    """An exception whose type name raises a ``SystemExit`` when read."""
+
+
+class ExitingMessageError(Exception):
+    """An exception whose ``__str__`` raises a ``BaseException``.
+
+    ``UnprintableError`` above raises an ordinary ``RuntimeError`` from the
+    same call, and that is the difference this class exists for: an
+    ``except Exception`` catches one and not the other.
+    """
+
+    def __str__(self):
+        raise SystemExit("describing this exception exits the interpreter")
+
+
+def assert_the_slot_is_free(registry, unhandled):
+    """The wedge, asserted directly: a later job can still be started.
+
+    Every failure below has the same consequence if it escapes - the job stays
+    ``running`` for the life of the process and the one-at-a-time rule refuses
+    every later start with ``JobInProgress`` naming a job that is not
+    executing. Asserting the terminal state proves the caller was told;
+    asserting this proves the registry is usable, which is what the user
+    actually loses. ``unhandled`` empty says the worker also left by the front
+    door rather than dying on the way out.
+    """
+    assert unhandled == [], (
+        "the worker died on its way out of _run; the thread was torn down by "
+        "threading.excepthook rather than returning"
+    )
+    assert registry.running() is None
+    next_job, next_gate = start_and_enter(registry, "export")
+    finish(next_job, next_gate)
+
+
+def test_a_failure_whose_TYPE_CANNOT_BE_NAMED_still_publishes_the_failure(
+    registry, monkeypatch, capsys
+):
+    """``_describe``'s last resort may not repeat the call that just failed.
+
+    The fallback for "the message raised" was ``type(error).__name__`` - the
+    very expression the attempt above it had just evaluated. An exception
+    whose metaclass raises while resolving ``__name__`` therefore makes BOTH
+    attempts raise, and the second one is not inside anything: it escapes
+    ``_describe``, escapes the handler in ``_run`` that was building the
+    terminal snapshot, and kills the worker with the job still ``running``.
+    That is the wedge ``_run``'s docstring forbids in capitals, reached
+    through the function whose own docstring claimed to be total.
+
+    The failure here is an ordinary ``RuntimeError``, so this test says
+    nothing about the WIDTH of any guard - only that the last resort must
+    call nothing. Deleting the inner guard, or replacing the constant with
+    any expression that can raise, turns this red.
+    """
+    unhandled = []
+    monkeypatch.setattr(threading, "excepthook", unhandled.append)
+
+    gate = Gate(raises=UnnameableError())
+    job, _ = start_and_enter(registry, gate=gate)
+
+    snapshot = finish(job, gate)
+
+    assert snapshot.terminal is True
+    assert snapshot.state == FAILED
+    assert snapshot.error == jobs_module.UNDESCRIBABLE_ERROR
+    assert_the_slot_is_free(registry, unhandled)
+    capsys.readouterr()
+
+
+def test_a_failure_whose_MESSAGE_raises_a_BaseException_still_publishes(
+    registry, monkeypatch, capsys
+):
+    """``_describe``'s guard must be ``BaseException``, not ``Exception``.
+
+    ``test_a_failure_that_cannot_DESCRIBE_itself_still_publishes_the_failure``
+    drives the same call with an ordinary ``RuntimeError``, and an ordinary
+    ``RuntimeError`` is caught by either guard - so that test stays green with
+    the guard narrowed to ``except Exception``, and the whole suite did. A
+    ``SystemExit`` out of ``__str__`` is the discriminator: narrowed, it
+    escapes ``_describe`` mid-argument, so ``_finish`` is never called and the
+    job stays ``running`` for the life of the process.
+
+    Red here therefore means exactly "the guard around the message is wide
+    enough to hold a ``BaseException``", because a ``BaseException`` from that
+    call is the only thing this test changes.
+
+    The type name still survives, which is the point of having a fallback at
+    all rather than giving up on the description.
+    """
+    unhandled = []
+    monkeypatch.setattr(threading, "excepthook", unhandled.append)
+
+    gate = Gate(raises=ExitingMessageError())
+    job, _ = start_and_enter(registry, gate=gate)
+
+    snapshot = finish(job, gate)
+
+    assert snapshot.terminal is True
+    assert snapshot.state == FAILED
+    assert snapshot.error == "ExitingMessageError"
+    assert_the_slot_is_free(registry, unhandled)
+    capsys.readouterr()
+
+
+def test_a_failure_whose_TYPE_NAME_raises_a_BaseException_still_publishes(
+    registry, monkeypatch, capsys
+):
+    """The fallback's own guard must be ``BaseException`` too.
+
+    The last resort is reached only when naming the type raised, and the two
+    tests above reach it with an ordinary exception. This one reaches it with
+    a ``SystemExit``: the metaclass raises it, so the first attempt raises it,
+    so the fallback raises it. Narrow the inner guard to ``except Exception``
+    and that second ``SystemExit`` escapes exactly as the unguarded fallback
+    did before it existed - the same wedge, one line further down.
+
+    Without this test the inner guard added for
+    ``test_a_failure_whose_TYPE_CANNOT_BE_NAMED_...`` would be a fresh
+    ``except BaseException`` that nothing in the suite could tell from
+    ``except Exception``, which is the defect this whole change is about.
+    """
+    unhandled = []
+    monkeypatch.setattr(threading, "excepthook", unhandled.append)
+
+    gate = Gate(raises=ExitingNameError())
+    job, _ = start_and_enter(registry, gate=gate)
+
+    snapshot = finish(job, gate)
+
+    assert snapshot.terminal is True
+    assert snapshot.state == FAILED
+    assert snapshot.error == jobs_module.UNDESCRIBABLE_ERROR
+    assert_the_slot_is_free(registry, unhandled)
+    capsys.readouterr()
+
+
 def test_a_long_error_message_is_truncated(registry):
     gate = Gate(raises=ValueError("x" * (MAX_ERROR_CHARACTERS * 3)))
     job, _ = start_and_enter(registry, gate=gate)

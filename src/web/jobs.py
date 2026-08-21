@@ -124,6 +124,11 @@ MAX_REMEMBERED_JOBS = 8
 #: record is read by a UI that has to render it.
 MAX_ERROR_CHARACTERS = 500
 
+#: What ``_describe`` returns for an exception that can be neither printed nor
+#: named. A literal, because it is the LAST resort: anything computed here
+#: could raise in turn, and there is nothing after it left to catch that.
+UNDESCRIBABLE_ERROR = "an error that cannot be described"
+
 #: ``(current, total, message)`` - what ``ExportService`` already calls its
 #: ``progress`` argument with, and the only producer wired up in this PR.
 #: ``IndexingService`` emits a richer ``ProgressEvent`` with a phase; the
@@ -359,6 +364,16 @@ class Job:
         prevent it (``_report_traceback``), and describing one always returns
         (``_describe``).
 
+        THE WIDTH OF EVERY GUARD ON THIS PATH IS PART OF THE PROPERTY rather
+        than a matter of taste, and it is the part that kept slipping.
+        ``_describe`` and ``_report_traceback`` each swallow ``BaseException``
+        for this function's own reason, and each was measured surviving the
+        whole suite green when narrowed to ``Exception``: an ordinary
+        exception is caught by either, so an ordinary exception cannot tell
+        them apart and cannot pin one. The tests that separate them drive a
+        ``SystemExit`` out of ``__str__``, out of ``type(...).__name__``, and
+        out of ``sys.stderr.write``.
+
         ``KeyboardInterrupt`` is caught first and read as a cancellation, not
         as a failure. In a worker thread it has one source - the indexing
         pipeline raises it at its per-track checkpoint when ``cancel`` is set
@@ -427,8 +442,15 @@ def _describe(error: BaseException) -> str:
     developer; only the type and the message go to the client, over the same
     token-authenticated loopback socket every other response uses.
 
-    Total by construction: it is called while building the terminal
-    snapshot, so it must return for every argument or the job never lands.
+    TOTAL - AND THE CONSTRUCTION IS THE BODY BELOW, NOT THIS SENTENCE. It is
+    called while building the terminal snapshot, so it must return for every
+    argument or the job never lands. An earlier version claimed exactly that
+    here while its fallback re-evaluated the expression that had just raised,
+    which is the difference between a property and a note saying there is
+    one. Three things make it true now: every call that can raise is inside a
+    guard; no handler repeats the call it is handling; and the last resort is
+    a constant. Each branch binds a ``str`` - ``f"..."`` and ``str()`` return
+    one or raise - so the truncation below cannot raise either.
     """
     # ``{error}`` calls the exception's own ``__str__``, which is ordinary
     # user code and can raise. Losing the message is a poor outcome; losing
@@ -437,7 +459,19 @@ def _describe(error: BaseException) -> str:
     try:
         text = f"{type(error).__name__}: {error}".strip()
     except BaseException:  # noqa: BLE001 - see above
-        text = type(error).__name__
+        # AND THE FALLBACK MAY NOT REPEAT THE CALL THAT JUST FAILED.
+        # ``type(error).__name__`` reads like a plain attribute access and is
+        # not one: a metaclass may define ``__name__`` as a data descriptor,
+        # and a data descriptor on the metaclass wins over ``type``'s own
+        # slot. An exception whose metaclass raises there made the attempt
+        # above raise and this line raise again - out of a function that had
+        # just promised to return, into the handler building the terminal
+        # snapshot, and the job never landed. So the name is attempted under
+        # its own guard, and what follows it is a constant.
+        try:
+            text = str(type(error).__name__)
+        except BaseException:  # noqa: BLE001 - see above
+            text = UNDESCRIBABLE_ERROR
     if len(text) > MAX_ERROR_CHARACTERS:
         text = text[: MAX_ERROR_CHARACTERS - 1] + "…"
     return text
