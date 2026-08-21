@@ -839,6 +839,54 @@ def test_a_failure_whose_TYPE_NAME_raises_a_BaseException_still_publishes(
     capsys.readouterr()
 
 
+class ExitingStderr(io.StringIO):
+    """A stderr whose ``write`` raises a ``BaseException``.
+
+    The closed ``io.StringIO`` above raises ``ValueError``; this raises
+    ``SystemExit`` from the same call, for the same reason as
+    ``ExitingMessageError``. A stream is an arbitrary object - a GUI console
+    pane, a pipe wrapper, a logging shim - and nothing constrains what its
+    ``write`` may raise.
+    """
+
+    def write(self, text):
+        raise SystemExit("writing to this stream exits the interpreter")
+
+
+def test_a_stderr_that_raises_a_BaseException_does_not_kill_the_worker(
+    registry, monkeypatch
+):
+    """``_report_traceback``'s guard must be ``BaseException`` too.
+
+    THE TERMINAL STATE IS NOT THE DISCRIMINATOR HERE, and that is worth being
+    explicit about. Reporting happens after publication, so the job lands
+    ``failed`` whether or not this escape is caught - the assertion that
+    separates the two guards is the empty ``unhandled`` list. Narrowed to
+    ``except Exception``, the ``SystemExit`` from ``write`` escapes
+    ``_report_traceback``, escapes ``_run`` as its last statement, and the
+    worker is torn down by ``threading.excepthook`` instead of returning.
+
+    That the record survives the escape is the useful half of the finding:
+    publishing-first and guarding-the-report are two independent protections,
+    not one property written twice. Each is pinned separately, here and in
+    ``test_a_worker_whose_failure_cannot_be_REPORTED_still_publishes_the_failure``,
+    and neither test would notice the other's guard being removed.
+    """
+    monkeypatch.setattr(sys, "stderr", ExitingStderr())
+    unhandled = []
+    monkeypatch.setattr(threading, "excepthook", unhandled.append)
+
+    gate = Gate(raises=ValueError("ordinary work went wrong"))
+    job, _ = start_and_enter(registry, gate=gate)
+
+    snapshot = finish(job, gate)
+
+    assert snapshot.terminal is True
+    assert snapshot.state == FAILED
+    assert "ordinary work went wrong" in snapshot.error
+    assert_the_slot_is_free(registry, unhandled)
+
+
 def test_a_long_error_message_is_truncated(registry):
     gate = Gate(raises=ValueError("x" * (MAX_ERROR_CHARACTERS * 3)))
     job, _ = start_and_enter(registry, gate=gate)
