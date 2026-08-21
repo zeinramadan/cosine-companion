@@ -4,6 +4,7 @@ Not collected by pytest (no `test_*.py` names). These cover what unit tests
 cannot: Tkinter wiring, a real Essentia indexing pass, and a measurement over
 the whole real library.
 
+`web_jobs_real_export.py` reads `data/` and writes only into a temp directory.
 `smoke.py` and `real_indexing.py` drive the app against a **throwaway copy** of
 `data/`; the real data directory is only ever read, and `smoke.py` verifies that
 by fingerprinting every file's size and mtime before and after the run.
@@ -55,3 +56,25 @@ PYTHONPATH=src python tests/manual/ranking_equivalence.py --seeds 200
 ```
 
 Last run: **420 comparisons, 0 mismatches.**
+
+## `web_jobs_real_export.py` — the job machinery at real size
+
+Runs `web/jobs.py` and the `/api/jobs` routes over the real library, through a
+real `CocoServer` and an HTTP client, with the real `ExportService`: starts a
+full-collection export, checks that a second job is refused, watches progress,
+cancels part-way, and asserts that what the terminal record claims is on disk
+really is.
+
+`tests/web/test_jobs_real_export.py` covers the same code against the committed
+fourteen-track fixture and gates every merge — this one is the real-size
+counterpart and is not a gate.
+
+```bash
+PYTHONPATH=src python tests/manual/web_jobs_real_export.py
+PYTHONPATH=src python tests/manual/web_jobs_real_export.py --seeds 20 --pause-at 10
+```
+
+Last run, 1,532-track library: **22 checks, 0 failures.** Cancel at seed 3 left
+3 complete `.m3u` files and a record saying exactly that; `GET /api/jobs/{id}`
+measured at **0.46 ms** over 200 calls, which is the number behind the polling
+decision in `web/jobs.py`.
