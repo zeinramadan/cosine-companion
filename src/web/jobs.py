@@ -349,6 +349,16 @@ class Job:
         worker thread otherwise ends the thread silently, which is exactly the
         wedge described.
 
+        And it is why nothing between entering that handler and publishing may
+        raise. Two things there could, and a review found the first of them
+        doing it: ``traceback.print_exc(file=sys.stderr)`` ran BEFORE the
+        publication and raises ``ValueError`` on a closed stderr, so ordinary
+        work raising an ordinary ``ValueError`` produced the wedge above; and
+        ``_describe`` calls the exception's own ``__str__``, which is user
+        code. Reporting a failure now happens after it is published and cannot
+        prevent it (``_report_traceback``), and describing one always returns
+        (``_describe``).
+
         ``KeyboardInterrupt`` is caught first and read as a cancellation, not
         as a failure. In a worker thread it has one source - the indexing
         pipeline raises it at its per-track checkpoint when ``cancel`` is set
@@ -365,13 +375,42 @@ class Job:
         except KeyboardInterrupt:
             self._finish(CANCELLED)
         except BaseException as error:  # noqa: BLE001 - see the docstring
-            traceback.print_exc(file=sys.stderr)
+            # PUBLICATION FIRST, REPORTING SECOND, and the order is the
+            # whole point. The traceback used to be written here, before
+            # the terminal snapshot - and ``print_exc`` raises when stderr
+            # is closed, which is the state of a frozen windowed build with
+            # no console. Ordinary work raising an ordinary ValueError then
+            # killed the worker with the job still ``running``, wedging
+            # every later job behind it. Telling the developer about a
+            # failure must not be able to stop the caller being told.
             self._finish(FAILED, error=_describe(error))
+            _report_traceback()
         else:
             self._finish(
                 CANCELLED if outcome.cancelled else SUCCEEDED,
                 result=outcome.result,
             )
+
+
+def _report_traceback() -> None:
+    """Put the failure's traceback in front of a developer, or give up quietly.
+
+    Called AFTER the terminal snapshot is published, and its own failure is
+    swallowed, because there is by definition nowhere left to write one: the
+    thing that failed IS the writing. ``sys.exc_info()`` is still the
+    worker's exception here - the handler this is called from has not
+    exited - so ``print_exc`` prints what it always did, and
+    ``test_a_worker_that_raises_lands_the_job_in_failed_with_the_message``
+    still reads it off stderr.
+
+    ``BaseException`` rather than ``Exception``, for ``_run``'s own reason:
+    the point is that NOTHING gets past this line, and a stream object is
+    free to raise whatever it likes.
+    """
+    try:
+        traceback.print_exc(file=sys.stderr)
+    except BaseException:  # noqa: BLE001 - see the docstring
+        pass
 
 
 def _describe(error: BaseException) -> str:
@@ -387,8 +426,18 @@ def _describe(error: BaseException) -> str:
     export failure undiagnosable. The traceback still goes to stderr for the
     developer; only the type and the message go to the client, over the same
     token-authenticated loopback socket every other response uses.
+
+    Total by construction: it is called while building the terminal
+    snapshot, so it must return for every argument or the job never lands.
     """
-    text = f"{type(error).__name__}: {error}".strip()
+    # ``{error}`` calls the exception's own ``__str__``, which is ordinary
+    # user code and can raise. Losing the message is a poor outcome; losing
+    # the terminal snapshot this string is being built for is the wedge
+    # ``_run``'s docstring forbids, so the type name is what survives.
+    try:
+        text = f"{type(error).__name__}: {error}".strip()
+    except BaseException:  # noqa: BLE001 - see above
+        text = type(error).__name__
     if len(text) > MAX_ERROR_CHARACTERS:
         text = text[: MAX_ERROR_CHARACTERS - 1] + "…"
     return text

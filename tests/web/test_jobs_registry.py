@@ -7,6 +7,8 @@ sleep-until-hopefully and no spin: a worker that is supposed to be stuck waits
 on a pipe-equivalent (``Event.wait``) and is released by the test.
 """
 
+import io
+import sys
 import threading
 import time
 
@@ -420,6 +422,139 @@ def test_a_worker_that_raises_systemexit_still_reaches_a_terminal_state(registry
     # And the registry is usable again, which is the property that matters.
     next_job, next_gate = start_and_enter(registry, "reindex")
     finish(next_job, next_gate)
+
+
+class UnprintableError(Exception):
+    """An exception whose own ``__str__`` raises.
+
+    Exotic, but ``work`` is an arbitrary callable and an exception class is
+    ordinary user code: nothing stops one of these arriving. It is here
+    because the job record's ``error`` is built by calling ``str()`` on
+    whatever was raised, and that call is not guaranteed to return.
+    """
+
+    def __str__(self):
+        raise RuntimeError("this exception cannot describe itself")
+
+
+class WatchingStderr(io.StringIO):
+    """A stderr that records what the job looked like as it was written to."""
+
+    def __init__(self):
+        super().__init__()
+        self.job = None
+        self.terminal_at_first_write = None
+
+    def write(self, text):
+        if self.job is not None and self.terminal_at_first_write is None:
+            self.terminal_at_first_write = self.job.snapshot().terminal
+        return super().write(text)
+
+
+def test_a_worker_whose_failure_cannot_be_REPORTED_still_publishes_the_failure(
+    registry, monkeypatch
+):
+    """Reporting a failure must not be able to prevent publishing it.
+
+    ``Job._run`` writes the traceback to ``sys.stderr`` for the developer.
+    With stderr closed - which is the state of a frozen windowed build with no
+    console attached - that write raises ``ValueError`` from inside the very
+    handler whose job is to land the job somewhere terminal. Ordinary work
+    raising an ordinary ``ValueError`` then left the worker thread dead with
+    the job still ``running``, and because only one job runs at a time every
+    later start was refused with ``JobInProgress`` naming a job that was not
+    executing. That is exactly the disaster ``_run``'s own docstring forbids
+    in capitals.
+
+    A real closed file rather than a mock: ``io.StringIO`` after ``close()``
+    raises the same ``ValueError`` a closed stream does, from the same call.
+
+    ``threading.excepthook`` is watched as well as the job record, and the two
+    assertions are separate properties. The record says the CALLER was told;
+    an empty excepthook list says the worker also left by the front door
+    rather than dying on the way out - which is what stops the same closed
+    stream turning every job failure into interpreter-level noise.
+    """
+    broken = io.StringIO()
+    broken.close()
+    monkeypatch.setattr(sys, "stderr", broken)
+    unhandled = []
+    monkeypatch.setattr(threading, "excepthook", unhandled.append)
+
+    gate = Gate(raises=ValueError("ordinary work went wrong"))
+    job, _ = start_and_enter(registry, gate=gate)
+
+    snapshot = finish(job, gate)
+
+    assert snapshot.terminal is True
+    assert snapshot.state == FAILED
+    assert "ValueError" in snapshot.error
+    assert "ordinary work went wrong" in snapshot.error
+    assert unhandled == [], (
+        "the worker died on its way out; the failure reached the record but "
+        "the thread did not finish cleanly"
+    )
+    # The property that matters: the slot is free again.
+    assert registry.running() is None
+    next_job, next_gate = start_and_enter(registry, "export")
+    finish(next_job, next_gate)
+
+
+def test_the_terminal_snapshot_is_published_before_the_traceback_is_written(
+    registry, monkeypatch
+):
+    """The order, pinned on its own, so it is not left resting on the guard.
+
+    Swallowing the reporting error is enough to keep a failure from wedging
+    the registry, so the ordering would survive being reversed with every
+    other test green. It is worth having anyway, and therefore worth
+    pinning: publication is not downstream of reporting, it is upstream of
+    it. The instrumented stream reads the job at the instant the first byte
+    of the traceback is written, which is the only instant at which the two
+    orders differ.
+    """
+    watcher = WatchingStderr()
+    monkeypatch.setattr(sys, "stderr", watcher)
+
+    gate = Gate(raises=ValueError("ordinary work went wrong"))
+    job, _ = start_and_enter(registry, gate=gate)
+    watcher.job = job
+
+    snapshot = finish(job, gate)
+
+    assert snapshot.state == FAILED
+    assert watcher.terminal_at_first_write is True, (
+        "the traceback was written while the job was still running: a reader "
+        "polling at that moment sees a job nobody is running any more"
+    )
+    # ...and the traceback really was written, so this is not vacuous.
+    assert "ordinary work went wrong" in watcher.getvalue()
+
+
+def test_a_failure_that_cannot_DESCRIBE_itself_still_publishes_the_failure(
+    registry, capsys
+):
+    """The same wedge, one step earlier, and not in the reported finding.
+
+    The terminal snapshot carries ``f"{type(error).__name__}: {error}"``, and
+    the ``{error}`` half is a call into the exception's own ``__str__``. If
+    that raises, the publication never happens and the registry is wedged for
+    the life of the process in exactly the way above - a different door into
+    the same room. The type name is still true and still useful, so it is
+    what survives.
+    """
+    gate = Gate(raises=UnprintableError())
+    job, _ = start_and_enter(registry, gate=gate)
+
+    snapshot = finish(job, gate)
+
+    assert snapshot.terminal is True
+    assert snapshot.state == FAILED
+    assert snapshot.error == "UnprintableError"
+    assert registry.running() is None
+    next_job, next_gate = start_and_enter(registry, "export")
+    finish(next_job, next_gate)
+    capsys.readouterr()
 
 
 def test_a_long_error_message_is_truncated(registry):
