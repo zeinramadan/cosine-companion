@@ -182,7 +182,9 @@ if sys.platform == 'darwin':
             'CFBundleGetInfoString': "AI-powered music companion for DJs",
             'CFBundleVersion': "1.0.0",
             'CFBundleShortVersionString': "1.0.0",
-            'LSMinimumSystemVersion': '10.13',
+            # The locked Essentia/TensorFlow wheel contains four Mach-O files
+            # whose LC_BUILD_VERSION deployment target is macOS 15.2.
+            'LSMinimumSystemVersion': '15.2',
             'NSHighResolutionCapable': True,
             'NSRequiresAquaSystemAppearance': False,
             'NSAppTransportSecurity': { 'NSAllowsArbitraryLoads': True },

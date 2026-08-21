@@ -62,3 +62,11 @@ def test_macos_is_an_onedir_bundle_not_a_self_extracting_onefile():
         "a.datas",
     ]
     assert _dotted_name(bundle.args[0]) == "coll"
+
+
+def test_macos_minimum_matches_the_locked_binary_floor():
+    bundle = _call("BUNDLE")
+    bundle_keywords = {keyword.arg: keyword.value for keyword in bundle.keywords}
+    info_plist = ast.literal_eval(bundle_keywords["info_plist"])
+
+    assert info_plist["LSMinimumSystemVersion"] == "15.2"
