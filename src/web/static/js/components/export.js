@@ -947,19 +947,41 @@ export function mountExport({
     attach(latest, { announce: latest.state === 'running' });
   }
 
-  store.subscribe((state) => {
-    if (state.destination === 'export') {
-      loadLibrary();
-      // :565 - the label is refreshed whenever this becomes visible.
-      renderSelection();
+  /* The library table is fetched when this destination first becomes visible,
+   * not at mount: it is 1,532 rows on the real collection and a page that
+   * never opens Export should not pay for them. The job lookup below is the
+   * opposite - it happens at mount whatever is showing, because a run that
+   * survived a reload has to be found again before anyone navigates. */
+  function syncTo(state) {
+    if (state.destination !== 'export') {
+      return;
     }
-  });
+    loadLibrary();
+    // :565 - the label is refreshed whenever this becomes visible.
+    renderSelection();
+  }
+
+  const unsubscribe = store.subscribe(syncTo);
 
   render();
+  syncTo(store.getState());
   reattach();
 
   return {
-    /** For tests and for a future caller that needs to know. */
+    /** Whether this destination is watching a run right now. */
     isRunning: running,
+    /**
+     * Stop watching and let go of the store.
+     *
+     * The page never calls this - the window closing is what ends a session -
+     * but a poll loop that outlives its mount is a timer nothing can stop, and
+     * a module with no way to take one down cannot be tested twice in one
+     * process without the first mount's timer firing into the second's DOM.
+     */
+    dispose() {
+      watching = null;
+      window.clearTimeout(timer);
+      unsubscribe();
+    },
   };
 }

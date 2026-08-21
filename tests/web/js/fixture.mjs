@@ -5,7 +5,7 @@
  * renamed id fails these tests loudly instead of silently mounting nothing.
  */
 
-import { Node, defineGlobal, document, installGlobals, withId } from './dom_shim.mjs';
+import { Node, defineGlobal, document, installGlobals, window, withId } from './dom_shim.mjs';
 
 /** Build the palette's markup. Mirrors index.html:99-123. */
 export function buildPaletteDom() {
@@ -91,6 +91,58 @@ export function buildLibraryDom() {
   root.append(input, clear, refresh, remove, setCurrent, stats, status, list);
   document.body.append(root);
   return { root, input, clear, refresh, remove, setCurrent, stats, status, list };
+}
+
+/** Build the Export destination's mount point, the shell and the modal layer.
+ *
+ * The same three-part shape `buildSetCreatorDom` builds, and for the same
+ * reason: `#modal-layer` is a SIBLING of `#app`, because `modal.js` makes the
+ * shell inert while a dialog is open and a dialog parked inside the shell
+ * would go inert along with it.
+ */
+export function buildExportDom() {
+  const app = withId(new Node('div'), 'app');
+  const root = withId(new Node('section'), 'view-export');
+  app.append(root);
+
+  const modalLayer = withId(new Node('div'), 'modal-layer');
+
+  document.body.append(app, modalLayer);
+  return { app, root, modalLayer };
+}
+
+/** Empty the shim's document between mounts. */
+export function resetDom() {
+  document.body.replaceChildren();
+  document.activeElement = null;
+}
+
+/** A `window.localStorage` that lives in a Map, plus a way to make it throw.
+ *
+ * Both halves matter. The remembered output directory is a convenience, and
+ * `export.js` wraps every read and write because Safari in a private window
+ * throws on the ACCESSOR - so "storage is unavailable" has to be a case the
+ * destination survives, not one it is never shown.
+ */
+export function installLocalStorage({ failing = false } = {}) {
+  const store = new Map();
+  const backing = {
+    getItem: (key) => {
+      if (failing) throw new Error('storage is disabled');
+      return store.has(key) ? store.get(key) : null;
+    },
+    setItem: (key, value) => {
+      if (failing) throw new Error('storage is disabled');
+      store.set(key, String(value));
+    },
+  };
+  window.localStorage = backing;
+  return { store, backing };
+}
+
+/** Remove the storage double again. */
+export function removeLocalStorage() {
+  delete window.localStorage;
 }
 
 /* -- a fetch whose responses the test hands out by hand -------------------
