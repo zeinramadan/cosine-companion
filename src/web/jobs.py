@@ -520,10 +520,17 @@ class JobRegistry:
         ``snapshot()``, so the decision is made against one generation per job
         rather than a field at a time.
 
-        The worker thread is started inside the lock as well. It does not need
-        the registry lock to run - progress and completion take the *job's*
-        publication lock - so there is no deadlock, and there is no window in
-        which a job is registered as running with nothing running it.
+        The worker thread is started inside the lock as well, and **before**
+        the registry is rebound. It does not need the registry lock to run -
+        progress and completion take the *job's* publication lock - so there
+        is no deadlock. Starting before publishing is what makes the claim
+        'no job is registered as running with nothing running it' true: a
+        reader either does not find the job at all or finds one that already
+        has a thread, and a start that raises publishes nothing to roll back.
+        Pinned by ``test_no_reader_can_find_a_job_before_its_worker_exists``
+        and ``test_a_job_whose_thread_cannot_start_leaves_no_record_behind``,
+        which reads the registry from a real second thread at the one instant
+        the two orders differ.
         """
         with self._lock:
             # ONE pass, and ONE snapshot per job, feeding BOTH decisions this
@@ -561,6 +568,22 @@ class JobRegistry:
                 clock=self._clock,
             )
             kept[job.job_id] = job
-            self._jobs = MappingProxyType(kept)
+
+            # STARTED FIRST, PUBLISHED SECOND. Readers take no registry
+            # lock - that is what makes a poll cheap - so the lock held
+            # here buys nothing against them: whatever is in ``_jobs`` is
+            # visible the instant it is rebound. Published first, a reader
+            # could find a ``running`` job whose ``thread`` was still
+            # ``None``, and a ``Thread.start`` that raised (which it does
+            # when the process is out of threads) left that record
+            # registered for good, refusing every later job.
+            #
+            # This order needs no rollback, which is the point: if the
+            # start raises, nothing was published and the registry is
+            # exactly as it was. The worker cannot notice the difference -
+            # it touches only the job's own publication lock, never the
+            # registry - so it may finish before it is registered and the
+            # record it publishes is still the whole truth about it.
             job.start(work)
+            self._jobs = MappingProxyType(kept)
             return job

@@ -14,6 +14,7 @@ import time
 
 import pytest
 
+import web.jobs as jobs_module
 from web.jobs import (
     CANCELLED,
     FAILED,
@@ -62,6 +63,25 @@ class Gate:
             raise self.raises
         cancelled = cancel.is_set() if self._cancelled is None else self._cancelled
         return WorkOutcome(cancelled=cancelled, result=self.result)
+
+
+def read_from_another_thread(read):
+    """Run ``read`` on its own thread and return what it saw, bounded.
+
+    Used where the claim under test is about what a READER sees. Job and
+    registry readers take no lock at all, so the answer a reader would get
+    is the answer this gets - and running it on a real second thread is
+    what makes that a demonstration rather than an assertion about the
+    writer's own view.
+    """
+    seen = []
+    reader = threading.Thread(
+        target=lambda: seen.append(read()), name="coco-test-reader", daemon=True
+    )
+    reader.start()
+    reader.join(timeout=WAIT)
+    assert not reader.is_alive(), "the reader thread did not return"
+    return seen[0]
 
 
 def finish(job, gate):
@@ -287,6 +307,95 @@ def test_running_reports_the_job_holding_the_slot(registry):
 
     finish(job, gate)
     assert registry.running() is None
+
+
+class ExplodingJob(Job):
+    """A ``Job`` whose FIRST ``start`` raises, as ``Thread.start`` really can.
+
+    ``threading.Thread.start`` raises ``RuntimeError("can't start new
+    thread")`` when the process cannot create another one. Modelled here
+    rather than by exhausting the machine's threads, which would be a test
+    that hurts the machine it runs on and is not reliably reproducible.
+
+    Only the first call explodes, so the same registry can be asked to start a
+    real job afterwards - which is the half that matters.
+    """
+
+    explode = True
+
+    def start(self, work):
+        if type(self).explode:
+            type(self).explode = False
+            raise RuntimeError("can't start new thread")
+        super().start(work)
+
+
+def test_a_job_whose_thread_cannot_start_leaves_no_record_behind(
+    registry, monkeypatch
+):
+    """A job that never ran must not hold the slot every later job needs.
+
+    The registry published the job into ``_jobs`` and started its thread
+    afterwards. When the start raised, the publication had already happened -
+    so a ``running`` record with nothing running it stayed registered for the
+    life of the process and every later start was refused with
+    ``JobInProgress``. One resource-exhaustion moment disabled exports until
+    the app was restarted.
+
+    Starting first and publishing second makes that impossible rather than
+    unlikely: there is nothing to roll back, because nothing was published.
+    """
+    monkeypatch.setattr(ExplodingJob, "explode", True)
+    monkeypatch.setattr(jobs_module, "Job", ExplodingJob)
+
+    with pytest.raises(RuntimeError):
+        registry.start("export", Gate())
+
+    assert registry.all() == (), "a job that never started was remembered"
+    assert registry.running() is None
+
+    # And the registry is usable: the next start is not refused by a ghost.
+    job, gate = start_and_enter(registry, "export")
+    assert job.snapshot().state == RUNNING
+    finish(job, gate)
+
+
+def test_no_reader_can_find_a_job_before_its_worker_exists(registry, monkeypatch):
+    """``JobRegistry.start``'s no-window claim, checked by a real reader.
+
+    Readers - ``get``, ``all``, ``running`` - take no registry lock; that is
+    deliberate and it is what makes a poll cheap. It also means the lock the
+    writer holds buys nothing here: whatever is in ``_jobs`` is visible the
+    instant it is rebound. So publishing the job and then starting its thread
+    left a window in which a reader could find a ``running`` job whose
+    ``thread`` was ``None`` - the window the docstring said did not exist.
+
+    The reader runs at the one instant the two orders differ: inside
+    ``Job.start``, before the thread is created. Either the job is not
+    findable yet, or it is findable and already has a thread. Nothing else is
+    an acceptable answer.
+    """
+    seen = []
+
+    class WatchedJob(Job):
+        def start(self, work):
+            found = read_from_another_thread(lambda: registry.get(self.job_id))
+            seen.append((found, None if found is None else found.thread))
+            super().start(work)
+
+    monkeypatch.setattr(jobs_module, "Job", WatchedJob)
+
+    job, gate = start_and_enter(registry, "export")
+    finish(job, gate)
+
+    assert len(seen) == 1
+    found, thread = seen[0]
+    assert found is None or thread is not None, (
+        "a reader found a running job whose worker did not exist yet"
+    )
+    # ...and once the start has returned, both halves are true together.
+    assert registry.get(job.job_id) is job
+    assert job.thread is not None
 
 
 # -- cancellation ----------------------------------------------------------
