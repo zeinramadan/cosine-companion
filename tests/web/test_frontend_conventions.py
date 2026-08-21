@@ -205,6 +205,15 @@ class _Typer:
                 return "length"
             return "number"
         if kind == "open" and text.lower() in ("calc(", "("):
+            # The restore on the third line is DEAD under this grammar, and is
+            # kept as state hygiene rather than as a rule. `outer` is False only
+            # when a group is opened from the bare entry in `_type_of`, and that
+            # entry consumes exactly one operand and then demands the tokens be
+            # finished - so nothing ever reads `inside_maths` again after the
+            # restore runs. Every other way in has already set it True. Deleting
+            # the restore leaves this file green and no value was found that
+            # tells the two apart, which is stated here rather than answered
+            # with a test that would only be pinning a fiction.
             outer, self.inside_maths = self.inside_maths, True
             inner = self.sum()
             self.inside_maths = outer
@@ -905,6 +914,23 @@ def test_the_export_progress_block_cannot_be_scrolled_out_of_reach():
 # type algebra that the shipped value does not exercise would otherwise be
 # unpinned. Gutting the length-times-length rule, for instance, left the whole
 # file green until this table existed.
+#
+# THIS LIST IS NOW EXHAUSTIVE BY CONSTRUCTION rather than by inspection, and it
+# had to be: it was assembled a rule at a time, and twice a rule was found
+# missing after the list had been called complete - the length-times-length one,
+# then the closing-token one, which accepted `bottom: calc(1px,`. Guessing at
+# what is uncovered does not converge. So every raise, every branch and every
+# assert in `_tokenise`, `_Typer`, `_type_of` and `assert_sticks_to_the_bottom`
+# was disabled ONE AT A TIME and this file re-run against the mutant, which
+# turned up EIGHT more survivors past the one that was reported: the closing
+# token, the `var()` name check, the unclosed-`var(` check, the bareness of a
+# substituted value, the recursion limit, the `position: sticky` assert, the
+# missing-`bottom` assert, and the `(?:^|;)` anchor that stops `padding-bottom`
+# being read as `bottom`. Each is covered below or in a test underneath, and
+# each was re-run to a red. Two branches survive with no discriminating input at
+# all and are documented AS such at their sites rather than papered over: the
+# `inside_maths` save/restore in `_Typer.unit`, and the `STICKY_KEYWORDS`
+# special case.
 OFFSETS_THAT_RESOLVE = [
     "calc(var(--space-6) * -1)",  # what both sticky rules actually ship
     "0",  # unitless zero IS a length in a property value
@@ -915,6 +941,12 @@ OFFSETS_THAT_RESOLVE = [
     "calc(var(--space-6) / 2)",
     "calc((var(--space-6) + 4px) * -1)",
     "calc(-1 * var(--space-6))",  # number on the left of the multiply
+    # A `var()` FALLBACK, which is the only reason the tokeniser has a `comma`
+    # token at all. Without that token `_tokenise` raises on the comma before
+    # `_Typer.variable` ever gets to skip the fallback, so this value - which a
+    # browser resolves perfectly well - would be a false red. Deleting the
+    # comma token left every other row here green.
+    "calc(var(--space-6, 0px) * -1)",
 ]
 
 OFFSETS_A_BROWSER_DROPS = [
@@ -943,6 +975,24 @@ OFFSETS_A_BROWSER_DROPS = [
     "var(--ink-primary)",  # declared, but a colour rather than a length
     "min(var(--space-6), 0px)",  # syntax the checker does not model
     "calc(var(--space-6) * -1",  # unclosed
+    # A `calc()` that ends on something that is not `)`. The closing token was
+    # read and thrown away without being checked, so this typed as a plain
+    # `length` and the guard passed a value a browser cannot parse. `calc(1px
+    # 2px)` does NOT catch it - two operands in a row are rejected by the
+    # grammar before the closing check is reached - which is why the rule
+    # stayed unpinned through two rounds of this table.
+    "calc(1px,",
+    # `var()` takes a CUSTOM PROPERTY name, so an ordinary identifier is
+    # invalid CSS and the browser drops the declaration. Worse than merely
+    # unpinned: `_custom_property` matches `name` anywhere in tokens.css, and
+    # `text-xs` is a suffix of the real `--text-xs`, so with the name check
+    # disabled this resolved to `0.6875rem` and PASSED.
+    "var(text-xs)",
+    # An unclosed `var(`. Rejected for the same reason as the unclosed `calc(`
+    # above - erring loud on syntax this does not model - and unpinned until
+    # now because the unclosed `calc(` is caught one frame earlier, by the
+    # tokens running out mid-expression.
+    "var(--space-6",
     # A bare identifier that is not one of the keywords named above. Without it
     # the catch-all in `_Typer.unit` is dead: every other identifier here is
     # either a listed keyword or followed by a `(`, and both are rejected
@@ -974,6 +1024,99 @@ def test_the_sticky_guard_rejects_every_offset_a_browser_would_drop(offset):
     with pytest.raises(AssertionError) as raised:
         assert_sticks_to_the_bottom("a rule", f"position: sticky; bottom: {offset};")
     assert offset in str(raised.value) or "no bottom offset" in str(raised.value)
+
+
+# `_type_of` reads its custom properties out of the real tokens.css, so two of
+# its rules cannot be reached from the offset table above however it is written:
+# they need a custom property whose VALUE has a particular shape, and tokens.css
+# happens to contain no such token. Feeding the function a synthetic sheet is
+# not a weaker test - it is the same function at the same interface, with the
+# one input the table cannot vary.
+SUBSTITUTED_VALUES = [
+    # A custom property is a token stream substituted where it is USED, so its
+    # bareness is the bareness of the `var()` referencing it. Inside `calc()` a
+    # unitless zero is a plain NUMBER, so this whole expression is a number and
+    # a browser drops `bottom`. Substituting it as though it were bare types
+    # the zero as a length and the expression comes out a length, which is the
+    # guard passing a declaration that does not apply.
+    ("calc(var(--zero) * -1)", ":root { --zero: 0; }", "number"),
+    # The same rule from the other side. CSS has no arithmetic outside
+    # `calc()`, so `1px + 1px` is invalid as a bare property value and valid
+    # once substituted inside one. Typing this one as bare rejects a value a
+    # browser resolves - the false-red direction of the same bug.
+    ("calc(var(--sum))", ":root { --sum: 1px + 1px; }", "length"),
+    # Eight levels of indirection resolve; the ninth is where the limit sits.
+    ("var(--d0)", ":root {" + "".join(f"--d{i}: var(--d{i + 1});" for i in range(7)) + "--d7: 1px; }", "length"),
+]
+
+
+@pytest.mark.parametrize("value,sheet,expected", SUBSTITUTED_VALUES)
+def test_a_substituted_custom_property_is_typed_where_it_is_used(value, sheet, expected):
+    assert _type_of(value, sheet) == expected
+
+
+def test_a_cycle_between_custom_properties_is_rejected_rather_than_crashing():
+    """`--a: var(--b); --b: var(--a)` is a sheet someone can really write.
+
+    Without the depth limit this is unbounded recursion, and what a maintainer
+    sees is a RecursionError out of a conventions test with no indication that
+    their stylesheet is what caused it. The limit is not reachable through the
+    real tokens.css - nothing in it nests anywhere near eight deep - so nothing
+    in the offset table can pin it, and removing it left this file green.
+    """
+    with pytest.raises(_NotALength) as raised:
+        _type_of("var(--a)", ":root { --a: var(--b); --b: var(--a); }")
+    assert "eight deep" in str(raised.value)
+
+
+def test_a_css_wide_keyword_is_rejected_as_a_keyword_and_named():
+    """`auto` and its siblings are the mistake this guard exists to catch.
+
+    The keyword branch is INERT for accept-or-reject purposes - the catch-all
+    in `_Typer.unit` rejects a bare identifier anyway, which is why deleting
+    `STICKY_KEYWORDS` entirely leaves the offset table green. What it uniquely
+    produces is the DIAGNOSIS, and the diagnosis is the whole value of the
+    branch: `auto` is not a typo, it is the initial value, and a maintainer who
+    is told "is the keyword `auto`, which is not a length at all" knows they
+    have written a no-op, where "has `auto` where a number or a length belongs"
+    reads like a parser complaint. So the message is what gets pinned; there is
+    nothing else about the branch to pin.
+    """
+    for keyword in sorted(STICKY_KEYWORDS):
+        with pytest.raises(AssertionError) as raised:
+            assert_sticks_to_the_bottom("a rule", f"position: sticky; bottom: {keyword};")
+        assert f"is the keyword `{keyword}`, which is not a length at all" in str(raised.value), (
+            f"`{keyword}` was rejected, but not as the CSS-wide keyword it is"
+        )
+
+
+def test_the_sticky_guard_checks_the_position_too_and_not_only_the_offset():
+    """An offset on a statically positioned block does nothing at all.
+
+    Every row of the offset table ships `position: sticky` in the declarations
+    it builds, so none of them can tell whether the guard looks at it - and
+    deleting that assert left this file green.
+    """
+    with pytest.raises(AssertionError) as raised:
+        assert_sticks_to_the_bottom("a rule", "bottom: calc(var(--space-6) * -1);")
+    assert "back in the normal flow" in str(raised.value)
+
+
+def test_a_rule_with_no_bottom_offset_is_not_read_off_a_neighbouring_property():
+    """`padding-bottom` is not `bottom`, and a sticky block with only a padding
+    is not stuck to anything.
+
+    Two separate holes met here. The `(?:^|;)` anchor is what stops the search
+    matching the tail of `padding-bottom`, and without it this declaration
+    resolved to a length and PASSED. And the missing-offset assert underneath
+    it was unreachable from the table: the empty-string row does not reach it,
+    because the whitespace in the pattern backtracks and the capture matches
+    the single space before the `;`,
+    so it is `_type_of` that rejects that row rather than this assert.
+    """
+    with pytest.raises(AssertionError) as raised:
+        assert_sticks_to_the_bottom("a rule", "position: sticky; padding-bottom: 1px;")
+    assert "no bottom offset" in str(raised.value)
 
 
 def test_the_modal_layer_the_dialogs_mount_into_exists():
