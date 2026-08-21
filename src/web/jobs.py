@@ -460,10 +460,32 @@ class JobRegistry:
         which a job is registered as running with nothing running it.
         """
         with self._lock:
-            for job in self._jobs.values():
-                snapshot = job.snapshot()
+            # ONE pass, and ONE snapshot per job, feeding BOTH decisions this
+            # block makes - whether to refuse, and what to keep. Reading each
+            # job twice would be two generations answering one question, which
+            # is the shape ``PlaylistService.lookup`` was rewritten to remove.
+            finished = []
+            for job_id, existing in self._jobs.items():
+                snapshot = existing.snapshot()
                 if not snapshot.terminal:
                     raise JobInProgress(snapshot)
+                finished.append((snapshot.finished_at or snapshot.started_at, job_id))
+
+            # Only reachable once every remembered job is terminal, because the
+            # loop above returns rather than falls through otherwise. That is
+            # what makes "a running job is never evicted" a property of the
+            # structure rather than a defensive branch nothing can reach - an
+            # earlier draft had the branch, and a mutation that deleted it left
+            # every test green.
+            #
+            # Oldest first, so the head is what goes. ``job_id`` breaks ties,
+            # which an injected constant clock produces.
+            finished.sort()
+            keep = max(self._max_remembered - 1, 0)  # one slot for the new job
+            newest = finished[len(finished) - keep :] if keep else []
+            # Built privately, published by one rebind: a reader mid-start sees
+            # either the old mapping or the whole new one.
+            kept = {job_id: self._jobs[job_id] for _, job_id in newest}
 
             job = Job(
                 job_id=self._id_factory(),
@@ -472,37 +494,7 @@ class JobRegistry:
                 message=message,
                 clock=self._clock,
             )
-            # Built privately, published by one rebind: a reader mid-start sees
-            # either the old mapping or the whole new one.
-            kept = dict(self._pruned())
             kept[job.job_id] = job
             self._jobs = MappingProxyType(kept)
             job.start(work)
             return job
-
-    def _pruned(self) -> Mapping[str, Job]:
-        """The jobs worth keeping. Caller holds ``self._lock``.
-
-        Terminal jobs are dropped oldest-first once there are more than
-        ``max_remembered``; a non-terminal job is never dropped, because the
-        one-at-a-time check above is what reads it.
-        """
-        jobs = self._jobs
-        finished = []
-        live = {}
-        for job_id, job in jobs.items():
-            snapshot = job.snapshot()
-            if snapshot.terminal:
-                finished.append((snapshot.finished_at or snapshot.started_at, job_id))
-            else:
-                live[job_id] = job
-
-        # Oldest first, so the tail is the newest and the head is what goes.
-        # ``job_id`` breaks ties, which an injected constant clock produces.
-        finished.sort()
-        # One slot is left free for the job about to be added.
-        keep = max(self._max_remembered - 1, 0)
-        newest_kept = finished[len(finished) - keep :] if keep else []
-        for _, job_id in newest_kept:
-            live[job_id] = jobs[job_id]
-        return live
