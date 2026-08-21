@@ -616,6 +616,95 @@ def test_reexport_reuses_the_same_disambiguated_names(
     assert first.playlists_created == second.playlists_created == 2
 
 
+def test_collision_names_are_independent_of_seed_iteration_order(
+    fixture_library, service, tmp_path
+):
+    """Reversed and shuffled seeds must reuse one deterministic name set."""
+    import random
+
+    for track_id in ("f01", "f06"):
+        fixture_library.meta_ix.loc[track_id, "artist"] = "Collision Artist"
+        fixture_library.meta_ix.loc[track_id, "title"] = "Same Title"
+
+    forward = ["f01", "f06", "f10", "f02"]
+    reversed_order = list(reversed(forward))
+    shuffled = forward.copy()
+    random.Random(7).shuffle(shuffled)
+    assert shuffled not in (forward, reversed_order)
+
+    expected_names = sorted([
+        "Collision Artist - Same Title [ID f06].m3u",
+        "Collision Artist - Same Title.m3u",
+    ] + [
+        playlist_filename(
+            fixture_library.meta_ix.loc[track_id, "artist"],
+            fixture_library.meta_ix.loc[track_id, "title"],
+        )
+        for track_id in ("f10", "f02")
+    ])
+    out = tmp_path / "out"
+
+    for order in (forward, reversed_order, shuffled):
+        result = service.export_per_seed(order, str(out), 2)
+        assert sorted(tree(out)) == expected_names
+        assert result.playlists_created == len(expected_names)
+
+
+def test_collision_key_is_case_insensitive():
+    """APFS-equivalent case variants must share one reservation key."""
+    from recommendations.playlist_exporter import _filename_collision_key
+
+    assert _filename_collision_key("Artist - Title.m3u") == (
+        _filename_collision_key("artist - title.M3U")
+    )
+
+
+def test_collision_key_normalises_canonically_equivalent_unicode():
+    """Composed and decomposed Å must share one reservation key."""
+    from recommendations.playlist_exporter import _filename_collision_key
+
+    assert _filename_collision_key("A\N{COMBINING RING ABOVE}.m3u") == (
+        _filename_collision_key("\N{LATIN CAPITAL LETTER A WITH RING ABOVE}.m3u")
+    )
+
+
+def test_long_collision_suffix_retains_the_complete_track_id():
+    """The discriminator is appended after cutting room for it."""
+    from recommendations.playlist_exporter import _filename_with_track_id
+
+    legacy_name = playlist_filename("A" * 200, "B" * 200)
+    disambiguated = _filename_with_track_id(legacy_name, "f06", 1)
+
+    assert len(disambiguated) == len(legacy_name) == 204
+    assert disambiguated.endswith(" [ID f06].m3u")
+
+
+def test_failed_write_does_not_reserve_its_filename(
+    fixture_library, service, tmp_path, monkeypatch
+):
+    """A retry of the same seed reuses the name that the failed write never owned."""
+    from recommendations import playlist_exporter
+
+    real_create = playlist_exporter.create_m3u_playlist
+    calls = 0
+
+    def fail_once(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("injected write failure")
+        return real_create(*args, **kwargs)
+
+    monkeypatch.setattr(playlist_exporter, "create_m3u_playlist", fail_once)
+    out = tmp_path / "out"
+    result = service.export_per_seed(["f01", "f01"], str(out), 2)
+
+    track = fixture_library.meta_ix.loc["f01"]
+    expected_name = playlist_filename(track["artist"], track["title"])
+    assert sorted(tree(out)) == [expected_name]
+    assert result.successful == result.failed == result.playlists_created == 1
+
+
 def test_output_directory_is_created_for_per_seed(service, tmp_path):
     target = tmp_path / "does" / "not" / "exist"
 

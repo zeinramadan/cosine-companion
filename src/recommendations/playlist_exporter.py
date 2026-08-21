@@ -81,14 +81,42 @@ def _unique_playlist_path(
     filename: str,
     track_id: str,
     reserved_filename_keys: Set[str],
+    keep_legacy_name: bool,
 ) -> Path:
-    """Choose this seed's path without changing a free legacy filename."""
-    candidate = filename
-    attempt = 1
+    """Choose this seed's deterministic path, retrying only written names."""
+    attempt = 1 if keep_legacy_name else 2
+    candidate = (
+        filename
+        if keep_legacy_name
+        else _filename_with_track_id(filename, track_id, 1)
+    )
     while _filename_collision_key(candidate) in reserved_filename_keys:
         candidate = _filename_with_track_id(filename, track_id, attempt)
         attempt += 1
     return output_path / candidate
+
+
+def _legacy_filename_owners(
+    track_ids: List[str],
+    meta_ix: pd.DataFrame,
+) -> Dict[str, str]:
+    """Choose the smallest track id for every legacy filename collision key."""
+    owners: Dict[str, str] = {}
+    for track_id in track_ids:
+        if track_id not in meta_ix.index:
+            continue
+
+        track = meta_ix.loc[track_id]
+        filename = playlist_filename(
+            track.get('artist', 'Unknown Artist'),
+            track.get('title', 'Unknown Title'),
+        )
+        filename_key = _filename_collision_key(filename)
+        stable_track_id = str(track_id)
+        if filename_key not in owners or stable_track_id < owners[filename_key]:
+            owners[filename_key] = stable_track_id
+
+    return owners
 
 
 def create_m3u_playlist(
@@ -166,6 +194,7 @@ def export_recommendations_as_playlists(
         'total_recommendations': 0
     }
     written_filename_keys: Set[str] = set()
+    legacy_filename_owners = _legacy_filename_owners(track_ids, meta_ix)
 
     for i, track_id in enumerate(track_ids, 1):
         if cancel_check is not None and cancel_check():
@@ -198,11 +227,16 @@ def export_recommendations_as_playlists(
             stats['failed'] += 1
             continue
 
+        legacy_filename = playlist_filename(artist, title)
+        legacy_filename_key = _filename_collision_key(legacy_filename)
         playlist_path = _unique_playlist_path(
             output_path,
-            playlist_filename(artist, title),
+            legacy_filename,
             track_id,
             written_filename_keys,
+            keep_legacy_name=(
+                str(track_id) == legacy_filename_owners[legacy_filename_key]
+            ),
         )
 
         # Extract track IDs from recommendations
