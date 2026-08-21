@@ -243,12 +243,22 @@ export function completionMessage({ result, outputDir }) {
  *
  * PARTIAL RESULTS ARE KEPT, and saying so is the whole reason this string
  * exists. `web/api.py::_export_result_document` sets out why: per-seed mode
- * writes one COMPLETE `.m3u` per seed and breaks at the top of the loop, so
- * every file present is importable; combined mode accumulates in memory and
+ * writes one `.m3u` per seed and breaks at the TOP of the loop, so a stop lands
+ * between seeds and never mid-file; combined mode accumulates in memory and
  * writes once after the loop whether or not it was stopped, so a stop produces
  * a SHORTER playlist rather than none. Deleting either would mean a Stop button
  * removing files from a directory the user chose. The files stay and the
  * accounting is honest about what they are.
+ *
+ * "A stop never lands mid-file" is NOT the same claim as "every file in the
+ * directory is complete", and only the first one is this screen's to make. A
+ * FAILED write leaves a partial file: `create_m3u_playlist` opens the path with
+ * mode `'w'` and writes `#EXTM3U` before it looks at a single track, so a raise
+ * partway through leaves a truncated `.m3u` on disk, and the caller's
+ * `except Exception` books it as `failed` and moves on. Nothing about that
+ * reaches the wire. So the sentence is about what STOPPING does, which the job
+ * protocol settles, and says nothing about what is in the folder, which it
+ * cannot see.
  *
  * The "already finished" branch is not padding. `ExportResult.cancelled` is
  * read off the cancel event, not off whether the loop broke, so a stop that
@@ -259,10 +269,27 @@ export function completionMessage({ result, outputDir }) {
  * PER-SEED CARRIES NO FILE COUNT, for the reason `completionMessage` sets out:
  * `playlists_created` counts write calls, not files, and this screen cannot
  * see the directory. The opening line already gives the honest number - tracks
- * PROCESSED, which is what a stop is measured in - so nothing is lost. The one
- * count that survives is zero: `successful === 0` means no write call ever
- * returned, and no writes really does mean no files from this run, so that
- * branch can say so. Anything above zero is left to `Location`.
+ * PROCESSED, which is what a stop is measured in - so nothing is lost. NO count
+ * survives, zero included. This branch used to read "so this run left nothing
+ * in {dir}", on the reasoning that `successful === 0` means no write call ever
+ * returned and therefore nothing was written. The second half does not follow.
+ * Reproduced: the first seed's write raises after the header, the stop is seen
+ * before the second seed, the stats come back `successful=0, failed=1,
+ * playlists_created=0` - and one truncated `.m3u` is sitting in the directory.
+ * `successful === 0` means no write CALL RETURNED. It does not mean nothing was
+ * written, and the difference is a file the user would import.
+ *
+ * So the branch states the thing it can prove - nothing finished, so there is
+ * nothing to import - and hands the user the caveat instead of a guarantee.
+ * COMBINED's zero branch is left alone because there the reasoning does hold:
+ * `export_single_playlist` guards the write with `if all_recommendations`, so
+ * no recommendations means `create_m3u_playlist` is never CALLED, and a raise
+ * inside it would propagate and fail the job rather than return these stats.
+ *
+ * If the writer is ever made atomic - write to a temporary path and rename -
+ * this branch can go back to claiming the absence, and
+ * `tests/web/test_jobs_real_export.py::test_a_failed_write_leaves_a_partial_playlist_behind`
+ * is what will tell you so by turning red.
  */
 export function cancelledMessage({ result, outputDir }) {
   const combined = result.mode === 'combined';
@@ -281,8 +308,10 @@ export function cancelledMessage({ result, outputDir }) {
       : 'No recommendations had been collected yet, so no playlist file was written.'
     : result.successful > 0
       ? `The playlists this run wrote are in ${outputDir} and have been KEPT. ` +
-        'Each one is complete - stopping never leaves a half-written playlist.'
-      : `No playlist had been written when you stopped, so this run left nothing in ${outputDir}.`;
+        'Stopping never cut one short - the run stops between tracks, never mid-file.'
+      : 'No playlist was finished before you stopped, so there is nothing from this ' +
+        `run to import. A write that fails partway can still leave an unfinished ` +
+        `file behind, so check ${outputDir} before importing from it.`;
 
   return `${opening}${written}\n\nNothing was deleted.`;
 }

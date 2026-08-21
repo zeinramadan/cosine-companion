@@ -22,6 +22,7 @@ import threading
 
 import pytest
 
+from recommendations import playlist_exporter
 from recommendations.playlist_exporter import playlist_filename
 from services.export_service import ExportService
 from web.jobs import CANCELLED, SUCCEEDED, JobRegistry, WorkOutcome
@@ -230,3 +231,110 @@ def test_a_real_export_into_an_unwritable_directory_fails_with_its_reason(
     assert snapshot.result is None
     assert snapshot.error
     assert "Error" in snapshot.error or "error" in snapshot.error.lower()
+
+
+@pytest.fixture
+def write_fails_after_the_header(monkeypatch):
+    """Make the real writer raise mid-file, the way a full disk does.
+
+    Nothing here fakes the FILE. ``create_m3u_playlist`` opens the real
+    destination in mode ``'w'`` and writes ``#EXTM3U`` before it looks at a
+    single track, so the truncated ``.m3u`` this leaves behind is the shipped
+    writer's own doing, on a real path, through a real handle. The one thing
+    injected is the ``OSError`` itself - on a real machine it arrives as ENOSPC
+    or EIO partway through a write, which is not something a test can arrange
+    honestly.
+
+    ``playlist_exporter`` calls the builtin ``open`` exactly once, so shadowing
+    it as a module global reaches that call and nothing else in the process.
+    """
+    real_open = open
+
+    def exploding_open(path, *args, **kwargs):
+        handle = real_open(path, *args, **kwargs)
+        real_write = handle.write
+
+        def write(text):
+            if text.startswith("#EXTINF"):
+                raise OSError(28, "No space left on device")
+            return real_write(text)
+
+        handle.write = write
+        return handle
+
+    monkeypatch.setattr(playlist_exporter, "open", exploding_open, raising=False)
+
+
+def test_a_failed_write_leaves_a_partial_playlist_behind(
+    service, web_library, out_dir, write_fails_after_the_header
+):
+    """``successful == 0`` does NOT mean the directory is empty.
+
+    Round-3 blocker, and the premise the stopped dialog's zero branch rests on.
+    That branch read "so this run left nothing in {dir}" whenever ``successful``
+    was zero, reasoning that no write call had returned. The reasoning does not
+    reach the conclusion: ``create_m3u_playlist`` opens the destination with
+    mode ``'w'`` and writes the header BEFORE it iterates, so a raise partway
+    through leaves a truncated file on disk, and
+    ``export_recommendations_as_playlists`` catches it and increments only
+    ``failed``. Nothing about the leftover reaches the wire, so the screen has
+    no way to know about it and cannot claim its absence.
+
+    The whole sequence, end to end through the real service: seed 1's write
+    raises after the header, the stop lands before seed 2, the record comes
+    back with every count at zero - and there is a file in the directory.
+
+    IF THIS TEST GOES RED because the writer was made atomic - a temporary path
+    and a rename - that is the signal that ``cancelledMessage``'s zero branch
+    may go back to claiming the absence. Change the copy deliberately at that
+    point; do not delete this test to make the red go away.
+    """
+    registry = JobRegistry()
+    reached_first_seed = threading.Event()
+    may_continue = threading.Event()
+
+    def on_progress(current, total, message):
+        # Progress for seed N is reported BEFORE seed N's write and AFTER the
+        # cancel check at the top of its iteration, so releasing here lets
+        # seed 1's write run and fail, and puts the stop at the top of seed 2.
+        if current == 1:
+            reached_first_seed.set()
+            assert may_continue.wait(timeout=WAIT), "the export was never released"
+
+    job = registry.start(
+        "export",
+        export_work(service, SEEDS, out_dir, on_progress=on_progress),
+        total=len(SEEDS),
+    )
+
+    assert reached_first_seed.wait(timeout=WAIT), "the export never reached seed 1"
+    job.request_cancel()
+    may_continue.set()
+
+    snapshot = run_to_completion(job)
+
+    # Every count the screen receives is zero or a failure. There is nothing in
+    # this record that could tell a dialog a file exists.
+    assert snapshot.state == CANCELLED
+    assert dict(snapshot.result) == {
+        "successful": 0,
+        "failed": 1,
+        "playlists_created": 0,
+        "total_tracks": 3,
+        "cancelled": True,
+    }
+
+    # And yet.
+    written = sorted(path.name for path in out_dir.glob("*.m3u"))
+    assert written == [expected_filename(web_library, SEEDS[0])], (
+        "the failed write left no file, so the exporter is atomic now - see this "
+        "test's docstring before changing the cancelled-export copy"
+    )
+
+    # Truncated, not empty and not whole: the header reached disk and not one
+    # track line did. This is the file the old copy promised was not there.
+    body = (out_dir / written[0]).read_text(encoding="utf-8")
+    assert body.startswith("#EXTM3U")
+    assert len(body.strip().splitlines()) == 1, (
+        f"expected a header and nothing else, got {body!r}"
+    )

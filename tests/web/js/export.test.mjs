@@ -334,15 +334,24 @@ test('a stopped export is told what is still on disk', () => {
     partial,
     /The playlists this run wrote are in \/Users\/dj\/Desktop\/Cosine_Playlists and have been KEPT\./,
   );
-  // Not only that they were kept - that each one is FINISHED. Per-seed mode
-  // breaks at the top of the loop, before a write, so a stop never leaves a
-  // half-written playlist and the user does not have to check. Pinned as a
-  // literal sentence because it is the claim, not decoration around one; it
-  // was unpinned until a mutation replaced it with "Each one was removed when
-  // you stopped." and the suite stayed green.
+  // What STOPPING does, which the job protocol settles: the loop breaks at the
+  // top, before a write, so a stop lands between tracks. Pinned as a literal
+  // sentence because it is the claim, not decoration around one; it was
+  // unpinned until a mutation replaced it with "Each one was removed when you
+  // stopped." and the suite stayed green.
+  //
+  // It used to read "Each one is complete", which is a different claim and not
+  // this screen's to make - a FAILED write leaves a truncated file, so "every
+  // file in that folder is whole" is exactly the filesystem assertion the rest
+  // of this module refuses to make. See the zero-branch test below.
   assert.match(
     partial,
-    /Each one is complete - stopping never leaves a half-written playlist\./,
+    /Stopping never cut one short - the run stops between tracks, never mid-file\./,
+  );
+  assert.doesNotMatch(
+    partial,
+    /Each one is complete/,
+    `the stopped body is claiming every file in the folder is whole again: ${partial}`,
   );
   assert.match(partial, /Nothing was deleted\./);
 
@@ -875,13 +884,79 @@ test('the stopped dialog states no file count either, however the service counts
   assert.match(stopped, /Stopped after 398 of 1532 tracks\./);
   assert.match(stopped, /Nothing was deleted\./);
 
-  // Zero is the one count that IS knowable: no write call returned, so this
-  // run left nothing - and saying so is not the same claim.
+  // Zero is not a count that survives either - see the dedicated test below.
   const none = cancelledMessage({
-    result: resultDoc({ cancelled: true, total_tracks: 1532, successful: 0, failed: 0 }),
+    result: resultDoc({ cancelled: true, total_tracks: 1532, successful: 0, failed: 1 }),
     outputDir: '/tmp/out',
   });
-  assert.match(none, /No playlist had been written when you stopped, so this run left nothing in \/tmp\/out\./);
+  assert.doesNotMatch(none, /\d+\s*playlist/i, `a numbered playlist claim reached the zero branch: ${none}`);
+});
+
+// Every shape the old claim could come back in. A literal-string check would
+// pass the moment someone rewrote the sentence, and the defect is the CLAIM,
+// not the wording - "this run left nothing", "no files were written", "the
+// folder is empty" are the same assertion three ways.
+const ABSENCE_CLAIMS = [
+  /left nothing/i,
+  /nothing (?:was |had been )?(?:written|created|saved|left)/i,
+  /\bno files?\b/i,
+  /(?:directory|folder) is empty/i,
+  /nothing (?:is )?in \/tmp\/out/i,
+];
+
+test('the zero-success stop never claims the directory is empty', () => {
+  // BLOCKER, round 3. This branch read "No playlist had been written when you
+  // stopped, so this run left nothing in {dir}". The first half is knowable;
+  // the second does not follow from it. `create_m3u_playlist` opens the
+  // destination with mode 'w' and writes `#EXTM3U` BEFORE it iterates, so a
+  // write that raises partway leaves a truncated .m3u behind and the caller's
+  // `except Exception` books it as `failed`. `successful === 0` means no write
+  // CALL RETURNED - not that nothing was written.
+  //
+  // The whole sequence is reproduced end to end against the real service in
+  // tests/web/test_jobs_real_export.py::test_a_failed_write_leaves_a_partial_playlist_behind:
+  // all-zero stats, and a file in the directory.
+  const none = cancelledMessage({
+    result: resultDoc({ cancelled: true, total_tracks: 1532, successful: 0, failed: 1 }),
+    outputDir: '/tmp/out',
+  });
+
+  for (const claim of ABSENCE_CLAIMS) {
+    assert.doesNotMatch(
+      none,
+      claim,
+      `the zero branch asserts an absence of files again (${claim}): ${none}`,
+    );
+  }
+
+  // And the claim it does make, which is the screen's to make: nothing
+  // finished, so nothing is importable - plus the caveat that replaced the
+  // guarantee, and the folder to look in.
+  assert.match(none, /No playlist was finished before you stopped/);
+  assert.match(none, /nothing from this run to import/);
+  assert.match(none, /A write that fails partway can still leave an unfinished file behind/);
+  assert.match(none, /check \/tmp\/out before importing from it\./);
+});
+
+test('the combined zero branch may still claim the absence, because there it holds', () => {
+  // Not an oversight that this one was left alone. `export_single_playlist`
+  // guards the write with `if all_recommendations`, so no recommendations
+  // means `create_m3u_playlist` is never CALLED - there is no opened handle to
+  // leave anything behind. And a raise inside it would propagate out of the
+  // service rather than return these stats, so this branch would never render.
+  const empty = cancelledMessage({
+    result: resultDoc({
+      mode: 'combined',
+      cancelled: true,
+      total_tracks: 100,
+      successful: 0,
+      failed: 0,
+      playlists_created: null,
+      total_recommendations: 0,
+    }),
+    outputDir: '/tmp/out',
+  });
+  assert.match(empty, /No recommendations had been collected yet, so no playlist file was written\./);
 });
 
 test('a failed export raises the catalogued error dialog', async () => {
