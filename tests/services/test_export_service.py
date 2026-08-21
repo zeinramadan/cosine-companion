@@ -596,6 +596,26 @@ def test_blank_artist_keeps_the_legacy_leading_separator():
     )
 
 
+def test_reexport_reuses_the_same_disambiguated_names(
+    fixture_library, service, tmp_path
+):
+    """An existing export folder must not accumulate a new suffix per run."""
+    for track_id in ("f01", "f06"):
+        fixture_library.meta_ix.loc[track_id, "artist"] = "Collision Artist"
+        fixture_library.meta_ix.loc[track_id, "title"] = "Same Title"
+
+    out = tmp_path / "out"
+    first = service.export_per_seed(["f01", "f06"], str(out), 2)
+    first_names = sorted(tree(out))
+    second = service.export_per_seed(["f01", "f06"], str(out), 2)
+
+    assert sorted(tree(out)) == first_names == [
+        "Collision Artist - Same Title [ID f06].m3u",
+        "Collision Artist - Same Title.m3u",
+    ]
+    assert first.playlists_created == second.playlists_created == 2
+
+
 def test_output_directory_is_created_for_per_seed(service, tmp_path):
     target = tmp_path / "does" / "not" / "exist"
 
