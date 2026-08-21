@@ -71,7 +71,7 @@ def expect(cond, label):
 # ---------------------------------------------------------------- run 1
 print("\n=== RUN 1: full pass, no cancellation ===")
 t0 = time.time()
-win = rw.ReindexWindow(root, str(xml), force_full=False)
+win = rw.ReindexWindow(root, str(xml), force_full=False, data_dir=DATA)
 
 def poll1():
     if not win.indexing_thread.is_alive() and win.message_queue.empty():
@@ -118,7 +118,7 @@ shutil.rmtree(DATA); DATA.mkdir()
 M = max(N, 6)
 xml2 = write_xml(TMP / "small2.xml", usable.head(M))
 t0 = time.time()
-win2 = rw.ReindexWindow(root, str(xml2), force_full=False)
+win2 = rw.ReindexWindow(root, str(xml2), force_full=False, data_dir=DATA)
 cancelled_at = {}
 
 def poll2():

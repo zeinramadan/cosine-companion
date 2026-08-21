@@ -193,7 +193,12 @@ class App(RecommendationsTabMixin, SetCreatorTabMixin, LibraryTabMixin, Playlist
             return
         
         from ui.reindex_window import ReindexWindow
-        ReindexWindow(self, xml_path, force_full=False)
+        ReindexWindow(
+            self,
+            xml_path,
+            force_full=False,
+            data_dir=self.library.data_dir,
+        )
     
     def full_reindex(self):
         """Full reindex action."""

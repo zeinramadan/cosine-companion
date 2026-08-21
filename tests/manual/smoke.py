@@ -657,8 +657,8 @@ def _():
     opened = {}
     real_init = rwin.ReindexWindow.__init__
 
-    def spy(self, parent, xml_path, force_full=False):
-        real_init(self, parent, xml_path, force_full)
+    def spy(self, parent, xml_path, force_full=False, *, data_dir):
+        real_init(self, parent, xml_path, force_full, data_dir=data_dir)
         opened["win"] = self
     rwin.ReindexWindow.__init__ = spy
     try:
@@ -686,8 +686,8 @@ def _():
     opened = {}
     real_init = rwin.ReindexWindow.__init__
 
-    def spy(self, parent, xml_path, force_full=False):
-        real_init(self, parent, xml_path, force_full)
+    def spy(self, parent, xml_path, force_full=False, *, data_dir):
+        real_init(self, parent, xml_path, force_full, data_dir=data_dir)
         opened["win"] = self
     rwin.ReindexWindow.__init__ = spy
     SCRIPT.reset()
@@ -713,7 +713,12 @@ def _():
     rwin.ReindexWindow.start_indexing = lambda self: None
     SCRIPT.reset(); SCRIPT.answers["askyesno"] = False  # do NOT let it sys.exit(0)
     try:
-        w = rwin.ReindexWindow(app, str(TMP / "nothing.xml"), force_full=False)
+        w = rwin.ReindexWindow(
+            app,
+            str(TMP / "nothing.xml"),
+            force_full=False,
+            data_dir=app.library.data_dir,
+        )
         pump()
         w.cancel_btn.destroy()
         w.show_completion(); pump()

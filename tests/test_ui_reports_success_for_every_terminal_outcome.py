@@ -136,7 +136,7 @@ def _drain(q):
     return out
 
 
-def _reindex_stub(cancel_requested=False):
+def _reindex_stub(cancel_requested=False, *, with_library=True):
     """The attributes ReindexWindow.run_indexing reads off ``self``.
 
     Called unbound, so no Tk root, no display and no window is created.
@@ -146,14 +146,16 @@ def _reindex_stub(cancel_requested=False):
     """
     import threading
 
-    library = types.SimpleNamespace(data_dir=Path("/tmp/data"))
+    data_dir = Path("/tmp/data")
+    library = types.SimpleNamespace(data_dir=data_dir) if with_library else None
     return types.SimpleNamespace(
         message_queue=queue.Queue(),
         xml_path="/tmp/library.xml",
         force_full=False,
         cancel_event=threading.Event(),
         cancel_requested=cancel_requested,
-        parent_app=types.SimpleNamespace(library=library),
+        data_dir=data_dir,
+        library=library,
     )
 
 
@@ -232,8 +234,23 @@ def test_reindex_window_still_passes_progress_and_cancel_through(monkeypatch):
     assert kwargs["force_full"] is False
     assert callable(kwargs["progress"])
     (_, data_dir, library), = service.constructions
-    assert data_dir == stub.parent_app.library.data_dir
-    assert library is stub.parent_app.library
+    assert data_dir == stub.data_dir
+    assert library is stub.library
+
+
+def test_reindex_window_without_library_uses_its_explicit_data_dir(
+    monkeypatch, tmp_path
+):
+    """A bare Tk/manual parent cannot redirect indexing to config.DATA."""
+    service = _install(monkeypatch, TERMINAL_OUTCOMES[0].values[0])
+    stub = _reindex_stub(with_library=False)
+    stub.data_dir = tmp_path / "isolated-data"
+
+    reindex_module.ReindexWindow.run_indexing(stub)
+
+    (_, data_dir, library), = service.constructions
+    assert data_dir == stub.data_dir
+    assert library is None
 
 
 # ---------------------------------------------------------------------------
