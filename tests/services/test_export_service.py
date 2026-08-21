@@ -564,6 +564,38 @@ def test_filenames_are_generated_by_the_helper_the_exporter_uses(fixture_library
     assert [p.name for p in (tmp_path / "out").glob("*.m3u")] == [expected]
 
 
+def test_colliding_seed_names_create_distinct_valid_playlists(
+    fixture_library, service, tmp_path
+):
+    """A successful seed must own a distinct file, while unrelated names stay put.
+
+    The first colliding seed retains the legacy filename. Only the later seed is
+    disambiguated, using its track id, so ordinary exports do not churn names.
+    """
+    for track_id in ("f01", "f06"):
+        fixture_library.meta_ix.loc[track_id, "artist"] = "Collision Artist"
+        fixture_library.meta_ix.loc[track_id, "title"] = "Same Title"
+
+    out = tmp_path / "out"
+    result = service.export_per_seed(["f01", "f06", "f10"], str(out), 2)
+    written = tree(out)
+
+    assert result.successful == 3  # seeds processed successfully
+    assert result.playlists_created == len(written) == 3  # actual output files
+    assert "Collision Artist - Same Title.m3u" in written
+    assert "Collision Artist - Same Title [ID f06].m3u" in written
+    assert "Jeff Mills - The Bells.m3u" in written  # non-collider is unchanged
+    assert all(body.startswith(b"#EXTM3U\n") for body in written.values())
+    assert all(len(body.splitlines()) == 5 for body in written.values())
+
+
+def test_blank_artist_keeps_the_legacy_leading_separator():
+    """Blank artists are cosmetic, not collisions; do not rename 69 real files."""
+    assert playlist_filename("", "01 Justyn Nell - Visions MST") == (
+        " - 01 Justyn Nell - Visions MST.m3u"
+    )
+
+
 def test_output_directory_is_created_for_per_seed(service, tmp_path):
     target = tmp_path / "does" / "not" / "exist"
 

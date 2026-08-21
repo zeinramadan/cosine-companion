@@ -14,8 +14,9 @@ unchanged.
 """
 
 import os
+import unicodedata
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Set
 import pandas as pd
 
 from core.index_builder import NumpyCosIndex
@@ -25,9 +26,9 @@ from recommendations.ranking import (
     ranked_recommendations,
 )
 
-# filename[:200] + ".m3u" yields a 204-CHARACTER name, cut mid-title, which two
-# different long seeds can collide on silently. Current behaviour, characterised
-# rather than fixed (tests/services/test_export_service.py).
+# filename[:200] + ".m3u" yields a 204-CHARACTER name, cut mid-title. The legacy
+# formula is preserved for ordinary names; collisions are handled at export time
+# so a non-colliding seed keeps exactly the filename it had before.
 #
 # A DOUBLED ".m3u" is impossible, contrary to what this comment used to claim:
 # sanitise_filename_part keeps only alphanumerics, space, hyphen and underscore,
@@ -43,16 +44,51 @@ def sanitise_filename_part(value: str) -> str:
 
 
 def playlist_filename(artist: str, title: str) -> str:
-    """Return the per-seed playlist filename: ``{safe_artist} - {safe_title}.m3u``.
-
-    Two seeds that sanitise to the same name overwrite each other silently.
-    """
+    """Return the legacy per-seed filename: ``{artist} - {title}.m3u``."""
     filename = f"{sanitise_filename_part(artist)} - {sanitise_filename_part(title)}.m3u"
 
     # Limit filename length
     if len(filename) > MAX_FILENAME_LENGTH:
         filename = filename[:MAX_FILENAME_LENGTH] + ".m3u"
     return filename
+
+
+def _filename_collision_key(filename: str) -> str:
+    """Return the key used to reserve a filename during one export run.
+
+    APFS commonly compares names case-insensitively and normalises Unicode.
+    Using the same conservative comparison here prevents two distinct strings
+    from selecting one filesystem entry on those volumes.
+    """
+    return unicodedata.normalize('NFC', filename).casefold()
+
+
+def _filename_with_track_id(filename: str, track_id: str, attempt: int) -> str:
+    """Add a bounded discriminator while retaining the legacy length ceiling."""
+    safe_track_id = sanitise_filename_part(str(track_id))[:64] or "unknown"
+    marker = f" [ID {safe_track_id}]"
+    if attempt > 1:
+        marker = f" [ID {safe_track_id}-{attempt}]"
+
+    extension = ".m3u"
+    stem = filename[:-len(extension)] if filename.endswith(extension) else filename
+    stem = stem[:max(0, MAX_FILENAME_LENGTH - len(marker))]
+    return f"{stem}{marker}{extension}"
+
+
+def _unique_playlist_path(
+    output_path: Path,
+    filename: str,
+    track_id: str,
+    reserved_filename_keys: Set[str],
+) -> Path:
+    """Choose this seed's path without changing a free legacy filename."""
+    candidate = filename
+    attempt = 1
+    while _filename_collision_key(candidate) in reserved_filename_keys:
+        candidate = _filename_with_track_id(filename, track_id, attempt)
+        attempt += 1
+    return output_path / candidate
 
 
 def create_m3u_playlist(
@@ -129,6 +165,7 @@ def export_recommendations_as_playlists(
         'playlists_created': 0,
         'total_recommendations': 0
     }
+    written_filename_keys: Set[str] = set()
 
     for i, track_id in enumerate(track_ids, 1):
         if cancel_check is not None and cancel_check():
@@ -161,7 +198,12 @@ def export_recommendations_as_playlists(
             stats['failed'] += 1
             continue
 
-        playlist_path = output_path / playlist_filename(artist, title)
+        playlist_path = _unique_playlist_path(
+            output_path,
+            playlist_filename(artist, title),
+            track_id,
+            written_filename_keys,
+        )
 
         # Extract track IDs from recommendations
         rec_track_ids = [rec['track_id'] for rec in recommendations]
@@ -170,7 +212,8 @@ def export_recommendations_as_playlists(
         try:
             create_m3u_playlist(rec_track_ids, str(playlist_path), meta_ix)
             stats['successful'] += 1
-            stats['playlists_created'] += 1
+            written_filename_keys.add(_filename_collision_key(playlist_path.name))
+            stats['playlists_created'] = len(written_filename_keys)
             stats['total_recommendations'] += len(rec_track_ids)
         except Exception as e:
             print(f"Failed to create playlist for {artist} - {title}: {e}")
