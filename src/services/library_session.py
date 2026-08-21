@@ -186,7 +186,7 @@ class LibrarySession:
         Objects from the old generation remain alive for readers that already
         captured them; deletion never mutates those objects in place.
         """
-        with self._mutation_lock, self._lock:
+        with self._lock:
             return LibrarySnapshot(
                 meta=self._meta,
                 meta_ix=self._meta_ix,
@@ -225,7 +225,7 @@ class LibrarySession:
         if not track_ids_to_delete:
             return 0
 
-        with self._lock:
+        with self._mutation_lock, self._lock:
             original_meta_count = len(self._meta_ix)
             new_meta_ix = self._meta_ix[
                 ~self._meta_ix.index.isin(track_ids_to_delete)

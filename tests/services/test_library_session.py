@@ -761,3 +761,64 @@ def test_reload_uses_the_same_data_dir(tmp_library):
     session.reload()
 
     assert session.data_dir == tmp_library
+
+
+def test_index_refresh_publishes_before_a_waiting_delete(tmp_library):
+    """The mutation lock closes commit-to-reload's stale-deletion interval."""
+    session = LibrarySession.load(tmp_library)
+    committed = threading.Event()
+    release_refresh = threading.Event()
+    delete_started = threading.Event()
+    delete_finished = threading.Event()
+    failures = []
+
+    expanded_rows = [
+        ("t1", "Artist A", "Title One", "8A", 128.0, [1.0, 0.0, 0.0, 0.0]),
+        ("t2", "Artist B", "Title Two", "9A", 130.0, [0.0, 1.0, 0.0, 0.0]),
+        ("t3", "Artist C", "Title Three", "8B", 124.0, [0.0, 0.0, 1.0, 0.0]),
+        ("t4", "Artist D", "Title Four", "5A", 126.0, [0.0, 0.0, 0.0, 1.0]),
+        ("t5", "Artist E", "Title Five", "6A", 127.0, [0.5, 0.5, 0.5, 0.5]),
+    ]
+
+    def index_then_refresh():
+        try:
+            with session.refresh_after_indexing():
+                _write_library(tmp_library, expanded_rows)
+                committed.set()
+                if not release_refresh.wait(timeout=5):
+                    raise TimeoutError("test did not release indexing refresh")
+        except BaseException as error:  # surfaced in the parent below
+            failures.append(error)
+
+    def delete():
+        try:
+            delete_started.set()
+            session.delete_tracks(["t1"])
+        except BaseException as error:  # surfaced in the parent below
+            failures.append(error)
+        finally:
+            delete_finished.set()
+
+    indexing_thread = threading.Thread(target=index_then_refresh)
+    deletion_thread = threading.Thread(target=delete)
+    try:
+        indexing_thread.start()
+        assert committed.wait(timeout=5), "indexing did not reach its commit"
+        deletion_thread.start()
+        assert delete_started.wait(timeout=5), "deletion thread did not start"
+        assert not delete_finished.wait(timeout=0.1), (
+            "delete crossed the indexing commit-to-refresh interval"
+        )
+        release_refresh.set()
+        indexing_thread.join(timeout=5)
+        deletion_thread.join(timeout=5)
+    finally:
+        release_refresh.set()
+        indexing_thread.join(timeout=5)
+        deletion_thread.join(timeout=5)
+
+    assert not indexing_thread.is_alive()
+    assert not deletion_thread.is_alive()
+    assert failures == []
+    reloaded = LibrarySession.load(tmp_library)
+    assert reloaded.ids == ["t2", "t3", "t4", "t5"]

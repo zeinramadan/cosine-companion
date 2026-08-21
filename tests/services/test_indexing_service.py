@@ -365,11 +365,19 @@ def test_messages_from_core_modules_are_forwarded_too(indexing):
     assert "✅ No new tracks to process! Your index is up to date." in messages
 
 
-def test_deleted_track_filtering_is_reported(indexing):
+def test_deleted_track_filtering_is_reported(indexing, tmp_path, monkeypatch):
     service, xml, data, _ = indexing
     from core.deleted_tracks import add_deleted_tracks_with_metadata
 
-    add_deleted_tracks_with_metadata([{"track_id": "1001", "artist": "A", "title": "T"}])
+    monkeypatch.setattr(
+        deleted_tracks_module,
+        "DELETED_TRACKS_JSON",
+        tmp_path / "wrong-default" / "deleted_tracks.json",
+    )
+    add_deleted_tracks_with_metadata(
+        [{"track_id": "1001", "artist": "A", "title": "T"}],
+        path=data / "deleted_tracks.json",
+    )
 
     _, events = collect(service, xml)
 
@@ -939,6 +947,40 @@ def test_an_explicit_data_directory_is_the_only_index_write_target(
     assert fingerprint(wrong_default) == default_before
 
 
+def test_incremental_indexing_reads_existing_rows_from_the_explicit_target(
+    indexing, tmp_path, monkeypatch
+):
+    service, xml, target, audio = indexing
+    service.run(str(xml), progress=lambda event: None)
+
+    wrong_default = tmp_path / "empty-default"
+    wrong_default.mkdir()
+    monkeypatch.setattr(loader_module, "META_PQ", wrong_default / "meta.parquet")
+    monkeypatch.setattr(loader_module, "EMB_PQ", wrong_default / "embeddings.parquet")
+
+    added = audio / "track6.mp3"
+    added.write_bytes(b"\x00")
+    expanded_xml = _write_xml(
+        tmp_path / "expanded-for-read.xml",
+        [
+            (
+                str(1000 + index),
+                f"Title {index}",
+                f"Artist {index}",
+                audio / f"track{index}.mp3",
+            )
+            for index in range(1, 7)
+        ],
+    )
+
+    result = service.run(str(expanded_xml), progress=lambda event: None)
+
+    assert result.new_tracks_added == 1
+    assert result.total_tracks_indexed == 6
+    assert LibrarySession.load(target).ids[-1] == "1006"
+    assert list(wrong_default.iterdir()) == []
+
+
 def test_the_four_persisted_values_share_one_row_mapping(indexing, tmp_path):
     """A failed embed is absent everywhere; every remaining row maps exactly."""
     service, _, data, audio = indexing
@@ -966,6 +1008,28 @@ def test_the_four_persisted_values_share_one_row_mapping(indexing, tmp_path):
     np.testing.assert_array_equal(
         embeddings[vector_columns].to_numpy(dtype="float32"), matrix
     )
+
+
+def test_persistence_refuses_to_publish_misaligned_rows(tmp_path):
+    meta = pd.DataFrame(
+        [{"track_id": "second"}, {"track_id": "first"}]
+    )
+    embeddings = pd.DataFrame(
+        {
+            "track_id": ["first", "second"],
+            "v0": np.array([1.0, 0.0], dtype="float32"),
+            "v1": np.array([0.0, 1.0], dtype="float32"),
+        }
+    )
+    vectors = embeddings[["v0", "v1"]].to_numpy(dtype="float32")
+    target = tmp_path / "must-not-publish"
+
+    with pytest.raises(ValueError, match="meta.parquet.*not aligned"):
+        persistence_module.save_index_data(
+            target, meta, embeddings, vectors, ["first", "second"]
+        )
+
+    assert not target.exists()
 
 
 def test_a_committed_index_refreshes_before_a_later_delete(indexing, tmp_path):
@@ -996,6 +1060,19 @@ def test_a_committed_index_refreshes_before_a_later_delete(indexing, tmp_path):
     reloaded = LibrarySession.load(data)
     assert reloaded.track_count == 5
     assert "1006" in reloaded.ids
+
+
+def test_a_refresh_session_cannot_be_bound_to_another_data_directory(indexing):
+    service, xml, data, _ = indexing
+    service.run(str(xml), progress=lambda event: None)
+    library = LibrarySession.load(data)
+
+    with pytest.raises(ValueError, match="must match LibrarySession.data_dir"):
+        IndexingService(
+            service.settings,
+            data_dir=data.parent / "other-library",
+            library=library,
+        )
 
 
 def test_the_embedder_is_only_constructed_when_there_is_work(indexing):
