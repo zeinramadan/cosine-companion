@@ -959,6 +959,158 @@ test('the combined zero branch may still claim the absence, because there it hol
   assert.match(empty, /No recommendations had been collected yet, so no playlist file was written\./);
 });
 
+// Every shape an honest disclosure of a failed write could take. The blocker
+// was an OMISSION rather than a false claim, so the mirror of ABSENCE_CLAIMS
+// above is a floor rather than a ceiling: one of these must match. A reworded
+// disclosure keeps this green; a deleted one turns it red.
+const FAILURE_DISCLOSURES = [
+  /did not export/i,
+  /\bfail(?:ed|ure|s)?\b/i,
+  /unfinished file/i,
+  /incomplete/i,
+  /truncated/i,
+];
+
+test('a stop that had failures says so, instead of only reassuring about stopping', () => {
+  // BLOCKER, round 4. Reproduced against the real service in
+  // tests/web/test_jobs_real_export.py: `successful=1, failed=1,
+  // cancelled=true, total_tracks=3` left ONE complete 9-line playlist and ONE
+  // header-only partial in the directory. This branch rendered only "The
+  // playlists this run wrote are in {dir} and have been KEPT. Stopping never
+  // cut one short - the run stops between tracks, never mid-file."
+  //
+  // Every word of that is true. It is still misleading, because the failure is
+  // never mentioned AT ALL: the user is pointed at a folder and reassured
+  // about it while one of the files in it is unsafe to import. The causal
+  // claim was correctly scoped to what stopping does; the BODY was not scoped
+  // to what the run did.
+  const mixed = cancelledMessage({
+    result: resultDoc({
+      cancelled: true,
+      total_tracks: 3,
+      successful: 1,
+      failed: 1,
+      playlists_created: 1,
+    }),
+    outputDir: '/tmp/out',
+  });
+
+  // The rewording-proof floor, checked FIRST so a mutation that rewords the
+  // disclosure is visibly caught by the literals below rather than by this.
+  // The defect is the SILENCE, so the property is that the body says something
+  // about the failure, in any of the shapes an honest one could take.
+  assert.ok(
+    FAILURE_DISCLOSURES.some((claim) => claim.test(mixed)),
+    `the stopped body says nothing whatever about the failed track: ${mixed}`,
+  );
+
+  // The disclosure that was missing, as it is actually worded.
+  assert.match(mixed, /1 of the tracks processed did not export\./);
+  // ...and what it means for the folder the sentence before it just named.
+  // Same hedge and the same sentence as the zero branch, for the same reason:
+  // `failed` is one integer over three causes and only one of them opens a
+  // file, so a POSSIBILITY is the most this screen can honestly state.
+  assert.match(mixed, /A write that fails partway can still leave an unfinished file behind/);
+  assert.match(mixed, /check \/tmp\/out before importing from it\./);
+
+  // The true causal sentence SURVIVES - the fix is a scope, not a deletion.
+  // Partial results are still kept and the user still needs to know that.
+  assert.match(
+    mixed,
+    /Stopping never cut one short - the run stops between tracks, never mid-file\./,
+  );
+
+  // The defect shape itself, independent of how the disclosure is worded: the
+  // reassurance must not be the last thing the body says. Reword the two
+  // sentences above and this stays green; delete them and it goes red.
+  assert.doesNotMatch(
+    mixed,
+    /never mid-file\.\n\nNothing was deleted\.$/,
+    `the stopped body reassures about the folder and stops, with the failure never mentioned: ${mixed}`,
+  );
+
+  // Nothing failed means nothing to warn about, so a clean stop is unchanged.
+  const clean = cancelledMessage({
+    result: resultDoc({
+      cancelled: true,
+      total_tracks: 3,
+      successful: 2,
+      failed: 0,
+      playlists_created: 2,
+    }),
+    outputDir: '/tmp/out',
+  });
+  assert.doesNotMatch(clean, /unfinished file/, `a clean stop is being warned about: ${clean}`);
+  assert.doesNotMatch(clean, /did not export/, `a clean stop is being warned about: ${clean}`);
+
+  // Combined mode gets no caveat, and that is a finding rather than an
+  // omission. `export_single_playlist` increments `failed` only on its two
+  // ranking paths; its single `create_m3u_playlist` call sits AFTER the loop,
+  // guarded by `if all_recommendations` and wrapped in no `except`, so a raise
+  // there propagates out and fails the JOB rather than returning these stats.
+  // `failed > 0` in combined mode says nothing about the disk, and a warning
+  // about unfinished files would have no referent.
+  const combinedMixed = cancelledMessage({
+    result: resultDoc({
+      mode: 'combined',
+      cancelled: true,
+      total_tracks: 3,
+      successful: 1,
+      failed: 2,
+      playlists_created: null,
+      total_recommendations: 12,
+    }),
+    outputDir: '/tmp/out',
+  });
+  assert.doesNotMatch(
+    combinedMixed,
+    /unfinished file/,
+    `a caveat with nothing behind it reached combined mode: ${combinedMixed}`,
+  );
+});
+
+test('the completion body qualifies its import instruction when a write failed', () => {
+  // Found by auditing the COMPLETED dialog for the blocker above. It does NOT
+  // have the same omission: `Failed: ${result.failed}` is its own line, so the
+  // failure is disclosed and always was. What it did not say is what that
+  // number means for the disk - and the lines right after it tell the user to
+  // import "these .m3u files", which in per-seed mode can include the
+  // header-only file a raised write left behind. The count without the
+  // consequence is the weaker version of the same defect, so it gets the same
+  // sentence.
+  const withFailure = completionMessage({
+    result: resultDoc({ successful: 2, failed: 1, total_tracks: 3, playlists_created: 2 }),
+    outputDir: '/tmp/out',
+  });
+  assert.match(withFailure, /Failed: 1\n/);
+  assert.match(
+    withFailure,
+    /A write that fails partway can still leave an unfinished file behind, so check \/tmp\/out before importing from it\.$/,
+    `the completion body invites an unqualified import with a failed write in the run: ${withFailure}`,
+  );
+
+  // The clean per-seed body is pinned as a whole literal by "the completion
+  // body states no playlist count" above, so a caveat leaking into a run with
+  // no failures fails there rather than here.
+
+  // Combined mode, again with no caller - see `partialFileCaveat`.
+  const combined = completionMessage({
+    result: resultDoc({
+      mode: 'combined',
+      successful: 1,
+      failed: 2,
+      playlists_created: null,
+      total_recommendations: 12,
+    }),
+    outputDir: '/tmp/out',
+  });
+  assert.doesNotMatch(
+    combined,
+    /unfinished file/,
+    `a caveat with nothing behind it reached the combined completion body: ${combined}`,
+  );
+});
+
 test('a failed export raises the catalogued error dialog', async () => {
   await ready();
   choose('all');

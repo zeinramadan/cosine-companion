@@ -188,6 +188,39 @@ export function outputDirectoryOf(result) {
 }
 
 /**
+ * The one sentence a per-seed run owes the user when a write may have failed.
+ *
+ * `failed` in per-seed mode is a UNION of three causes and only one of them
+ * touches the disk. `export_recommendations_as_playlists` books a `failed` for
+ * a track id missing from the metadata index, and again for a seed that ranked
+ * no recommendations - neither opens a file - and a third time in the
+ * `except Exception` wrapped around `create_m3u_playlist`, which does. That
+ * third cause leaves a TRUNCATED file: the writer opens the destination with
+ * mode `'w'` and writes `#EXTM3U` before it looks at a single track, so a raise
+ * partway through leaves a header-only `.m3u` in the folder the user chose.
+ *
+ * Nothing on the wire says which of the three it was - `failed` is one integer
+ * - so the screen can state the POSSIBILITY and cannot state more. Hence "can
+ * still leave" rather than a claim that a partial IS there, and hence an
+ * instruction to look rather than a count of what is in the directory, which
+ * this screen still cannot see.
+ *
+ * COMBINED MODE HAS NO CALLER HERE, and not by oversight.
+ * `export_single_playlist` increments `failed` only on its two ranking paths;
+ * its single `create_m3u_playlist` call sits after the loop, guarded by
+ * `if all_recommendations` and wrapped in no `except`, so a raise there
+ * propagates out and fails the whole job rather than returning these stats. In
+ * combined mode `failed > 0` therefore says nothing at all about the disk, and
+ * this caveat would be a warning with no referent.
+ */
+function partialFileCaveat(outputDir) {
+  return (
+    'A write that fails partway can still leave an unfinished file behind, so ' +
+    `check ${outputDir} before importing from it.`
+  );
+}
+
+/**
  * Inventory :620-634 - the `Export Complete` body.
  *
  * DEFECT #10, FIXED HERE. The catalogued body reads `stats['playlists_created']`
@@ -217,6 +250,17 @@ export function outputDirectoryOf(result) {
  * than guessed: one run writes one fixed filename, so the answer is 1, or 0
  * when there was nothing to write. That line is also what defect #10 is about,
  * and removing it would remove the fix.
+ *
+ * ROUND 4, asked whether this body has the omission that made the stopped
+ * dialog a blocker. IT DOES NOT: `Failed:` is a line of its own and always
+ * was, so a completed run with failures discloses them. What it did not say is
+ * what that number means for the disk, and the two lines under it tell the
+ * user to import "these .m3u files" - which in per-seed mode can include the
+ * header-only file a raised write left behind. Disclosing the count and then
+ * inviting an unqualified import is the weaker form of the same defect, so it
+ * ends with `partialFileCaveat` when per-seed mode reports a failure. The
+ * clean body is untouched, and pinned as a whole literal by
+ * `tests/web/js/export.test.mjs`.
  */
 export function completionMessage({ result, outputDir }) {
   const combined = result.mode === 'combined';
@@ -234,7 +278,8 @@ export function completionMessage({ result, outputDir }) {
     `Failed: ${result.failed}\n\n` +
     `Location: ${outputDir}\n\n` +
     'You can now import these .m3u files into Rekordbox:\n' +
-    'File → Import → Playlist → Select .m3u file(s)'
+    'File → Import → Playlist → Select .m3u file(s)' +
+    (combined || !(result.failed > 0) ? '' : `\n\n${partialFileCaveat(outputDir)}`)
   );
 }
 
@@ -259,6 +304,19 @@ export function completionMessage({ result, outputDir }) {
  * reaches the wire. So the sentence is about what STOPPING does, which the job
  * protocol settles, and says nothing about what is in the folder, which it
  * cannot see.
+ *
+ * THAT SCOPING WAS NOT ENOUGH, round 4. A correctly scoped true sentence can
+ * still mislead by what it leaves out. Driven for real - `successful=1,
+ * failed=1, cancelled=true, total_tracks=3` - the directory held one complete
+ * playlist and one header-only partial, and this branch rendered the KEPT
+ * sentence and the mid-file sentence and NOTHING ELSE. The failure was never
+ * mentioned. A user reading a reassurance about the folder they are being
+ * pointed at will import from it, and one of those files is not importable.
+ * Being silent about the failure is not the same as declining to make a
+ * filesystem claim: the count of failures is on the wire, it is this screen's
+ * to report, and the zero branch was already reporting the consequence. So
+ * `failed > 0` now gets the disclosure and `partialFileCaveat`, which is the
+ * same sentence the zero branch says, now said in one place instead of two.
  *
  * The "already finished" branch is not padding. `ExportResult.cancelled` is
  * read off the cancel event, not off whether the loop broke, so a stop that
@@ -308,10 +366,13 @@ export function cancelledMessage({ result, outputDir }) {
       : 'No recommendations had been collected yet, so no playlist file was written.'
     : result.successful > 0
       ? `The playlists this run wrote are in ${outputDir} and have been KEPT. ` +
-        'Stopping never cut one short - the run stops between tracks, never mid-file.'
+        'Stopping never cut one short - the run stops between tracks, never mid-file.' +
+        (result.failed > 0
+          ? `\n\n${result.failed} of the tracks processed did not export. ` +
+            partialFileCaveat(outputDir)
+          : '')
       : 'No playlist was finished before you stopped, so there is nothing from this ' +
-        `run to import. A write that fails partway can still leave an unfinished ` +
-        `file behind, so check ${outputDir} before importing from it.`;
+        `run to import. ${partialFileCaveat(outputDir)}`;
 
   return `${opening}${written}\n\nNothing was deleted.`;
 }
