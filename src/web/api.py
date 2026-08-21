@@ -35,7 +35,6 @@ import pandas as pd
 
 from services.explore_session import ExploreSession
 from services.export_service import ExportService
-from services.indexing_service import IndexingService
 from services.playlist_service import IMPORT_COMMAND, PlaylistService
 from services.set_builder import SetBuilder
 from services.settings_store import XML_PATH_KEY
@@ -73,9 +72,9 @@ MAX_RECOMMENDATION_LIMIT = 200
 # platform the desktop app supports and can raise from a later UI callback.
 MAX_XML_PATH_CHARACTERS = 4096
 
-#: The two long operations, as ``JobSnapshot.kind`` values.
+#: The one long operation this PR ships, as a ``JobSnapshot.kind`` value.
+#: The re-index is deferred; see ``CocoApi``'s DEFERRED note.
 JOB_KIND_EXPORT = "export"
-JOB_KIND_REINDEX = "reindex"
 
 #: Export writes one playlist per seed into a directory, or every seed's
 #: recommendations into one de-duplicated file. Same names the service uses.
@@ -98,14 +97,13 @@ MIN_RECOMMENDATIONS_PER_TRACK = 1
 MAX_RECOMMENDATIONS_PER_TRACK = 100
 DEFAULT_RECOMMENDATIONS_PER_TRACK = 10
 
-#: Accepted fields per job-start body. Unknown fields are refused rather than
-#: ignored, matching ``_update_settings`` and ``_delete_library_tracks``: a
-#: misspelled ``out_dir`` must not silently start a seven-minute export into
+#: Accepted fields in the export-start body. Unknown fields are refused rather
+#: than ignored, matching ``_update_settings`` and ``_delete_library_tracks``:
+#: a misspelled ``out_dir`` must not silently start a seven-minute export into
 #: the wrong place.
 EXPORT_BODY_FIELDS = frozenset(
     {"mode", "out_dir", "recommendations_per_track", "track_ids"}
 )
-REINDEX_BODY_FIELDS = frozenset({"force_full"})
 
 #: The longest set ``POST /api/set`` will build. The Tkinter tab has no upper
 #: bound at all (inventory :501-503 lists three validations and this is not one
@@ -356,35 +354,6 @@ def _export_result_document(result, mode: str, output: str) -> Dict[str, Any]:
     }
 
 
-def _index_result_document(result) -> Dict[str, Any]:
-    """An ``IndexResult`` as JSON, including the outcome the Tkinter UI hides.
-
-    ``status`` and ``failed`` travel. On ``main`` all three terminal outcomes
-    read as "Indexing completed successfully!" in both Tk windows, including
-    ``no_embeddings`` - new tracks were found and *not one* could be embedded.
-    ``tests/test_ui_reports_success_for_every_terminal_outcome.py`` pins that
-    unchanged behaviour and statically forbids ``src/ui/*.py`` and
-    ``src/cosine_companion.py`` from reaching these fields; ``src/web/`` is
-    deliberately outside that guard (its ``_ui_sources`` is that list), which
-    is what ``IndexResult``'s docstring means by "PR 3 needs in order to fix
-    the defect deliberately".
-
-    This PR does not decide how the outcome is *rendered* - there is no UI in
-    it. It carries the distinction to the surface a UI can read, and stops
-    there. The job's own ``state`` stays ``succeeded`` for a ``no_embeddings``
-    run, because the job ran to completion and did not raise; a ``failed``
-    job with a null ``error`` would be a worse lie than the one being fixed.
-    """
-    return {
-        "status": result.status,
-        "up_to_date": result.up_to_date,
-        "failed": result.failed,
-        "total_tracks_indexed": result.total_tracks_indexed,
-        "new_tracks_added": result.new_tracks_added,
-        "new_tracks_found": result.new_tracks_found,
-    }
-
-
 # ---------------------------------------------------------------------------
 # Query-parameter parsing
 # ---------------------------------------------------------------------------
@@ -616,7 +585,6 @@ class CocoApi:
         sets=None,
         jobs=None,
         export_service=None,
-        indexing_service=None,
     ):
         """Bind to a library and a settings store.
 
@@ -647,10 +615,6 @@ class CocoApi:
             export_service: an ``ExportService``. Built over ``library`` when
                 absent. Injectable because the real one takes ~6.8 minutes
                 over the full collection, which no test may spend.
-            indexing_service: an ``IndexingService``. Built over ``settings``
-                when absent, and injectable for the same reason - the real one
-                takes ~11.5 minutes and needs Essentia, which CI does not
-                have.
         """
         self.library = library
         self.settings = settings
@@ -663,18 +627,11 @@ class CocoApi:
         self.sets = sets if sets is not None else SetBuilder(library)
 
         self.jobs = jobs if jobs is not None else JobRegistry()
-        # Both are cheap to construct and hold no state between runs:
-        # ``ExportService`` snapshots the library per export and
-        # ``IndexingService`` defers its Essentia-bearing import into ``run``.
-        # Building them here rather than per request keeps the request path
-        # free of construction that could raise.
+        # Cheap to construct and holds no state between runs - it snapshots
+        # the library per export. Building it here rather than per request
+        # keeps the request path free of construction that could raise.
         self.export_service = (
             export_service if export_service is not None else ExportService(library)
-        )
-        self.indexing_service = (
-            indexing_service
-            if indexing_service is not None
-            else IndexingService(settings)
         )
 
         self._settings_write_lock = threading.Lock()
@@ -685,11 +642,10 @@ class CocoApi:
     # An ordered list of (method, pattern, handler name). No routing library:
     # the table is short. Two ordering constraints: /api/tracks/search is
     # matched before /api/tracks/{track_id}, and the literal /api/jobs/export
-    # and /api/jobs/reindex are matched before /api/jobs/{job_id}. A list
-    # expresses that better than a dependency would. Deliberately no count in
-    # this comment: the destinations still to be built each add rows, so a
-    # number here is a merge conflict and a wrong fact the moment one of them
-    # lands.
+    # is matched before /api/jobs/{job_id}. A list expresses that better than
+    # a dependency would. Deliberately no count in this comment: the
+    # destinations still to be built each add rows, so a number here is a
+    # merge conflict and a wrong fact the moment one of them lands.
 
     ROUTES = [
         ("GET", re.compile(r"^/api/health$"), "_health"),
@@ -700,12 +656,11 @@ class CocoApi:
             re.compile(r"^/api/library/tracks/delete$"),
             "_delete_library_tracks",
         ),
-        # Jobs. The literal POST routes are listed before the ``{job_id}``
+        # Jobs. The literal POST route is listed before the ``{job_id}``
         # ones so ``/api/jobs/export`` is a route and not a job called
         # "export"; ``handle`` matches in order.
         ("GET", re.compile(r"^/api/jobs$"), "_jobs"),
         ("POST", re.compile(r"^/api/jobs/export$"), "_start_export"),
-        ("POST", re.compile(r"^/api/jobs/reindex$"), "_start_reindex"),
         (
             "POST",
             re.compile(r"^/api/jobs/(?P<job_id>[^/]+)/cancel$"),
@@ -1050,59 +1005,56 @@ class CocoApi:
             message=f"Exporting {len(track_ids)} tracks",
         )
 
-    def _start_reindex(self, query, body):
-        """Start a re-index job. 202, or 409 if a job is already running.
-
-        The XML path comes from the settings store, not the request body, for
-        the same reason ``_update_settings`` is the only way to change it:
-        there is one configured collection and both front ends must agree
-        about which one it is. A blank path is a 409 rather than a 400 -
-        nothing is wrong with the *request*; the application is not configured
-        yet, which is the same shape as ``empty_library``.
-        """
-        fields = _body_fields(body, REINDEX_BODY_FIELDS)
-
-        force_full = fields.get("force_full", False)
-        if not isinstance(force_full, bool):
-            raise bad_request("force_full must be true or false.")
-
-        xml_path = self.settings.get(XML_PATH_KEY)
-        if not isinstance(xml_path, str) or not xml_path.strip():
-            raise ApiError(
-                409,
-                "no_xml_path",
-                "No Rekordbox XML is configured. Set one in Settings first.",
-            )
-        xml_path = xml_path.strip()
-
-        service = self.indexing_service
-
-        def work(report, cancel):
-            # ``IndexingService`` emits a ProgressEvent with a phase; the job
-            # layer carries three fields, so the phase is dropped here rather
-            # than widening the job record for one producer. ``total`` is 0
-            # outside the embedding phase, which a UI reads as indeterminate -
-            # the same information the pipeline has.
-            def on_event(event):
-                report(event.current, event.total, event.message)
-
-            result = service.run(
-                xml_path, force_full=force_full, progress=on_event, cancel=cancel
-            )
-            # Never ``cancelled=True`` here. A cancel that the pipeline
-            # observes raises KeyboardInterrupt out of ``run`` and ``Job._run``
-            # lands it as cancelled; a cancel it never observes completes the
-            # run for real (inventory defect #17), and reporting that as
-            # cancelled would claim work was discarded that was in fact kept.
-            # The terminal snapshot still carries ``cancel_requested``, which
-            # is how that case stays visible.
-            return WorkOutcome(cancelled=False, result=_index_result_document(result))
-
-        return self._start(
-            JOB_KIND_REINDEX,
-            work,
-            message="Full re-index" if force_full else "Checking for new tracks",
-        )
+    # DEFERRED: POST /api/jobs/reindex was here, and it is not in this PR.
+    #
+    # It was cut on review, not postponed for want of time. The endpoint had a
+    # demonstrated data-loss path with two independent halves, and only the
+    # second of them can be fixed inside src/web/.
+    #
+    # (a) IT CAN REWRITE A LIBRARY THE REQUEST NEVER NAMED.
+    #     ``web.host.build_api(data_dir)`` binds the LibrarySession, the
+    #     SettingsStore and the PlaylistService to ``data_dir``, so
+    #     ``ui-web --data-dir X`` really does open X. The indexing pipeline
+    #     does not take part in that: ``IndexingService.__init__`` takes only a
+    #     settings store (services/indexing_service.py:155) and
+    #     ``IndexingService.run(xml_path, force_full, progress, cancel,
+    #     sample_size)`` has no data-directory parameter at all (:159).
+    #     ``index_library`` loads through ``load_existing_data`` and persists
+    #     through ``save_index_data`` (processing/pipeline.py:193, :337), and
+    #     ``core.persistence`` writes to ``config.META_PQ`` / ``EMB_PQ`` /
+    #     ``IDX_NPY`` / ``IDS_JSON`` - four module constants derived once from
+    #     the global ``config.DATA`` (config/paths.py:33, :43-47).
+    #
+    #     So a force re-index started from a window opened on X reads X's
+    #     configured XML and overwrites the DEFAULT library's four files with
+    #     it. On this machine the default library is the maintainer's real
+    #     1,532-track index. That is the data loss, and no amount of care in
+    #     this file prevents it: the write target is decided at import time,
+    #     three layers down, by a module constant.
+    #
+    # (b) EVEN ON THE DEFAULT DIRECTORY, THE API KEEPS THE STALE LIBRARY.
+    #     A re-index rewrites the four files on disk, and nothing here calls
+    #     ``LibrarySession.reload`` (services/library_session.py:99) afterwards
+    #     - so the API goes on serving the generation it loaded at startup.
+    #     Modelled over the fourteen-track fixture with a signature-correct run
+    #     committing a real fifteen-track generation: the job reported success
+    #     with 15, ``GET /api/library`` still said 14, and a subsequent
+    #     ``POST /api/library/tracks/delete`` wrote its replacement generation
+    #     from that stale 14-track snapshot - replacing the 15-track generation
+    #     on disk with a 13-track one and losing the newly indexed track.
+    #
+    # (b) alone is an omission and one line fixes it. (a) is an architectural
+    # mismatch between a process-global data directory and a per-session one,
+    # and closing it means changing src/services/ and src/processing/ - which
+    # this PR must not do, and which deserves its own PR and its own review.
+    # Adding the reload without that would leave a reachable route that
+    # rewrites the wrong library, so the route is gone instead.
+    #
+    # What is NOT deferred: the generic job machinery in ``web.jobs`` stays,
+    # including the ``KeyboardInterrupt``-as-cancellation handling that exists
+    # for the indexing pipeline's checkpoint. It is exercised directly by
+    # tests/web/test_jobs_registry.py, and it is what the re-index will be
+    # built on once its data directory is its own.
 
     def _start(self, kind, work, total=0, message=""):
         """Register a job, or turn the one-at-a-time refusal into a 409."""

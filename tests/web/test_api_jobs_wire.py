@@ -23,14 +23,14 @@ from web.server import API_ALLOWED_METHODS, CocoServer
 
 WAIT = 5.0
 
-#: Every job route, and whether it changes state. The auth cases below are
-#: parameterised over this so a route added later without a token check is a
-#: failure rather than an omission.
+#: Every job route this PR ships. The auth cases below are parameterised over
+#: this so a route added later without a token check is a failure rather than
+#: an omission. ``POST /api/jobs/reindex`` is deliberately absent - it was cut
+#: on review; see ``web.api``'s DEFERRED note.
 JOB_ROUTES = [
     ("GET", "/api/jobs"),
     ("GET", "/api/jobs/anything"),
     ("POST", "/api/jobs/export"),
-    ("POST", "/api/jobs/reindex"),
     ("POST", "/api/jobs/anything/cancel"),
 ]
 
@@ -298,7 +298,12 @@ def test_the_second_job_is_a_409_on_the_wire(job_client, job_server, exports):
     job_id = started.json["job"]["id"]
     assert exports.entered.wait(timeout=WAIT)
 
-    refused = post_json(job_client, "/api/jobs/reindex", {}, token)
+    refused = post_json(
+        job_client,
+        "/api/jobs/export",
+        {"out_dir": "/tmp/y", "track_ids": "f02"},
+        token,
+    )
 
     assert refused.status == 409
     assert refused.error_code == "job_in_progress"

@@ -7,6 +7,13 @@ export is measured at **≈ 6.8 minutes** and a re-index at **≈ 11.5 minutes**
 request/response shape cannot give them: progress while they run, a cancel the
 user can press, and survival of the request that started them.
 
+**One of the two ships here.** ``POST /api/jobs/export`` is in this PR; the
+re-index route is not, and ``web.api``'s DEFERRED note - above ``_start`` -
+says exactly why. This module is unchanged by that: it is the machinery for
+both, and the parts that exist for indexing's shape rather than export's are
+marked where they are and exercised directly by
+tests/web/test_jobs_registry.py rather than through a route.
+
 This module is the machinery only. It knows nothing about exports, indexes,
 playlists or M3U files - a *job* here is an opaque callable plus the state
 needed to watch it. ``web.api`` supplies the callables. That split is what
@@ -118,8 +125,10 @@ MAX_REMEMBERED_JOBS = 8
 MAX_ERROR_CHARACTERS = 500
 
 #: ``(current, total, message)`` - what ``ExportService`` already calls its
-#: ``progress`` argument with. ``IndexingService`` emits a richer
-#: ``ProgressEvent``; ``web.api`` narrows it to this on the way through.
+#: ``progress`` argument with, and the only producer wired up in this PR.
+#: ``IndexingService`` emits a richer ``ProgressEvent`` with a phase; the
+#: deferred re-index caller will narrow it to these three on the way
+#: through rather than widening every job record for one producer.
 ProgressReporter = Callable[[int, int, str], None]
 
 
@@ -131,7 +140,11 @@ class WorkOutcome:
     and neither is wrong. ``ExportService`` returns an ``ExportResult`` with
     ``cancelled=True`` and real counts; ``IndexingService`` raises
     ``KeyboardInterrupt`` from the pipeline's checkpoint and produces no result
-    at all. ``Job._run`` accepts both and lands them in the same terminal state.
+    at all. ``Job._run`` accepts both and lands them in the same terminal
+    state. Only the first is reached through a route in this PR - the
+    re-index is deferred, see ``web.api``'s DEFERRED note - and the second
+    is exercised directly by tests/web/test_jobs_registry.py, which is the
+    machinery's own reachable path: ``work`` is an arbitrary callable.
     """
 
     cancelled: bool
@@ -341,7 +354,11 @@ class Job:
         pipeline raises it at its per-track checkpoint when ``cancel`` is set
         (``IndexingService.run``'s docstring). CPython delivers a real Ctrl-C
         to the main thread only, so there is no other interpretation available
-        here.
+        here. The re-index route that would deliver it is deferred out of this
+        PR (see ``web.api``'s DEFERRED note); the branch is not defensive
+        padding for that reason - ``work`` is any callable, and
+        tests/web/test_jobs_registry.py raises it through the real ``start``
+        path, so deleting the branch turns that test red.
         """
         try:
             outcome = work(self.report_progress, self._cancel)

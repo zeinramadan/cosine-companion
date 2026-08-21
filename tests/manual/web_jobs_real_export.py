@@ -207,7 +207,9 @@ def main():
             f"{job['progress']['total']} vs {len(track_ids)}",
         )
 
-        status, refused = client.post("/api/jobs/reindex", {})
+        status, refused = client.post(
+            "/api/jobs/export", {"out_dir": str(out_root / "second")}
+        )
         check("a second job is refused with 409", status == 409, f"got {status}")
         check(
             "the refusal names the running job",

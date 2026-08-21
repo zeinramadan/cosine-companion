@@ -1,13 +1,17 @@
 """The /api/jobs surface: starting, watching, cancelling, and the results.
 
-Every service here is a double. The real ones take ~6.8 and ~11.5 minutes, so
-running either would make this file unrunnable rather than slow. Two things
-keep the doubles honest:
+One route starts work here: ``POST /api/jobs/export``. The re-index route was
+cut from this PR on review and ``web.api``'s DEFERRED note says why, so the
+indexing doubles that used to live in this file are gone with it.
 
-* ``test_the_double_matches_the_real_export_service_signature`` and its
-  indexing twin bind the arguments this API really passes against the **real**
-  service's signature with ``inspect``, so a double that drifts is a failure
-  here rather than a 500 in production;
+The export service is a double. The real one takes ~6.8 minutes over the full
+collection, so running it here would make this file unrunnable rather than
+slow. Two things keep the double honest:
+
+* ``test_the_double_matches_the_real_export_service_signature`` binds the
+  arguments this API really passes against the **real** service's signature
+  with ``inspect``, so a double that drifts is a failure here rather than a
+  500 in production;
 * ``tests/web/test_jobs_real_export.py`` runs the whole machinery against the
   real ``ExportService`` over the fixture library.
 
@@ -21,14 +25,6 @@ import threading
 import pytest
 
 from services.export_service import ExportResult, ExportService
-from services.indexing_service import (
-    STATUS_INDEXED,
-    STATUS_NO_EMBEDDINGS,
-    STATUS_UP_TO_DATE,
-    IndexResult,
-    IndexingService,
-    ProgressEvent,
-)
 from web.api import COMBINED_EXPORT_FILENAME, CocoApi
 from web.jobs import CANCELLED, FAILED, RUNNING, SUCCEEDED
 
@@ -85,48 +81,14 @@ class FakeExportService:
         )
 
 
-class FakeIndexingService:
-    """The same, for ``IndexingService.run``."""
-
-    def __init__(self, result=None, raises=None):
-        self.calls = []
-        self.entered = threading.Event()
-        self.release = threading.Event()
-        self.result = result or IndexResult(
-            status=STATUS_INDEXED, total_tracks_indexed=14, new_tracks_added=2
-        )
-        self.raises = raises
-        self.progress = None
-        self.cancel = None
-
-    def run(
-        self, xml_path, force_full=False, progress=None, cancel=None, sample_size=None
-    ):
-        self.calls.append({"xml_path": xml_path, "force_full": force_full})
-        self.progress = progress
-        self.cancel = cancel
-        self.entered.set()
-        assert self.release.wait(timeout=WAIT), "the indexing double was never released"
-        if self.raises is not None:
-            raise self.raises
-        return self.result
-
-
 @pytest.fixture
 def exports():
     return FakeExportService()
 
 
 @pytest.fixture
-def indexing():
-    return FakeIndexingService()
-
-
-@pytest.fixture
-def api(web_library, settings, exports, indexing):
-    return CocoApi(
-        web_library, settings, export_service=exports, indexing_service=indexing
-    )
+def api(web_library, settings, exports):
+    return CocoApi(web_library, settings, export_service=exports)
 
 
 # -- helpers ---------------------------------------------------------------
@@ -184,25 +146,6 @@ def test_the_double_matches_the_real_export_service_signature(api, exports):
         )
 
     settle(api, exports, body["job"]["id"])
-
-
-def test_the_double_matches_the_real_indexing_service_signature(api, indexing):
-    api.handle("POST", "/api/jobs/reindex", {}, {})
-    assert indexing.entered.wait(timeout=WAIT)
-    call = indexing.calls[0]
-
-    inspect.signature(IndexingService.run).bind(
-        IndexingService,
-        call["xml_path"],
-        force_full=call["force_full"],
-        progress=indexing.progress,
-        cancel=indexing.cancel,
-    )
-
-    settle(api, indexing, api.jobs.all()[0].job_id)
-
-
-# -- starting --------------------------------------------------------------
 
 
 def test_starting_an_export_returns_202_and_a_running_job(api, exports):
@@ -279,23 +222,6 @@ def test_the_default_recommendation_count_is_passed_when_none_is_given(api, expo
     settle(api, exports, body["job"]["id"])
 
 
-def test_starting_a_reindex_passes_the_configured_xml_path(api, indexing, settings):
-    status, body = api.handle("POST", "/api/jobs/reindex", {}, {"force_full": True})
-
-    assert status == 202
-    assert body["job"]["kind"] == "reindex"
-    assert body["job"]["progress"]["message"] == "Full re-index"
-    assert indexing.entered.wait(timeout=WAIT)
-    assert indexing.calls == [
-        {"xml_path": settings.get("xml_path"), "force_full": True}
-    ]
-
-    settle(api, indexing, body["job"]["id"])
-
-
-# -- watching --------------------------------------------------------------
-
-
 def test_progress_from_the_service_is_visible_to_a_poller(api, exports):
     status, body = start_export(api)
     job_id = body["job"]["id"]
@@ -311,50 +237,24 @@ def test_progress_from_the_service_is_visible_to_a_poller(api, exports):
     settle(api, exports, job_id)
 
 
-def test_indexing_progress_events_are_narrowed_to_the_job_record(api, indexing):
-    """``ProgressEvent`` carries a phase; the job record carries three fields.
-
-    The phase is dropped here rather than widening every job for one producer.
-    ``total`` travels untouched, including the 0 the pipeline sends outside the
-    embedding phase, which a UI reads as indeterminate.
-    """
-    status, body = api.handle("POST", "/api/jobs/reindex", {}, {})
-    job_id = body["job"]["id"]
-    assert indexing.entered.wait(timeout=WAIT)
-
-    indexing.progress(ProgressEvent(phase="parse", current=0, total=0, message="Parsing"))
-    assert read_job(api, job_id)["progress"] == {
-        "current": 0,
-        "total": 0,
-        "message": "Parsing",
-    }
-
-    indexing.progress(
-        ProgressEvent(phase="embed", current=137, total=1307, message="[137/1307]")
-    )
-    assert read_job(api, job_id)["progress"] == {
-        "current": 137,
-        "total": 1307,
-        "message": "[137/1307]",
-    }
-
-    settle(api, indexing, job_id)
-
-
-def test_the_job_list_carries_every_remembered_job(api, exports, indexing):
+def test_the_job_list_carries_every_remembered_job(api, exports):
+    """A finished job is still listed, beside the one running now."""
     status, body = start_export(api)
-    export_id = body["job"]["id"]
-    settle(api, exports, export_id)
+    first_id = body["job"]["id"]
+    settle(api, exports, first_id)
 
-    status, body = api.handle("POST", "/api/jobs/reindex", {}, {})
-    reindex_id = body["job"]["id"]
+    exports.release.clear()
+    exports.entered.clear()
+    status, body = start_export(api, out_dir="/tmp/second")
+    assert status == 202
+    second_id = body["job"]["id"]
 
     status, listing = api.handle("GET", "/api/jobs", {})
     assert status == 200
-    assert [job["id"] for job in listing["jobs"]] == [reindex_id, export_id]
-    assert [job["kind"] for job in listing["jobs"]] == ["reindex", "export"]
+    assert [job["id"] for job in listing["jobs"]] == [second_id, first_id]
+    assert [job["state"] for job in listing["jobs"]] == [RUNNING, SUCCEEDED]
 
-    settle(api, indexing, reindex_id)
+    settle(api, exports, second_id)
 
 
 def test_an_unknown_job_is_404_unknown_job(api):
@@ -408,40 +308,6 @@ def test_combined_mode_reports_playlists_created_as_an_explicit_null(api):
     assert "playlists_created" in job["result"]
     assert job["result"]["playlists_created"] is None
     assert job["result"]["output"] == f"/tmp/here/{COMBINED_EXPORT_FILENAME}"
-
-
-def test_a_reindex_result_carries_the_outcome_the_tkinter_windows_hide(api):
-    """``no_embeddings`` reads as success in both Tk windows. Not here.
-
-    The job's own ``state`` is still ``succeeded`` - the run completed and did
-    not raise - but ``status`` and ``failed`` travel in the result, which is
-    what lets a later UI render the distinction deliberately.
-    """
-    indexing = FakeIndexingService(
-        result=IndexResult(
-            status=STATUS_NO_EMBEDDINGS, new_tracks_found=1307, new_tracks_added=0
-        )
-    )
-    api = CocoApi(api.library, api.settings, indexing_service=indexing)
-    status, body = api.handle("POST", "/api/jobs/reindex", {}, {})
-    job = settle(api, indexing, body["job"]["id"])
-
-    assert job["state"] == SUCCEEDED
-    assert job["result"]["status"] == STATUS_NO_EMBEDDINGS
-    assert job["result"]["failed"] is True
-    assert job["result"]["up_to_date"] is False
-    assert job["result"]["new_tracks_found"] == 1307
-
-
-def test_an_up_to_date_reindex_is_reported_as_such(api):
-    indexing = FakeIndexingService(result=IndexResult(status=STATUS_UP_TO_DATE))
-    api = CocoApi(api.library, api.settings, indexing_service=indexing)
-    status, body = api.handle("POST", "/api/jobs/reindex", {}, {})
-    job = settle(api, indexing, body["job"]["id"])
-
-    assert job["result"]["status"] == STATUS_UP_TO_DATE
-    assert job["result"]["up_to_date"] is True
-    assert job["result"]["failed"] is False
 
 
 def test_a_service_that_raises_lands_the_job_in_failed_with_the_message(api):
@@ -510,44 +376,36 @@ def test_a_cancelled_export_keeps_and_reports_what_it_wrote(api):
     assert job["result"]["output"] == "/tmp/here"
 
 
-def test_a_cancelled_reindex_reports_no_result_at_all(api):
-    """Indexing's opposite answer, and it is the pipeline's, not this PR's.
+def test_a_cancel_the_service_never_observed_is_reported_beside_the_success(api):
+    """Inventory defect #17's shape, made visible instead of guessed at.
 
-    ``IndexingService.run`` raises ``KeyboardInterrupt`` at the checkpoint and
-    every embedding computed so far is discarded (inventory defect #4). There
-    is no partial result to report, and inventing one would claim work exists
-    that does not.
+    A service that returns ``cancelled=False`` after a cancel was requested
+    is saying the run completed for real - the signal arrived too late to
+    change anything. Reporting that as ``cancelled`` would claim work was
+    discarded that was in fact kept, so the state stays ``succeeded`` and
+    ``cancel_requested`` carries the other half of the story.
     """
-    indexing = FakeIndexingService(raises=KeyboardInterrupt())
-    api = CocoApi(api.library, api.settings, indexing_service=indexing)
-    status, body = api.handle("POST", "/api/jobs/reindex", {}, {})
-    job_id = body["job"]["id"]
-    assert indexing.entered.wait(timeout=WAIT)
-    api.handle("POST", f"/api/jobs/{job_id}/cancel", {}, {})
-
-    job = settle(api, indexing, job_id)
-
-    assert job["state"] == CANCELLED
-    assert job["result"] is None
-    assert job["error"] is None
-
-
-def test_a_cancel_the_pipeline_never_observed_is_reported_beside_the_success(api):
-    """Inventory defect #17, made visible instead of guessed at."""
-    indexing = FakeIndexingService(
-        result=IndexResult(status=STATUS_INDEXED, total_tracks_indexed=1307)
+    exports = FakeExportService(
+        result=ExportResult(
+            total_tracks=2,
+            successful=2,
+            failed=0,
+            total_recommendations=20,
+            playlists_created=2,
+            cancelled=False,
+        )
     )
-    api = CocoApi(api.library, api.settings, indexing_service=indexing)
-    status, body = api.handle("POST", "/api/jobs/reindex", {}, {})
+    api = CocoApi(api.library, api.settings, export_service=exports)
+    status, body = start_export(api)
     job_id = body["job"]["id"]
-    assert indexing.entered.wait(timeout=WAIT)
+    assert exports.entered.wait(timeout=WAIT)
     api.handle("POST", f"/api/jobs/{job_id}/cancel", {}, {})
 
-    job = settle(api, indexing, job_id)
+    job = settle(api, exports, job_id)
 
     assert job["state"] == SUCCEEDED
     assert job["cancel_requested"] is True
-    assert job["result"]["status"] == STATUS_INDEXED
+    assert job["result"]["successful"] == 2
 
 
 def test_cancelling_a_finished_job_is_200_and_says_what_it_did(api, exports):
@@ -579,19 +437,19 @@ def test_a_cancel_body_with_fields_is_refused(api):
 # -- one at a time ---------------------------------------------------------
 
 
-def test_a_second_job_is_409_naming_the_one_already_running(api, exports, indexing):
+def test_a_second_job_is_409_naming_the_one_already_running(api, exports):
     status, body = start_export(api)
     running_id = body["job"]["id"]
     assert exports.entered.wait(timeout=WAIT)
 
-    status, refused = api.handle("POST", "/api/jobs/reindex", {}, {})
+    status, refused = start_export(api, out_dir="/tmp/elsewhere")
 
     assert status == 409
     assert refused["error"]["code"] == "job_in_progress"
     assert running_id in refused["error"]["message"]
     assert "export" in refused["error"]["message"]
     # The refused job never reached the service.
-    assert indexing.calls == []
+    assert len(exports.calls) == 1
     # ...and the running one is untouched.
     assert read_job(api, running_id)["state"] == RUNNING
 
@@ -611,14 +469,16 @@ def test_a_second_export_is_refused_too(api, exports):
     settle(api, exports, job_id)
 
 
-def test_a_job_can_start_once_the_previous_one_has_finished(api, exports, indexing):
+def test_a_job_can_start_once_the_previous_one_has_finished(api, exports):
     status, body = start_export(api)
     settle(api, exports, body["job"]["id"])
 
-    status, body = api.handle("POST", "/api/jobs/reindex", {}, {})
+    exports.release.clear()
+    exports.entered.clear()
+    status, body = start_export(api, out_dir="/tmp/second")
 
     assert status == 202
-    settle(api, indexing, body["job"]["id"])
+    settle(api, exports, body["job"]["id"])
 
 
 # -- request validation ----------------------------------------------------
@@ -684,38 +544,59 @@ def test_exporting_a_library_with_no_index_is_409_empty_library(
     assert exports.calls == []
 
 
-def test_a_reindex_with_no_configured_xml_is_409_no_xml_path(
-    web_library, tmp_path, indexing
-):
-    from services.settings_store import SettingsStore
+def test_a_null_body_is_an_empty_object(api, exports):
+    """A caller with nothing to say may POST ``null`` rather than ``{}``.
 
-    blank = SettingsStore(tmp_path / "blank.json")
-    api = CocoApi(web_library, blank, indexing_service=indexing)
+    Export needs an ``out_dir``, so neither spelling can start a job - and
+    that is what makes the two comparable. The refusal has to be the one
+    ``{}`` earns, about the MISSING FIELD, rather than the one an
+    unrecognised body earns ("The JSON body must be an object"). Read as
+    a non-object, ``null`` would be refused for the wrong reason and a
+    caller would go looking for a malformed request it never sent.
+    """
+    from_null = api.handle("POST", "/api/jobs/export", {}, None)
+    from_empty = api.handle("POST", "/api/jobs/export", {}, {})
+
+    assert from_null == from_empty
+    assert from_null[0] == 400
+    assert "out_dir" in from_null[1]["error"]["message"]
+    assert exports.calls == []
+    assert api.jobs.all() == ()
+
+
+# -- what this PR does NOT ship -------------------------------------------
+
+
+def test_there_is_no_reindex_route_in_this_pr(api, exports):
+    """The cut route stays cut until its data directory is its own.
+
+    ``POST /api/jobs/reindex`` was removed on review, and ``web.api``'s
+    DEFERRED note carries both reasons in full. The short version is that
+    ``IndexingService.run`` has no data-directory parameter and the pipeline
+    persists through ``config.DATA``, so a re-index started from a window
+    opened with ``--data-dir X`` overwrites the DEFAULT library's four files.
+
+    Pinned here rather than left to the route table's own shape, because the
+    two ways it could come back look nothing alike from the outside: a row
+    restored in ``ROUTES`` and a handler restored on ``CocoApi``. Both are
+    checked, and so is what a caller gets today.
+    """
+    assert not hasattr(CocoApi, "_start_reindex")
+    assert [
+        (verb, pattern.pattern)
+        for verb, pattern, _ in CocoApi.ROUTES
+        if "reindex" in pattern.pattern
+    ] == []
 
     status, response = api.handle("POST", "/api/jobs/reindex", {}, {})
 
-    assert status == 409
-    assert response["error"]["code"] == "no_xml_path"
-    assert indexing.calls == []
-
-
-@pytest.mark.parametrize(
-    "body", [{"force_full": "yes"}, {"force_full": 1}, {"full": True}]
-)
-def test_a_bad_reindex_request_is_refused(api, indexing, body):
-    status, response = api.handle("POST", "/api/jobs/reindex", {}, body)
-
-    assert status == 400
-    assert response["error"]["code"] == "bad_request"
-    assert indexing.calls == []
-
-
-def test_a_null_body_is_an_empty_object(api, indexing):
-    """A caller with nothing to say may POST ``null`` rather than ``{}``."""
-    status, body = api.handle("POST", "/api/jobs/reindex", {}, None)
-
-    assert status == 202
-    assert indexing.entered.wait(timeout=WAIT)
-    assert indexing.calls[0]["force_full"] is False
-
-    settle(api, indexing, body["job"]["id"])
+    # 405, not 404, and the route table is why: ``/api/jobs/reindex`` still
+    # matches the ``GET /api/jobs/{job_id}`` pattern, so ``handle`` finds the
+    # PATH and refuses the VERB. That is the same answer POSTing to any other
+    # job id gets, which is the point - "reindex" is not a special word here
+    # any more.
+    assert status == 405
+    assert response["error"]["code"] == "method_not_allowed"
+    assert api.handle("POST", "/api/jobs/anything-else", {}, {}) == (status, response)
+    assert exports.calls == []
+    assert api.jobs.all() == ()
