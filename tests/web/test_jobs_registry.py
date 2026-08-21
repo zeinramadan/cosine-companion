@@ -887,6 +887,89 @@ def test_a_stderr_that_raises_a_BaseException_does_not_kill_the_worker(
     assert_the_slot_is_free(registry, unhandled)
 
 
+def run_and_join(registry, work, kind="export"):
+    """Start a work callable that returns immediately and wait for its thread.
+
+    ``Gate`` is not usable for the outcome tests below: it always returns a
+    real ``WorkOutcome``, and what those tests need is a callable that returns
+    something else. Bounded like every other wait in this file.
+    """
+    job = registry.start(kind, work)
+    assert job.thread is not None
+    job.thread.join(timeout=WAIT)
+    assert not job.thread.is_alive(), "the worker thread did not finish"
+    return job, job.snapshot()
+
+
+def test_a_worker_that_returns_no_outcome_at_all_still_lands_the_job(
+    registry, monkeypatch, capsys
+):
+    """The SUCCESS path reads user code too, and it was outside the guard.
+
+    ``work`` is an arbitrary callable - the module docstring says so, and the
+    ``KeyboardInterrupt`` branch is justified in ``_run``'s docstring on
+    exactly that ground. A callable that falls off its end returns ``None``,
+    and ``outcome.cancelled`` then raises ``AttributeError``. That read used
+    to live in the ``else:`` of the ``try``, and the ``else:`` of a ``try`` is
+    NOT covered by its handlers: the ``AttributeError`` escaped ``_run``
+    untouched and wedged the registry precisely as an unguarded failure did.
+    No exotic exception is needed for this one - a forgotten ``return`` is
+    enough.
+
+    ``failed`` rather than ``succeeded`` is the honest landing: the work
+    returned, but what it returned cannot be published, so the caller is told
+    that rather than being handed an invented success.
+    """
+    unhandled = []
+    monkeypatch.setattr(threading, "excepthook", unhandled.append)
+
+    def work_that_forgets_to_return(report, cancel):
+        return None
+
+    job, snapshot = run_and_join(registry, work_that_forgets_to_return)
+
+    assert snapshot.terminal is True
+    assert snapshot.state == FAILED
+    assert "AttributeError" in snapshot.error
+    assert snapshot.result is None
+    assert_the_slot_is_free(registry, unhandled)
+    capsys.readouterr()
+
+
+def test_a_worker_whose_RESULT_cannot_be_copied_still_lands_the_job(
+    registry, monkeypatch, capsys
+):
+    """The other half of the same hole: the result is copied outside the guard.
+
+    ``_finish`` publishes ``MappingProxyType(dict(result))``, and ``dict()``
+    over a mapping calls that mapping's own ``keys()``. On the success path
+    that call was made from the ``else:`` of the ``try``, so a result object
+    that raises while being read killed the worker with the job ``running`` -
+    a success wedging the registry, which is the least expected version of
+    this failure and the reason it is pinned apart from the one above.
+    """
+    unhandled = []
+    monkeypatch.setattr(threading, "excepthook", unhandled.append)
+
+    class UnreadableResult:
+        """A result mapping that raises while it is being copied."""
+
+        def keys(self):
+            raise RuntimeError("this result cannot be read")
+
+    def work_returning_an_unreadable_result(report, cancel):
+        return WorkOutcome(cancelled=False, result=UnreadableResult())
+
+    job, snapshot = run_and_join(registry, work_returning_an_unreadable_result)
+
+    assert snapshot.terminal is True
+    assert snapshot.state == FAILED
+    assert "this result cannot be read" in snapshot.error
+    assert snapshot.result is None
+    assert_the_slot_is_free(registry, unhandled)
+    capsys.readouterr()
+
+
 def test_a_long_error_message_is_truncated(registry):
     gate = Gate(raises=ValueError("x" * (MAX_ERROR_CHARACTERS * 3)))
     job, _ = start_and_enter(registry, gate=gate)

@@ -374,6 +374,15 @@ class Job:
         ``SystemExit`` out of ``__str__``, out of ``type(...).__name__``, and
         out of ``sys.stderr.write``.
 
+        AND THE SUCCESS PATH READS USER CODE TOO. ``outcome.cancelled`` and
+        ``outcome.result`` are attributes of whatever ``work`` returned, which
+        is exactly as unconstrained as ``work``; they were read in the
+        ``else:`` below, and the ``else:`` of a ``try`` is not covered by its
+        handlers. A callable that forgot to ``return`` therefore wedged the
+        registry with an ``AttributeError`` while nominally succeeding, which
+        is the least expected door into this room. Both reads are inside the
+        ``try`` now.
+
         ``KeyboardInterrupt`` is caught first and read as a cancellation, not
         as a failure. In a worker thread it has one source - the indexing
         pipeline raises it at its per-track checkpoint when ``cancel`` is set
@@ -387,6 +396,17 @@ class Job:
         """
         try:
             outcome = work(self.report_progress, self._cancel)
+            # READ HERE, INSIDE THE GUARD, AND NOT IN THE ``else`` BELOW.
+            # Whatever ``work`` returned is user code as much as its body
+            # was: ``cancelled`` may be a property that raises, ``result`` a
+            # mapping whose ``keys()`` raises under ``_finish``'s ``dict()``,
+            # and a callable that falls off its end returns ``None``, whose
+            # ``.cancelled`` raises ``AttributeError``. The ``else`` of a
+            # ``try`` is NOT covered by its handlers, so read there any of
+            # those escaped ``_run`` and wedged the registry from the
+            # SUCCESS path. The ``else`` now publishes values already plain.
+            state = CANCELLED if outcome.cancelled else SUCCEEDED
+            result = None if outcome.result is None else dict(outcome.result)
         except KeyboardInterrupt:
             self._finish(CANCELLED)
         except BaseException as error:  # noqa: BLE001 - see the docstring
@@ -401,10 +421,7 @@ class Job:
             self._finish(FAILED, error=_describe(error))
             _report_traceback()
         else:
-            self._finish(
-                CANCELLED if outcome.cancelled else SUCCEEDED,
-                result=outcome.result,
-            )
+            self._finish(state, result=result)
 
 
 def _report_traceback() -> None:
