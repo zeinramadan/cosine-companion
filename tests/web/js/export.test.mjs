@@ -840,6 +840,7 @@ test('the completion dialog states no per-seed file count, however the service c
    * instruction below it says "Playlist" and ".m3u" while claiming nothing, so
    * the check is scoped to where a claim would actually be made. In per-seed
    * mode that block says nothing about playlists at all. */
+  assert.match(body, /\nLocation:/, `no Location line to split the accounting block on: ${body}`);
   const accounting = body.split('\nLocation:')[0];
   assert.doesNotMatch(
     accounting,

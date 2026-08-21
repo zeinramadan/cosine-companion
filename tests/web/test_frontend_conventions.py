@@ -912,8 +912,18 @@ def test_no_screen_renders_the_services_playlist_counter():
     The field stays on the wire, and should: `web/api.py` sends what the
     service returned, faithfully, and a client that wants it is not this one.
     """
+    scanned = scripts()
+    # Guard the guard. This asserts a property of a SET, and an empty set has
+    # every property: a glob that stopped matching would make it pass while
+    # checking nothing. So the unit the claim is actually about has to be in
+    # the set before the absence means anything.
+    assert scanned, "scripts() found no modules; the glob stopped matching"
+    assert any(script.name == "export.js" for script in scanned), (
+        f"the Export screen is not among the scanned modules: {[s.name for s in scanned]}"
+    )
+
     offenders = {}
-    for script in scripts():
+    for script in scanned:
         body = without_comments(read(script))
         body = re.sub(r"^\s*//.*$", "", body, flags=re.M)
         if "playlists_created" in body:

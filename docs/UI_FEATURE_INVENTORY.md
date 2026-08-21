@@ -2463,6 +2463,47 @@ actually produced — one combined playlist, or none when there was nothing to
 write, which is the real distinction because `export_single_playlist` only
 writes when it collected ids (`recommendations/playlist_exporter.py:264-266`).
 
+*The per-seed completion dialog states no playlist count.* :620-634's first
+line is `Playlists created: {playlists_created}`, and that is a claim about the
+FILESYSTEM which nothing on this wire can support. `export_playlists_batch`
+increments `playlists_created` beside `successful` inside one `try`
+(`recommendations/playlist_exporter.py:171-173`) and every other path increments
+only `failed`, so in per-seed mode the two counters are equal by construction and
+the dialog was printing one measurement twice — the second copy under a
+filesystem label. What the counter actually counts is write calls that did not
+raise. Where each write LANDS is decided by `playlist_filename(artist, title)`,
+whose own docstring records that two seeds sanitising to one name "overwrite
+each other silently" (`recommendations/playlist_exporter.py:45-55`). So N writes
+leave N files only when the N names are distinct, and on the real collection
+they are not: two full-collection exports through the shipped endpoints reported
+`playlists_created = 1532` against 1529 `.m3u` files on disk, because
+`DJ Plant Texture - Miramare`, `DJ Plant Texture - Ripetitivo (Stretch Mix)` and
+`DJ Rolando - Knights of the Jaguar (Original Mix)` each appear twice in
+`meta.parquet`.
+
+This destination cannot see the directory — only the service touches it — so it
+stopped asserting a count of what is in one. `Successful:` keeps the number
+under the label that is true of it, seeds processed; `Location:` names the
+folder. The `Export Stopped` body loses `N playlist(s) were written` for the
+same reason, keeping the sentence about each file being COMPLETE, which is a
+property of how the loop breaks and not a count; its opening line already
+reports tracks processed. Zero survives in both, because no write call returning
+really does mean nothing was written. Combined mode KEEPS its count: one run
+writes one fixed filename, so 1 and 0 are knowable rather than guessed there,
+and that line is the divergence above.
+
+The underlying collision is NOT fixed here and is not this destination's to fix:
+`playlists_created` remains what the service reports, the API keeps sending it
+faithfully (`web/api.py:352`), and characterising the duplicate-name overwrite
+has its own investigation and its own PR. What changed is only that a screen
+stopped stating a number it had no way to check. Pinned three ways —
+`tests/web/js/export.test.mjs` probes each dialog with a counter no real run
+could produce and asserts it never reaches the user, asserts the per-seed
+accounting block makes no playlist claim at all (which catches a count
+fabricated from `successful` instead), and
+`tests/web/test_frontend_conventions.py::test_no_screen_renders_the_services_playlist_counter`
+fails for any new reader of the field in any module.
+
 *Combined mode has a moving bar.* §4 #11: the Tkinter tab passes no `progress=`
 in combined mode (`ui/playlist_export_tab.py:405-411`), so the bar sits at 0 %
 for the whole run even though `export_single_playlist` emits `(i, N, name)` on
