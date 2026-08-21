@@ -95,8 +95,14 @@ class _NotALength(Exception):
 
 
 def _custom_property(name, tokens):
-    """The declared value of `name` in tokens.css, or raise saying it is absent."""
-    declared = re.search(rf"{re.escape(name)}\s*:\s*([^;}}]+)", tokens)
+    """The declared value of `name` in tokens.css, or raise saying it is absent.
+
+    Comments are stripped first. A commented-out declaration is not a
+    declaration - the browser sees an undefined custom property, the whole
+    `bottom` is invalid at computed-value time and the block returns to normal
+    flow - and reading it as one would be this guard's own bug back again.
+    """
+    declared = re.search(rf"{re.escape(name)}\s*:\s*([^;}}]+)", without_comments(tokens))
     if not declared:
         raise _NotALength(f"uses {name}, which tokens.css does not declare")
     return declared.group(1).strip()
