@@ -725,6 +725,58 @@ def test_every_script_file_is_reachable_from_the_entry_module():
     assert orphans == [], f"scripts nothing imports: {orphans}"
 
 
+def test_every_mount_function_the_entry_module_imports_is_also_called():
+    """An import with no call mounts nothing, and nothing else notices.
+
+    ``test_every_script_file_is_reachable_from_the_entry_module`` catches a
+    module nothing imports. It cannot catch the other half: a destination whose
+    module is imported and whose ``mount*`` is never invoked is reachable,
+    orphan-free, and completely absent from the running page. Losing the call
+    is a one-line deletion in a file every destination branch edits.
+
+    COMMENTS COME OFF FIRST. Searching the raw source made this pass for a
+    ``// mountExport({ store });`` - the commented-out call matched the very
+    pattern meant to prove the live one was there. Found by mutation, and it
+    is the same hole ``test_no_component_ever_writes_html_as_a_string`` strips
+    comments to avoid.
+    """
+    body = without_js_comments(read(JS / "main.js"))
+
+    imported = set()
+    for names in re.findall(r"import\s*\{([^}]*)\}\s*from", body):
+        imported.update(
+            name.strip() for name in names.split(",") if name.strip().startswith("mount")
+        )
+
+    assert imported, "main.js imports no mount function; the regex stopped matching"
+
+    uncalled = sorted(name for name in imported if not re.search(rf"\b{name}\s*\(", body))
+    assert uncalled == [], f"imported but never called: {uncalled}"
+
+
+def test_the_message_box_keeps_the_newlines_its_bodies_are_written_with():
+    """§2.6's two longest strings are catalogued WITH their line breaks.
+
+    `Confirm Export` (:603-611) is four lines and `Export Complete` (:620-634)
+    is seven lines of accounting - "Playlists created", "Successful", "Total
+    recommendations", "Failed", then the location and the Rekordbox
+    instructions. Under CSS's default `white-space: normal` every one of those
+    newlines is collapsed to a space and the dialog renders one run-on
+    paragraph, which is not the message that was catalogued.
+
+    A source-text check, and it is honest about being one: it cannot lay
+    anything out. The rendered result was checked by hand and recorded in the
+    PR description.
+    """
+    body = without_comments(read(APP_CSS))
+    match = re.search(r"\.message-box__message\s*\{([^}]*)\}", body)
+
+    assert match, "the message-box body rule is gone"
+    assert re.search(r"white-space\s*:\s*pre-line\b", match.group(1)), (
+        f"the message box collapses its newlines: {' '.join(match.group(1).split())}"
+    )
+
+
 def test_the_entry_module_is_loaded_as_a_module():
     """`type="module"` is what makes the import graph above work at all."""
     assert '<script type="module" src="/js/main.js"></script>' in read(INDEX_HTML)

@@ -151,10 +151,19 @@ test('a row already in the export selection carries the tick prefix', async () =
 
   const rows = options();
   // :934 - tick and a space, on the row already chosen and on no other.
-  assert.equal(rows[1].textContent, `${ALREADY_SELECTED_PREFIX}Alva Noto – Xerrox`);
+  //
+  // THE LITERAL, not `${ALREADY_SELECTED_PREFIX}...`. Building the expectation
+  // from the constant under test made this a tautology: dropping the space from
+  // the prefix changed both sides and the assertion held. Found by mutating the
+  // constant and watching the suite stay green.
+  assert.equal(rows[1].textContent, '✓ Alva Noto – Xerrox');
   assert.equal(rows[1].dataset.already, 'true');
   assert.equal(rows[0].textContent, 'Blawan – Why They Hide');
   assert.equal(rows[0].dataset.already, undefined);
+
+  // And the exported constant really is what the row was built from, so a
+  // consumer reading it gets the string this test just pinned.
+  assert.equal(ALREADY_SELECTED_PREFIX, '✓ ');
 });
 
 test('Add Selected Tracks with nothing selected raises the catalogued warning', async () => {

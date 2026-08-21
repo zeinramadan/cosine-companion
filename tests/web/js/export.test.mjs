@@ -290,7 +290,7 @@ test('combined mode has a completion body at all, which is defect #10 fixed', ()
   const written = completionMessage({
     result: resultDoc({
       mode: 'combined',
-      output: `/tmp/out/${COMBINED_FILENAME}`,
+      output: '/tmp/out/Cosine_Recommendations.m3u',
       playlists_created: null,
       total_recommendations: 40,
     }),
@@ -326,6 +326,16 @@ test('a stopped export is told what is still on disk', () => {
   });
   assert.match(partial, /Stopped after 47 of 1532 tracks\./);
   assert.match(partial, /47 playlist\(s\) were written to \/Users\/dj\/Desktop\/Cosine_Playlists and have been KEPT\./);
+  // Not only that they were kept - that each one is FINISHED. Per-seed mode
+  // breaks at the top of the loop, before a write, so a stop never leaves a
+  // half-written playlist and the user does not have to check. Pinned as a
+  // literal sentence because it is the claim, not decoration around one; it
+  // was unpinned until a mutation replaced it with "Each one was removed when
+  // you stopped." and the suite stayed green.
+  assert.match(
+    partial,
+    /Each one is complete - stopping never leaves a half-written playlist\./,
+  );
   assert.match(partial, /Nothing was deleted\./);
 
   // Combined mode writes AFTER the loop whether or not it was stopped, so a
@@ -341,7 +351,7 @@ test('a stopped export is told what is still on disk', () => {
     }),
     outputDir: '/tmp/out',
   });
-  assert.match(combined, new RegExp(`/tmp/out/${COMBINED_FILENAME} and has been KEPT`));
+  assert.match(combined, /\/tmp\/out\/Cosine_Recommendations\.m3u and has been KEPT/);
   assert.match(combined, /210 recommendations from the 9 tracks/);
 
   // `ExportResult.cancelled` is read off the EVENT, not off whether the loop
@@ -372,15 +382,19 @@ test('the directory comes back out of a combined result path', () => {
     '/Users/dj/Desktop/Cosine_Playlists',
   );
   assert.equal(
-    outputDirectoryOf({ mode: 'combined', output: `/tmp/out/${COMBINED_FILENAME}` }),
+    outputDirectoryOf({ mode: 'combined', output: '/tmp/out/Cosine_Recommendations.m3u' }),
     '/tmp/out',
   );
   // A per-seed directory that happens to END with the filename is still the
   // directory: the strip is conditional on the mode.
   assert.equal(
-    outputDirectoryOf({ mode: 'per_seed', output: `/tmp/${COMBINED_FILENAME}` }),
-    `/tmp/${COMBINED_FILENAME}`,
+    outputDirectoryOf({ mode: 'per_seed', output: '/tmp/Cosine_Recommendations.m3u' }),
+    '/tmp/Cosine_Recommendations.m3u',
   );
+  // The literal above is the one `_start_export` builds its path from
+  // (`COMBINED_EXPORT_FILENAME`), so the two spellings cannot drift apart
+  // without this failing.
+  assert.equal(COMBINED_FILENAME, 'Cosine_Recommendations.m3u');
 });
 
 test('the progress arithmetic is determinate and cannot divide by zero', () => {
@@ -418,11 +432,17 @@ test('the destination opens on the catalogued defaults', async () => {
   assert.equal(radioFor('manual').checked, true);
   assert.equal(radioFor('all').checked, false);
   assert.equal(radioFor('separate').checked, true);
-  assert.equal(perTrackField().value, DEFAULT_RECOMMENDATIONS);
+  // The literals, not the exported constants. Comparing the rendered control
+  // to the constant it was rendered FROM holds however the constant is
+  // changed, which is the shape of tautology this suite has already been
+  // bitten by once.
+  assert.equal(perTrackField().value, '25');
   assert.deepEqual(
     perTrackField().children.map((option) => option.textContent),
-    RECOMMENDATION_OPTIONS,
+    ['10', '15', '20', '25', '30', '40', '50'],
   );
+  assert.equal(DEFAULT_RECOMMENDATIONS, '25');
+  assert.deepEqual(RECOMMENDATION_OPTIONS, ['10', '15', '20', '25', '30', '40', '50']);
 
   // :562 - nothing selected is the warning tone.
   assert.equal(infoLine().textContent, "⚠ No tracks selected. Click '+ Add Tracks' to select tracks");
