@@ -11,6 +11,7 @@ import { mountSettings } from './components/settings.js';
 import { mountPalette } from './components/palette.js';
 import { mountDrawer } from './components/drawer.js';
 import { mountExplore, DEFAULT_SORT, DEFAULT_TOP_N } from './components/explore.js';
+import { mountSetCreator } from './components/set-creator.js';
 import { mountLibrary } from './components/library.js';
 
 const store = createStore({
@@ -35,6 +36,10 @@ const store = createStore({
 mountSidebar({ store });
 mountSettings();
 mountDrawer({ store });
+// Set Creator keeps its own working state (anchors, length, the generated set);
+// the store tells it which destination is showing and whether the library
+// loaded, which is all it shares.
+mountSetCreator({ store });
 
 const palette = mountPalette({
   onSelect: (track, { details }) => {

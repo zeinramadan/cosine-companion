@@ -130,6 +130,24 @@ def test_no_javascript_suite_reimplements_what_it_tests():
         assert "src/web/static/js/" in body, f"{suite.name} imports no shipped module"
 
 
+def test_the_set_creator_suites_are_discoverable():
+    """The same guard as ``test_the_javascript_suites_are_discoverable``, for
+    the two suites this PR adds.
+
+    A SEPARATE function rather than two more entries in that set, and the reason
+    is mechanical: that set is one contiguous block of sorted lines, and a
+    second destination is being built on another branch at the same time. Both
+    PRs inserting into the same seven-line block is a conflict in a file neither
+    is really changing. A test of its own is a hunk of its own.
+    """
+    names = {path.name for path in _suites()}
+
+    assert names >= {
+        "anchor_dialog.test.mjs",
+        "set_creator.test.mjs",
+    }, f"a Set Creator behavioural suite disappeared: {sorted(names)}"
+
+
 def test_the_harness_exemption_names_files_that_exist():
     """A dead exemption is an exemption nobody notices growing."""
     present = {path.name for path in _suites()}

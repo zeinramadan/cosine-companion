@@ -382,6 +382,397 @@ button {
   color: var(--danger);
 }
 
+/* ---- Set Creator destination -------------------------------------------
+   Inventory §2.5. Three stacked sections in the order the Tkinter tab stacks
+   them - configuration, anchors, generated set - then the export control and
+   the status line, because that is the order the task runs in.
+
+   Placed HERE rather than at the end of the file so that a branch appending a
+   new destination below Explore and this one do not land in the same hunk. */
+
+.setc {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  max-width: var(--content-max);
+}
+
+.setc__config {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-sm);
+}
+
+.setc__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.setc__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.setc__heading-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.setc__empty {
+  padding: var(--space-5);
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-lg);
+  color: var(--ink-tertiary);
+  font-size: var(--text-sm);
+}
+
+.setc__actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* The four catalogued status strings (:510-514) and the tab hint (:271).
+   Quiet, full width, and STUCK TO THE BOTTOM - inventory :244 and :1293 record
+   that the Tk status bar is packed `side="bottom"` "so a short window cannot
+   hide it", and that is a property of the control, not a detail of Tk's
+   geometry manager. Left in the flow it sat below a twelve-row set and was off
+   screen at the moment it said the set had been generated. It sticks to the
+   bottom of the scrolling viewport instead, with an opaque background so rows
+   pass under it rather than through it. */
+.setc__status {
+  position: sticky;
+  bottom: calc(var(--space-6) * -1);
+  margin-bottom: calc(var(--space-6) * -1);
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-0);
+  color: var(--ink-tertiary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+/* ---- anchor list ---------------------------------------------------------
+   Inventory :471 - `{position}. {artist} – {title}`, ascending. Selectable,
+   because `Remove` (:458) acts on the selection. */
+
+.anchors {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-height: 12rem;
+  overflow-y: auto;
+}
+
+.anchors__row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out),
+              border-color var(--motion-fast) var(--ease-out);
+}
+
+.anchors__row:hover {
+  background: var(--surface-3);
+}
+
+.anchors__row[aria-selected="true"] {
+  background: var(--surface-4);
+  border-color: var(--accent);
+}
+
+.anchors__position {
+  min-width: 2.5ch;
+  text-align: right;
+  color: var(--ink-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.anchors__name {
+  color: var(--ink-primary);
+  font-size: var(--text-md);
+}
+
+/* An anchor whose track the library no longer has. The build drops it and
+   fills the slot with an ordinary pick, so the row above the set would
+   otherwise claim a position the set does not give it. The note carries the
+   meaning on its own - colour is the second signal, not the only one. */
+.anchors__row[data-dropped="true"] {
+  border-color: var(--danger);
+}
+
+.anchors__dropped {
+  color: var(--danger);
+  font-size: var(--text-sm);
+}
+
+/* ---- generated set -------------------------------------------------------
+   Inventory :479 - `[{position:2d}] {icon} {display_name}{score_text}`. The
+   fields are laid out in columns rather than padded into one string: the
+   position column is right-aligned, which is what the 2-character field buys
+   on screen, and it still reads at three digits (MAX_SET_TRACKS is 500). */
+
+.setlist {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  counter-reset: none;
+}
+
+.setlist__row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+/* An anchor is the track the set was built AROUND, so it is the row that reads
+   as fixed. The 🔒 says so too; this is a second signal, not the only one. */
+.setlist__row[data-anchor="true"] {
+  background: var(--surface-3);
+  border-color: var(--border-strong);
+}
+
+.setlist__position {
+  min-width: 3ch;
+  text-align: right;
+  color: var(--ink-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.setlist__icon {
+  font-size: var(--text-sm);
+}
+
+.setlist__name {
+  flex: 1;
+  color: var(--ink-primary);
+  font-size: var(--text-md);
+}
+
+/* ` ({score:.0%} match)` - :487, and only ever on a non-anchor scoring above
+   zero, which is decided in JavaScript rather than by hiding it here. */
+.setlist__score {
+  color: var(--ink-secondary);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ---- form fields shared by the destination and the anchor dialog -------- */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.field--inline {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.field__label {
+  color: var(--ink-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.field__input {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  color: var(--ink-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+}
+
+.field__input::placeholder {
+  color: var(--ink-tertiary);
+}
+
+/* `tk.Entry(width=5)` for both `Total Tracks` (:449) and `Position in Set`
+   (:948): a field sized for the thing it holds says what belongs in it. */
+.field__input--narrow {
+  width: 5rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ==========================================================================
+   Modals: the anchor dialog and the message boxes
+   ========================================================================== */
+
+.modal-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 40;
+}
+
+.modal {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--space-6);
+  background: var(--surface-overlay);
+  pointer-events: auto;
+}
+
+.modal__panel {
+  display: flex;
+  flex-direction: column;
+  width: min(34rem, 100%);
+  max-height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xl);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-lg);
+  animation: modal-in var(--motion-base) var(--ease-out);
+}
+
+@keyframes modal-in {
+  from { opacity: 0; transform: translateY(0.5rem) scale(0.99); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ---- message boxes -------------------------------------------------------
+   `tkinter.messagebox`, whose titles and bodies are catalogued strings. The
+   variant only colours the title: the words carry the meaning, and a red panel
+   that says "Exported" would be worse than a plain one. */
+
+.message-box .modal__panel {
+  width: min(26rem, 100%);
+}
+
+.message-box__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-5);
+}
+
+.message-box__title {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+}
+
+.message-box--error .message-box__title {
+  color: var(--danger);
+}
+
+.message-box--warning .message-box__title,
+.message-box--question .message-box__title {
+  color: var(--accent);
+}
+
+.message-box--info .message-box__title {
+  color: var(--accent-2);
+}
+
+.message-box__message {
+  color: var(--ink-secondary);
+  font-size: var(--text-md);
+  line-height: var(--leading-normal);
+}
+
+.message-box__actions {
+  display: flex;
+  flex-direction: row-reverse;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+/* ---- the Add Anchor dialog ---------------------------------------------- */
+
+.anchor-dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  min-height: 0;
+}
+
+.anchor-dialog__title {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+}
+
+/* :952 - `Cancel` sits rightmost, so it is appended first and reversed here. */
+.anchor-dialog__actions {
+  display: flex;
+  flex-direction: row-reverse;
+  gap: var(--space-2);
+}
+
+/* ---- the picker list inside the dialog ----------------------------------
+   :950 - a height-15 single-selection listbox. Bounded and scrolling, so 50
+   results read as a long list rather than as a dialog that has come apart. */
+
+.picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-height: 8rem;
+  max-height: 18rem;
+  overflow-y: auto;
+  padding: var(--space-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-0);
+}
+
+.picker__option {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--ink-primary);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out);
+}
+
+.picker__option:hover {
+  background: var(--surface-2);
+}
+
+.picker__option[aria-selected="true"] {
+  background: var(--surface-4);
+  border-color: var(--accent);
+}
+
+.picker__empty {
+  padding: var(--space-4);
+  color: var(--ink-tertiary);
+  font-size: var(--text-sm);
+}
+
 /* ==========================================================================
    Shared pieces
    ========================================================================== */
