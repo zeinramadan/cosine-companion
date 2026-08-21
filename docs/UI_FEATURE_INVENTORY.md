@@ -1323,13 +1323,16 @@ A **doubled `.m3u` is impossible**, contrary to what this document previously cl
 sanitiser drops `.`, so the only dot in the name is the extension the function appends, and when
 the name exceeds 200 characters that extension sits beyond the cut. Two different seeds that sanitise to the same name no longer
 overwrite each other. `_unique_playlist_path` reserves each written name for the run, keyed on
-NFC + casefold so the reservation is at least as broad as APFS's own equivalence; the first seed
-to claim a name keeps the legacy filename unchanged, and a later collider is given
+NFC + casefold so the reservation is at least as broad as APFS's own equivalence. Ownership does
+NOT depend on arrival order: `_legacy_filename_owners` pre-passes the seed list and gives the
+legacy filename to the SMALLEST track id in each collision group, and every other member is given
 `[ID <track_id>]` before the extension, with the marker appended AFTER truncation so it can never
 be cut off. Pre-existing files in the destination are ignored when allocating, so re-exporting
 into the same folder reuses names rather than accumulating suffixes. Measured on the real
 1,532-track library: 1,529 distinct legacy names, 3 colliding pairs, 1,532 files written, 3
-suffixed, 1,526 of 1,532 filenames invariant under every seed ordering. `playlists_created` is
+suffixed, and all 1,532 filenames invariant under every seed ordering (base, reversed and
+shuffled produce a symmetric difference of zero). The 1,526/1,532 figure recorded before the
+pre-pass described the order-dependent build and no longer applies. `playlists_created` is
 set from the count of distinct written paths, so it means files.
 
 ### 3.7 Settings file
