@@ -137,10 +137,8 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
     [],
+    exclude_binaries=True,
     name='Cosine Companion',
     debug=False,
     bootloader_ignore_signals=False,
@@ -157,10 +155,21 @@ exe = EXE(
     icon=str(project_root / 'assets' / 'coco_logo.icns') if sys.platform == 'darwin' else str(project_root / 'assets' / 'coco_logo.ico'),
 )
 
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=False if sys.platform == 'darwin' else True,
+    upx_exclude=[],
+    name='Cosine Companion',
+)
+
 # macOS app bundle
 if sys.platform == 'darwin':
     app = BUNDLE(
-        exe,
+        coll,
         name='Cosine Companion.app',
         icon=str(project_root / 'assets' / 'coco_logo.icns'),
         bundle_identifier='com.cosinecompanion.app',
