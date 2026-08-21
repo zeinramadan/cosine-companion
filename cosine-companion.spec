@@ -52,6 +52,9 @@ a = Analysis(
         (str(project_root / 'models'), 'models'),
         # Include assets directory (icons, etc.)
         (str(project_root / 'assets'), 'assets'),
+        # Include the no-build web frontend where web.assets expects it under
+        # sys._MEIPASS in a frozen process.
+        (str(project_root / 'src' / 'web' / 'static'), 'web/static'),
     ] + pandas_datas + pil_datas + lxml_datas + pandas_all_datas + numpy_all_datas + pyarrow_datas,
     hiddenimports=[
         # Core modules
@@ -134,10 +137,8 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
     [],
+    exclude_binaries=True,
     name='Cosine Companion',
     debug=False,
     bootloader_ignore_signals=False,
@@ -154,10 +155,27 @@ exe = EXE(
     icon=str(project_root / 'assets' / 'coco_logo.icns') if sys.platform == 'darwin' else str(project_root / 'assets' / 'coco_logo.ico'),
 )
 
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=False if sys.platform == 'darwin' else True,
+    upx_exclude=[],
+    name='Cosine Companion',
+)
+
+# Future notarization archives must preserve onedir's signed Mach-O symlinks:
+# use `ditto -c -k --keepParent "dist/Cosine Companion.app" app.zip`; `zip -r`
+# dereferences them, bloating the archive and breaking the code-signature seal.
+# Setting EXE's codesign_identity makes PyInstaller add hardened-runtime and
+# timestamp options automatically; signing later only needs the two fields above.
+
 # macOS app bundle
 if sys.platform == 'darwin':
     app = BUNDLE(
-        exe,
+        coll,
         name='Cosine Companion.app',
         icon=str(project_root / 'assets' / 'coco_logo.icns'),
         bundle_identifier='com.cosinecompanion.app',
@@ -170,7 +188,9 @@ if sys.platform == 'darwin':
             'CFBundleGetInfoString': "AI-powered music companion for DJs",
             'CFBundleVersion': "1.0.0",
             'CFBundleShortVersionString': "1.0.0",
-            'LSMinimumSystemVersion': '10.13',
+            # The locked Essentia/TensorFlow wheel contains four Mach-O files
+            # whose LC_BUILD_VERSION deployment target is macOS 15.2.
+            'LSMinimumSystemVersion': '15.2',
             'NSHighResolutionCapable': True,
             'NSRequiresAquaSystemAppearance': False,
             'NSAppTransportSecurity': { 'NSAllowsArbitraryLoads': True },
