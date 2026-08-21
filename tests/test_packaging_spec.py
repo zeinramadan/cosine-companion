@@ -37,11 +37,30 @@ def _dotted_name(node):
     return None
 
 
+def _unconditional_list_items(node):
+    if isinstance(node, ast.List):
+        return node.elts
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return (
+            _unconditional_list_items(node.left)
+            + _unconditional_list_items(node.right)
+        )
+    return []
+
+
 def test_the_frozen_package_ships_the_web_frontend_at_its_runtime_path():
     """The server resolves ``sys._MEIPASS/web/static/index.html`` frozen."""
-    recipe = _recipe()
+    analysis = _call("Analysis")
+    analysis_keywords = {
+        keyword.arg: keyword.value for keyword in analysis.keywords
+    }
+    datas = _unconditional_list_items(analysis_keywords["datas"])
+    expected = ast.parse(
+        "(str(project_root / 'src' / 'web' / 'static'), 'web/static')",
+        mode="eval",
+    ).body
 
-    assert "(str(project_root / 'src' / 'web' / 'static'), 'web/static')" in recipe
+    assert ast.dump(expected) in {ast.dump(item) for item in datas}
 
 
 def test_macos_is_an_onedir_bundle_not_a_self_extracting_onefile():

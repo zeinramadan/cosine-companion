@@ -166,6 +166,12 @@ coll = COLLECT(
     name='Cosine Companion',
 )
 
+# Future notarization archives must preserve onedir's signed Mach-O symlinks:
+# use `ditto -c -k --keepParent "dist/Cosine Companion.app" app.zip`; `zip -r`
+# dereferences them, bloating the archive and breaking the code-signature seal.
+# Setting EXE's codesign_identity makes PyInstaller add hardened-runtime and
+# timestamp options automatically; signing later only needs the two fields above.
+
 # macOS app bundle
 if sys.platform == 'darwin':
     app = BUNDLE(
