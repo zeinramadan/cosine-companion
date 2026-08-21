@@ -743,6 +743,176 @@ def test_a_running_job_survives_any_number_of_refused_starts(registry):
     finish(live, live_gate)
 
 
+class WatchedCancelEvent(threading.Event):
+    """A job's cancel event with a real reader parked at the instant of delivery.
+
+    ``set()`` is the only moment the two writes ``request_cancel`` makes can
+    be told apart from outside: the flag's publication is a plain attribute
+    rebind with no hook of its own. Running a reader here answers the question
+    the ordering exists for - what does somebody polling see, at the one
+    instant the two orders differ?
+
+    No deadlock: ``request_cancel`` holds the job's publication lock while
+    this runs, and readers take no lock at all.
+    """
+
+    def __init__(self, job):
+        super().__init__()
+        self._job = job
+        self.reader_saw = None
+        self.reads = 0
+
+    def set(self):
+        job = self._job
+        self.reads += 1
+        self.reader_saw = read_from_another_thread(
+            lambda: (job.snapshot().cancel_requested, job.cancel_event.is_set())
+        )
+        super().set()
+
+
+class WatchableJob(Job):
+    """A ``Job`` whose cancel event is a ``WatchedCancelEvent``."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._cancel = WatchedCancelEvent(self)
+
+
+class RecordingJob(Job):
+    """Records every snapshot this job publishes, in order.
+
+    Publication IS a rebind of ``_state`` - the module docstring's whole
+    design - so ``__setattr__`` sees every generation the job ever had,
+    starting with the one built in ``__init__``. That is strictly more than a
+    poller can see: a poller samples, this misses nothing.
+    """
+
+    def __init__(self, *args, **kwargs):
+        object.__setattr__(self, "published", [])
+        super().__init__(*args, **kwargs)
+
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        if name == "_state":
+            self.published.append(value)
+
+
+def test_a_cancel_flag_is_never_published_before_the_event_is_delivered():
+    """``cancel_requested`` true must MEAN the worker's event is set.
+
+    Both writes happen under the publication lock, and that is not enough:
+    readers take no lock, so between the two writes a reader sees whichever
+    has landed. With the flag published first there is a window in which the
+    record says a cancel was delivered and the worker's event is still unset -
+    a UI showing "Stopping..." for a run that has been told nothing.
+
+    The other order leaves the opposite window, and it is the honest one: the
+    event set with the flag not yet published means the worker may stop
+    slightly before the record admits it, which understates rather than
+    invents. That asymmetry is what ``request_cancel``'s docstring promises,
+    and it is what is checked here.
+
+    No worker: this is ``Job``'s own machinery, so a bare job is the whole
+    subject and there is no thread to schedule around.
+    """
+    job = WatchableJob("j1", "export")
+
+    snapshot = job.request_cancel()
+
+    assert snapshot.cancel_requested is True
+    assert job.cancel_event.is_set() is True
+
+    assert job.cancel_event.reads == 1, "the reader must have run exactly once"
+    flag, delivered = job.cancel_event.reader_saw
+    assert delivered is False, (
+        "the reader did not run inside set(); the check below would be vacuous"
+    )
+    assert flag is False, (
+        "at the instant the cancel reached the worker's event the record "
+        "already claimed it had - so a reader in that window saw "
+        "cancel_requested=True for a cancel nothing had been told about"
+    )
+
+
+def test_a_job_publishes_exactly_one_terminal_snapshot_and_it_is_whole(
+    registry, monkeypatch
+):
+    """One read answers everything - including the last read.
+
+    ``PlaylistService.lookup`` had this bug: an answer assembled from two
+    generations. A terminal state published in two steps is the same shape.
+    A poller landing between them reads ``state=succeeded`` and
+    ``terminal=True`` beside ``finished_at=None`` and ``result=None`` - a job
+    that has finished, has no finish time and produced nothing - and every one
+    of those fields is on the wire in ``api._job_document``.
+
+    Checked against EVERY generation the job ever published rather than
+    against a poll that happened to land in the window. A poller samples; this
+    misses nothing, so the property does not depend on timing to be observed.
+    """
+    monkeypatch.setattr(jobs_module, "Job", RecordingJob)
+
+    gate = Gate(result={"playlists_created": 12})
+    job, _ = start_and_enter(registry, gate=gate, total=2)
+    gate.reporter(1, 2, "halfway")
+
+    snapshot = finish(job, gate)
+    assert snapshot.state == SUCCEEDED
+
+    published = list(job.published)
+    assert len(published) >= 3, "running, a progress report, and the finish"
+
+    terminal = [state for state in published if state.terminal]
+    assert len(terminal) == 1, (
+        f"{len(terminal)} terminal snapshots were published; a terminal state "
+        "reached in two steps has an observable half-finished generation"
+    )
+
+    for state in published:
+        if state.terminal:
+            assert state.finished_at is not None, (
+                "a finished job with no finish time was published"
+            )
+            assert state.result is not None, (
+                "a succeeded job with no result was published"
+            )
+        else:
+            assert state.finished_at is None
+            assert state.result is None
+            assert state.error is None
+
+
+def test_all_returns_newest_first_when_the_timestamps_tie():
+    """Registration order is reversed BEFORE the sort, and ties prove it.
+
+    ``list.sort`` is stable, so with equal ``started_at`` the sort preserves
+    whatever order it was given - registration order, oldest first, which is
+    exactly backwards. Reversing first makes the tie fall the right way.
+
+    Equal timestamps are not contrived. An injected constant clock produces
+    them, and so does a coarse real one: two jobs started inside the same tick
+    of ``time.time`` on a machine whose clock is not fine-grained tie in
+    production too.
+
+    ``test_all_returns_newest_first`` cannot see this - it uses the real
+    clock, so the timestamps differ and the sort alone answers correctly.
+    """
+    registry = JobRegistry(clock=lambda: 1.0)
+
+    first, gate = start_and_enter(registry)
+    finish(first, gate)
+    second, second_gate = start_and_enter(registry)
+    finish(second, second_gate)
+
+    assert first.snapshot().started_at == second.snapshot().started_at == 1.0
+
+    assert [job.job_id for job in registry.all()] == [second.job_id, first.job_id], (
+        "with equal timestamps the listing fell back to registration order, "
+        "which is oldest first"
+    )
+
+
 # -- the snapshot discipline ----------------------------------------------
 
 

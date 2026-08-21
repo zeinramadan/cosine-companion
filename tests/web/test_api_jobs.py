@@ -26,7 +26,14 @@ import pytest
 
 from services.export_service import ExportResult, ExportService
 from web.api import COMBINED_EXPORT_FILENAME, CocoApi
-from web.jobs import CANCELLED, FAILED, RUNNING, SUCCEEDED
+from web.jobs import (
+    CANCELLED,
+    FAILED,
+    RUNNING,
+    SUCCEEDED,
+    JobInProgress,
+    JobRegistry,
+)
 
 WAIT = 5.0
 
@@ -493,6 +500,85 @@ def test_a_job_can_start_once_the_previous_one_has_finished(api, exports):
 
     assert status == 202
     settle(api, exports, body["job"]["id"])
+
+
+class RacingRegistry(JobRegistry):
+    """A registry whose refusal is the LAST instant the running job is running.
+
+    The race is real and it is not narrow: ``JobRegistry.start`` reads a
+    running job's snapshot under its lock and raises, and by the time the 409
+    handler runs, the worker - which needs no registry lock - may have
+    finished. Reproduced deterministically by finishing it in between, rather
+    than by hoping for the interleaving.
+    """
+
+    def __init__(self, settle):
+        super().__init__()
+        self._settle = settle
+
+    def start(self, *args, **kwargs):
+        try:
+            return super().start(*args, **kwargs)
+        except JobInProgress:
+            self._settle()
+            raise
+
+
+def test_the_409_names_the_job_the_refusal_carried_not_a_later_reading(
+    web_library, settings
+):
+    """``JobInProgress`` carries the snapshot, and that is the whole point.
+
+    ``_start`` turns the refusal into a 409 from ``conflict.running`` - the
+    snapshot the registry read at the instant it decided to refuse. Asking the
+    registry again instead would be a second read answering a question the
+    first already answered, and the second read has a different answer
+    available: ``None``, once the job it is about has finished. A 409 built
+    from that is an ``AttributeError`` on ``None.kind``, which reaches the
+    caller as a 500 about nothing.
+
+    The 409 is still right, and this is why: the refusal HAPPENED. The request
+    was not accepted, no job was started, and the caller has to be told which
+    job was in the way - which is a fact about the past, not about now.
+    """
+    exports = FakeExportService()
+    registry = None
+
+    def settle_the_running_job():
+        exports.release.set()
+        for job in registry.all():
+            if job.thread is not None:
+                job.thread.join(timeout=WAIT)
+                assert not job.thread.is_alive()
+
+    registry = RacingRegistry(settle_the_running_job)
+    api = CocoApi(
+        web_library, settings, export_service_factory=exports, jobs=registry
+    )
+
+    status, body = start_export(api)
+    running_id = body["job"]["id"]
+    assert status == 202
+    assert exports.entered.wait(timeout=WAIT)
+
+    try:
+        status, refused = start_export(api, out_dir="/tmp/elsewhere")
+    except Exception as error:  # noqa: BLE001 - the failure IS the finding
+        raise AssertionError(
+            "the 409 handler re-read the registry instead of using the "
+            f"snapshot the refusal carried: {type(error).__name__}: {error}"
+        ) from error
+
+    assert status == 409
+    assert refused["error"]["code"] == "job_in_progress"
+    assert running_id in refused["error"]["message"]
+    assert "export" in refused["error"]["message"]
+
+    # The job really did finish inside the window, which is what makes a
+    # second read return None and this test non-vacuous.
+    assert registry.running() is None
+    assert read_job(api, running_id)["state"] == SUCCEEDED
+    assert len(exports.calls) == 1, "the refused export never reached the service"
 
 
 # -- request validation ----------------------------------------------------
