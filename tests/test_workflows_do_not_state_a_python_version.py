@@ -441,18 +441,32 @@ def step_inputs(where, step):
     Keyed by :func:`runner_input_name`, so every lookup made on the result asks
     the question the action asks rather than the question Python's ``in`` asks.
 
-    A COLLISION FAILS rather than resolving to one of the two, and both kinds
-    of collision are real:
+    A COLLISION FAILS rather than resolving to one of the two -- WHEN THIS
+    FUNCTION CAN SEE IT. Three kinds of collision are real and this function
+    sees two of them:
 
     * two keys differing only in case never run at all -- the template reader
       gathers mapping keys into ``HashSet<String>(StringComparer.
       OrdinalIgnoreCase)`` and reports ``ValueAlreadyDefined``
       (actions/runner ``TemplateReader.cs``, both ``HandleMappingWith*``
-      paths), so the workflow is rejected before a job starts;
+      paths), so the workflow is rejected before a job starts. PyYAML keeps
+      both keys, :func:`runner_input_name` folds them together, and the
+      assertion below fires. SEEN;
     * two keys differing by a space against an underscore are NOT duplicates
       to that reader and DO collide at ``Handler.cs`` L185, where the input
       the dictionary happens to yield last is the one the action sees. Which
-      one that is, this file will not guess.
+      one that is, this file will not guess. SEEN;
+    * two keys spelled IDENTICALLY are gone before this function is reached.
+      PyYAML resolves the mapping by keeping the last and discarding the
+      first, so no collision survives into ``with_block`` for the assertion
+      to find, and the guard passes. NOT SEEN. Measured: a workflow carrying
+      ``python-version-file:`` twice, pointing at a wrong path and then at
+      the right one, leaves this file green. That reader rejects the pair for
+      the same ``ValueAlreadyDefined`` reason as the case-only kind, so the
+      workflow does not run -- but the refusal is GitHub's and is LOUD, where
+      the divergence this guard exists to catch is silent. Detecting it needs
+      a loader that raises on duplicate keys instead of PyYAML's last-wins;
+      that is recorded as a backlog item, not done here.
 
     A NON-STRING KEY FAILS for the same reason. The runner stringifies one
     (``TemplateReader`` rebuilds a non-string scalar key with
