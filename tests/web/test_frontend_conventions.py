@@ -74,6 +74,108 @@ def js(path):
     return without_js_comments(read(path))
 
 
+# ---------------------------------------------------------------------------
+# One anchored lookup, for every name this file reads out of a stylesheet
+# ---------------------------------------------------------------------------
+
+#: Where a declaration is allowed to BEGIN: the start of the text, or straight
+#: after the `{` that opened its block, the `;` that ended the one before it,
+#: or the `}` that closed the previous block. Nothing else in CSS is a
+#: declaration boundary.
+#:
+#: Every name lookup in this file used to be a bare `re.search(name)`, which
+#: finds the name ANYWHERE - including in the middle of a longer name that
+#: declares something else entirely. Three review rounds each found that same
+#: defect in a NEW consumer:
+#:
+#:   * `--not--motion-fast: 1ms` answered a lookup for `--motion-fast`, so both
+#:     motion tokens could be renamed out of the reduced-motion block, leaving
+#:     the real ones at 110 ms and 170 ms with every test in this file green -
+#:     an accessibility guard reporting a preference it does not honour;
+#:   * `--not--text-xs: 1px` answered a lookup for `--text-xs`, so a token
+#:     resolved to a value the browser never gives it;
+#:   * `-webkit-animation-duration` answers one for `animation-duration`, and
+#:     `background-position: sticky` one for `position: sticky`.
+#:
+#: The decoys cannot be enumerated - `--x--motion-fast`, `--another--motion-fast`
+#: and so on are unbounded, and a list of them is what the last two rounds
+#: patched. The BOUNDARY is finite. So the boundary is what is checked, once,
+#: here, and every consumer goes through it.
+#:
+#: Both ends are anchored: the boundary before the name, and the `:` that has
+#: to follow it, which is what stops `--motion` matching `--motion-fast`.
+_DECLARATION_BOUNDARY = r"(?:\A|[{};])\s*"
+
+#: A declaration value runs to the `;` that ends it or the `}` that ends its
+#: block, whichever comes first.
+_DECLARATION_VALUE = r"([^;{}]+)"
+
+
+def _declaration(name, text):
+    """The value `name` is DECLARED with in `text`, or None if it is not.
+
+    `text` is expected to have come through `css()` already. `_custom_property`
+    is the single exception and strips for itself, because it is handed a sheet
+    as a STRING by callers that cannot be made to strip first.
+    """
+    match = re.search(
+        rf"{_DECLARATION_BOUNDARY}{re.escape(name)}\s*:\s*{_DECLARATION_VALUE}", text
+    )
+    return match.group(1).strip() if match else None
+
+
+def _declares(name, value_pattern, text):
+    """Whether `text` declares `name` with a value matching `value_pattern`.
+
+    The pattern is matched against the VALUE, so `^` in it means the start of
+    the value rather than the start of a line - `_declares("position",
+    r"^sticky\b", ...)` is "position IS sticky", not "sticky appears
+    somewhere near a colon".
+    """
+    declared = _declaration(name, text)
+    return declared is not None and re.search(value_pattern, declared) is not None
+
+
+_CUSTOM_DECLARATION = re.compile(
+    rf"{_DECLARATION_BOUNDARY}(--[a-zA-Z0-9-]+)\s*:\s*{_DECLARATION_VALUE}"
+)
+
+
+def _custom_properties(text):
+    """`{name: value}` for every custom property DECLARED in `text`.
+
+    The same anchoring as `_declaration`, from the other side: the dict is
+    keyed by the WHOLE name, so `--not--text-xs` is its own key and can never
+    answer for `--text-xs`. Later declarations win, which is the cascade.
+    """
+    return {
+        match.group(1): match.group(2).strip()
+        for match in _CUSTOM_DECLARATION.finditer(text)
+    }
+
+
+def _block_body(match, text):
+    """The body between the `{` that `match` ends on and its matching `}`.
+
+    Brace-balanced, so a nested rule does not end the block early - and so a
+    block ENDS. Reading "everything from here to the end of the file" is the
+    region-shaped version of the same defect the boundary above fixes: a
+    declaration written AFTER the `@media` block would answer a lookup meant
+    to be scoped inside it.
+    """
+    opening = match.end() - 1
+    assert text[opening] == "{", "the pattern must end on the opening brace"
+    depth = 0
+    for position in range(opening, len(text)):
+        if text[position] == "{":
+            depth += 1
+        elif text[position] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[opening + 1 : position]
+    return None
+
+
 # A `position: sticky` block is only stuck in the block direction if its offset
 # RESOLVES TO A LENGTH. `auto` - the initial value, and what every one of the
 # CSS-wide keywords falls back to here - leaves no constraint at all, so the
@@ -131,15 +233,24 @@ class _NotALength(Exception):
 def _custom_property(name, tokens):
     """The declared value of `name` in tokens.css, or raise saying it is absent.
 
-    Comments are stripped first. A commented-out declaration is not a
-    declaration - the browser sees an undefined custom property, the whole
+    Two boundaries, and both were wrong here in turn.
+
+    COMMENTS are stripped first, because this takes a sheet as a string and
+    cannot know whether its caller stripped: a commented-out declaration is not
+    a declaration, the browser sees an undefined custom property, the whole
     `bottom` is invalid at computed-value time and the block returns to normal
-    flow - and reading it as one would be this guard's own bug back again.
+    flow.
+
+    The NAME is then resolved at a declaration boundary rather than anywhere in
+    the text. Unanchored, `--not--text-xs: 1px` answered a lookup for
+    `--text-xs` and `text-xs` answered one for `--text-xs`; the second was
+    patched at the call site last round, which left the lookup itself still
+    wrong for every other spelling.
     """
-    declared = re.search(rf"{re.escape(name)}\s*:\s*([^;}}]+)", without_comments(tokens))
-    if not declared:
+    declared = _declaration(name, without_comments(tokens))
+    if declared is None:
         raise _NotALength(f"uses {name}, which tokens.css does not declare")
-    return declared.group(1).strip()
+    return declared
 
 
 def _tokenise(value):
@@ -329,13 +440,19 @@ def assert_sticks_to_the_bottom(rule_name, declarations):
     `!important` - are REJECTED, not passed: erring loud costs a maintainer one
     obvious failure, and erring quiet is what let `calc(5)` through.
     """
-    assert re.search(r"position\s*:\s*sticky", declarations), (
+    # Anchored, like every other name lookup in this file: `background-position`
+    # CONTAINS `position`, and a rule declaring `background-position: sticky`
+    # is not positioned at all.
+    assert _declares("position", r"^sticky\b", declarations), (
         f"{rule_name} is back in the normal flow: {declarations}"
     )
 
-    match = re.search(r"(?:^|;)\s*bottom\s*:\s*([^;}]+)", declarations)
-    assert match, f"{rule_name} has no bottom offset, so it never sticks: {declarations}"
-    value = match.group(1).strip()
+    # Anchored for the reason `test_a_rule_with_no_bottom_offset_is_not_read_off_
+    # a_neighbouring_property` records: `padding-bottom` is not `bottom`.
+    value = _declaration("bottom", declarations)
+    assert value is not None, (
+        f"{rule_name} has no bottom offset, so it never sticks: {declarations}"
+    )
 
     try:
         resolved = _type_of(value, css(TOKENS_CSS))
@@ -421,8 +538,133 @@ def test_the_stylesheet_reader_really_does_strip():
     stripped = css(TOKENS_CSS)
 
     assert "/*" not in stripped and "*/" not in stripped, "comments survived the reader"
-    assert "--ink-secondary" in stripped, "the reader ate the declarations"
+    assert "--ink-secondary" in _custom_properties(stripped), "the reader ate the declarations"
     assert ":root" in stripped, "the reader ate the selectors"
+
+
+#: A name and a sheet that CONTAINS that name without declaring it. Every row
+#: is a real false-green or the same shape as one: unanchored, each of these
+#: lookups resolved from the decoy and reported a value the browser never
+#: computes.
+#:
+#: The rows are examples, not the guard. What the guard checks is the
+#: declaration BOUNDARY, which is finite; the decoys are not, and enumerating
+#: them is exactly what the last two rounds did.
+DECOY_DECLARATIONS = [
+    # Reported twice, and the reason this exists. Renaming both motion tokens
+    # inside the reduced-motion block satisfied the override check while
+    # leaving the real ones at 110 ms and 170 ms.
+    ("--motion-fast", ":root { --not--motion-fast: 1ms; }"),
+    ("--motion-base", ":root { --another--motion-base: 1ms; }"),
+    # The lookup `var()` resolution goes through.
+    ("--text-xs", ":root { --not--text-xs: 1px; }"),
+    # The suffix that was patched at the CALL SITE last round, which left the
+    # lookup itself wrong for every other spelling of the same trick.
+    ("--text-xs", ":root { text-xs: 1px; }"),
+    # Ordinary properties, not custom ones. A vendor prefix is this shape and
+    # is CSS people really write.
+    ("animation-duration", "* { -webkit-animation-duration: 1ms; }"),
+    ("transition-duration", "* { -moz-transition-duration: 1ms; }"),
+    ("position", ".x { background-position: sticky; }"),
+    ("bottom", ".x { padding-bottom: 1px; }"),
+    ("outline", ".x { outline-color: none; }"),
+    # A name that is a PREFIX of a declared one. The `:` that has to follow the
+    # name is what rejects this, which is why the anchoring is at both ends.
+    ("--motion", ":root { --motion-fast: 1ms; }"),
+    ("background", ".x { background-image: var(--surface-1); }"),
+    # A declaration boundary is a brace or a semicolon, not any whitespace: a
+    # value can run over a line break, and the tail of one is not a new
+    # declaration.
+    ("--fast", ":root { --font-sans:\n    --fast: 1ms; }"),
+]
+
+
+@pytest.mark.parametrize("name,sheet", DECOY_DECLARATIONS)
+def test_a_longer_name_that_contains_a_real_one_declares_something_else(name, sheet):
+    """The single defect three review rounds each found in a new consumer.
+
+    A lookup that finds its name ANYWHERE in the text is answered by any
+    longer name that happens to contain it - so a token can be renamed out of
+    existence, or shadowed by a decoy, with every check that reads it green.
+    Every consumer in this file resolves names through `_declaration` and
+    `_custom_properties`, so this pins all of them at once.
+    """
+    assert _declaration(name, sheet) is None, (
+        f"{name} was read out of {sheet!r}, which declares no such property"
+    )
+    assert not _declares(name, r".", sheet)
+    assert name not in _custom_properties(sheet)
+
+
+#: The other direction, or the check above is satisfied by a lookup that never
+#: finds anything. Spacing, the end of a block, the start of the text and a
+#: missing final semicolon are all real CSS.
+REAL_DECLARATIONS = [
+    ("--motion-fast", ":root { --motion-fast: 1ms; }", "1ms"),
+    ("--motion-fast", ":root{--motion-fast:1ms}", "1ms"),
+    ("--text-xs", ":root { --a: 1px; --text-xs: 0.6875rem; }", "0.6875rem"),
+    ("--text-xs", ":root { --not--text-xs: 1px; --text-xs: 0.6875rem; }", "0.6875rem"),
+    ("animation-duration", "* { animation-duration: 1ms !important; }", "1ms !important"),
+    ("position", "position: sticky; bottom: 0;", "sticky"),
+    ("bottom", "position: sticky; bottom: calc(var(--space-6) * -1);",
+     "calc(var(--space-6) * -1)"),
+    ("bottom", "bottom: 0", "0"),
+    ("--motion-fast", "@media (prefers-reduced-motion: reduce) {\n"
+                      "  :root { --motion-fast: 1ms; }\n}", "1ms"),
+]
+
+
+@pytest.mark.parametrize("name,sheet,expected", REAL_DECLARATIONS)
+def test_the_anchored_lookup_still_finds_a_real_declaration(name, sheet, expected):
+    assert _declaration(name, sheet) == expected
+
+
+def test_a_var_is_never_resolved_from_a_longer_name_that_ends_in_it():
+    """`_custom_property` end to end, which is where the offset checker reads.
+
+    The call-site patch this replaces asked whether the name began with `--`.
+    That rejected `var(text-xs)` and nothing else: `--not--text-xs` begins with
+    `--` and still is not `--text-xs`.
+    """
+    with pytest.raises(_NotALength) as raised:
+        _type_of("var(--text-xs)", ":root { --not--text-xs: 1px; }")
+    assert "does not declare" in str(raised.value)
+
+    assert _type_of("var(--text-xs)", ":root { --not--text-xs: 2px; --text-xs: 1px; }") == "length"
+
+
+def test_no_token_name_ends_in_another_token_name():
+    """A NAMING rule on the stylesheets, and only that.
+
+    What makes the lookups above safe is the anchoring, not this: with it in
+    place a decoy declaration is inert. This is the other half of the same
+    claim, and it is about the SOURCE rather than about the reader - a name
+    that ends in another declared name makes the sheet ambiguous to every
+    consumer that is not a full CSS parser, which is this file, every grep a
+    maintainer runs, and anyone reading it.
+
+    It is the assertion that goes red if `--not--text-xs: 1px` is added beside
+    `--text-xs`. It does NOT establish that any consumer reads the right
+    declaration - `test_a_longer_name_that_contains_a_real_one_declares_
+    something_else` is what establishes that - and it would not notice a decoy
+    whose name merely contains a real one somewhere other than at its end.
+    """
+    declared = set()
+    for sheet in stylesheets():
+        declared.update(_custom_properties(css(sheet)))
+
+    assert declared, "no custom properties found; the reader stopped matching"
+
+    ambiguous = sorted(
+        (longer, shorter)
+        for longer in declared
+        for shorter in declared
+        if longer != shorter and longer.endswith(shorter)
+    )
+    assert ambiguous == [], (
+        f"these names end in another declared name: {ambiguous} - a lookup for "
+        f"the shorter one can be answered by the longer one's declaration"
+    )
 
 
 def test_a_commented_out_custom_property_is_not_a_declaration():
@@ -482,7 +724,7 @@ def test_no_script_sets_a_literal_colour():
 def test_every_custom_property_used_is_actually_defined():
     """A typo in a var() name is silent: the declaration is simply dropped and
     the element inherits, which usually still looks plausible."""
-    defined = set(re.findall(r"^\s*(--[a-z0-9-]+)\s*:", css(TOKENS_CSS), re.M))
+    defined = set(_custom_properties(css(TOKENS_CSS)))
     # Properties the components set on an element at runtime.
     for script in scripts():
         defined.update(re.findall(r"setProperty\(\s*['\"](--[a-z0-9-]+)", js(script)))
@@ -497,7 +739,9 @@ def test_every_custom_property_used_is_actually_defined():
 
 def test_the_type_scale_has_at_most_six_sizes():
     """More than six and the hierarchy stops being a hierarchy."""
-    sizes = re.findall(r"^\s*(--text-[a-z0-9]+)\s*:", css(TOKENS_CSS), re.M)
+    sizes = sorted(
+        name for name in _custom_properties(css(TOKENS_CSS)) if name.startswith("--text-")
+    )
 
     assert 1 <= len(sizes) <= 6, f"{len(sizes)} font sizes: {sizes}"
 
@@ -515,6 +759,13 @@ REDUCED_MOTION_CEILING_MS = 10
 #: A repeating indicator is a rate, not a delay anyone waits out. This bounds
 #: it anyway, so "exempt" does not mean "unbounded".
 REPEATING_CEILING_MS = 1000
+
+#: The whole query, up to and including the brace that opens its block. Not a
+#: substring of it: `@media (prefers-reduced-motion: reduce) and (min-width:
+#: 99999px)` CONTAINS the text this used to look for, and applies to nobody.
+REDUCED_MOTION_QUERY = re.compile(
+    r"@media\s*\(\s*prefers-reduced-motion\s*:\s*reduce\s*\)\s*\{"
+)
 
 
 def _milliseconds(value):
@@ -563,8 +814,13 @@ def test_reduced_motion_is_respected_at_the_token_level():
     """
     body = css(TOKENS_CSS)
 
-    assert "@media (prefers-reduced-motion: reduce)" in body
-    reduced = body[body.index("@media (prefers-reduced-motion: reduce)") :]
+    query = REDUCED_MOTION_QUERY.search(body)
+    assert query, "tokens.css has no `@media (prefers-reduced-motion: reduce)` block"
+    # BOUNDED to the block. This used to be `body[body.index(query):]`, which
+    # runs to the end of the file, so a `--motion-fast` declared AFTER the
+    # media block - outside it, applying always - satisfied the override check.
+    reduced = _block_body(query, body)
+    assert reduced is not None, "the prefers-reduced-motion block is never closed"
 
     for name in (
         "--motion-base",
@@ -572,19 +828,23 @@ def test_reduced_motion_is_respected_at_the_token_level():
         "animation-duration",
         "transition-duration",
     ):
-        match = re.search(rf"{re.escape(name)}\s*:\s*([^;]+);", reduced)
-        assert match, f"{name} is not overridden under prefers-reduced-motion"
+        # ANCHORED. Unanchored, renaming these two tokens to `--not--motion-fast`
+        # and `--not--motion-base` satisfied this loop while leaving the real
+        # ones at 110 ms and 170 ms - the whole application ignoring the
+        # preference with this file green.
+        declared = _declaration(name, reduced)
+        assert declared is not None, f"{name} is not overridden under prefers-reduced-motion"
 
-        milliseconds = _milliseconds(match.group(1))
+        milliseconds = _milliseconds(declared)
         assert milliseconds is not None, (
-            f"{name} is overridden with {match.group(1)!r}, which is not a duration"
+            f"{name} is overridden with {declared!r}, which is not a duration"
         )
         assert milliseconds <= REDUCED_MOTION_CEILING_MS, (
             f"{name} is still {milliseconds:g} ms under prefers-reduced-motion"
         )
 
     # A 1 ms animation that still repeats forever is still motion.
-    assert re.search(r"animation-iteration-count\s*:\s*1\b", reduced), (
+    assert _declares("animation-iteration-count", r"^1\b", reduced), (
         "repeating animations are not stopped under prefers-reduced-motion"
     )
 
@@ -630,7 +890,9 @@ def test_there_is_a_visible_focus_ring(tokens):
     body = css(APP_CSS)
 
     assert ":focus-visible" in body
-    assert "--focus-ring" in body
+    # `var(--focus-ring)`, not `--focus-ring`: the bare name is satisfied by
+    # `--not--focus-ring` and by a token that is declared and never used.
+    assert "var(--focus-ring)" in body, "app.css never uses the focus ring token"
 
     ring = " ".join(tokens["--focus-ring"].split())
 
@@ -650,8 +912,11 @@ def test_focus_is_never_removed_without_being_replaced():
     blocks = re.findall(r"([^{}]+)\{([^{}]*)\}", body)
 
     for selector, declarations in blocks:
-        if re.search(r"outline\s*:\s*none", declarations):
-            replaced = "box-shadow" in declarations or ":focus-visible" in selector
+        if _declares("outline", r"^none\b", declarations):
+            replaced = (
+                _declaration("box-shadow", declarations) is not None
+                or ":focus-visible" in selector
+            )
             assert replaced, f"outline removed with no replacement in: {selector.strip()}"
 
 
@@ -687,9 +952,13 @@ def _from_hsl(hue, saturation, lightness):
 
 @pytest.fixture(scope="module")
 def tokens():
-    return dict(
-        re.findall(r"^\s*(--[a-z0-9-]+)\s*:\s*([^;]+);", css(TOKENS_CSS), re.M)
-    )
+    """Every custom property tokens.css declares, keyed by its WHOLE name.
+
+    Through the same anchored reader as every other lookup here, so a token
+    can only ever be read off the declaration that carries its exact name -
+    and so a declaration that is not at the start of a line is not invisible.
+    """
+    return _custom_properties(css(TOKENS_CSS))
 
 
 TEXT_ON_SURFACE = [
@@ -730,8 +999,13 @@ def test_the_primary_button_label_clears_the_contrast_floor(tokens):
 
 def _hsl_token(tokens, name):
     """Parse `hsl(var(--camelot-hue, Xdeg) S% L%)` into (saturation, lightness)."""
+    # `var(--camelot-hue` and then ANYTHING up to a `)` also matches
+    # `var(--camelot-hue-somewhere-else, 220deg)`, which is a different custom
+    # property and not the one format.js sets. The name has to end where a
+    # custom-property name can end: at the fallback comma, or at the `)`.
     match = re.search(
-        r"hsl\(\s*var\(--camelot-hue[^)]*\)\s+([\d.]+)%\s+([\d.]+)%\s*\)", tokens[name]
+        r"hsl\(\s*var\(\s*--camelot-hue\s*(?:,[^()]*)?\)\s+([\d.]+)%\s+([\d.]+)%\s*\)",
+        tokens[name],
     )
     assert match, f"{name} is no longer an hsl() built on --camelot-hue: {tokens[name]}"
     return float(match.group(1)), float(match.group(2))
@@ -982,7 +1256,7 @@ def test_the_set_creator_status_line_cannot_be_scrolled_out_of_reach():
     # Export progress block below.
     assert_sticks_to_the_bottom("the Set Creator status line", declarations)
     # Opaque, or the rows scroll THROUGH the text rather than under it.
-    assert re.search(r"background\s*:\s*var\(--surface", declarations), declarations
+    assert _declares("background", r"^var\(\s*--surface", declarations), declarations
 
 
 def test_the_export_progress_block_cannot_be_scrolled_out_of_reach():
@@ -1016,7 +1290,7 @@ def test_the_export_progress_block_cannot_be_scrolled_out_of_reach():
 
     assert_sticks_to_the_bottom("the progress block", declarations)
     # Opaque, or the rows scrolling under it read through it.
-    assert re.search(r"background\s*:\s*var\(--surface", declarations), (
+    assert _declares("background", r"^var\(\s*--surface", declarations), (
         f"the progress block is transparent: {declarations}"
     )
 
@@ -1412,7 +1686,7 @@ def test_the_message_box_keeps_the_newlines_its_bodies_are_written_with():
     match = re.search(r"\.message-box__message\s*\{([^}]*)\}", body)
 
     assert match, "the message-box body rule is gone"
-    assert re.search(r"white-space\s*:\s*pre-line\b", match.group(1)), (
+    assert _declares("white-space", r"^pre-line\b", match.group(1)), (
         f"the message box collapses its newlines: {' '.join(match.group(1).split())}"
     )
 
@@ -1482,13 +1756,30 @@ def test_the_camelot_colours_are_declared_on_the_pill_not_on_the_root():
     was caught by sampling pixels out of a screenshot, not by any assertion.
     """
     body = css(TOKENS_CSS)
-    root_block = body[body.index(":root {") : body.index("\n}", body.index(":root {"))]
+    camelot = ("--camelot-bg", "--camelot-fg", "--camelot-edge")
 
-    leaked = [name for name in ("--camelot-bg", "--camelot-fg", "--camelot-edge")
-              if f"{name}:" in root_block]
+    # WHERE each one is declared, taken from the rules rather than from a slice
+    # of the file. The slice was `body[body.index(":root {") : body.index("\n}")]`,
+    # which ends at the first line-start `}` in the file and cannot see a
+    # second `:root` at all - and `f"{name}:" in root_block` is the unanchored
+    # match this file has now been wrong about three times: `--x--camelot-bg:`
+    # satisfies it.
+    sites = {}
+    for selector, declarations in _rules(body):
+        for name in _custom_properties(declarations):
+            if name in camelot:
+                sites.setdefault(name, []).append(" ".join(selector.split()))
 
-    assert leaked == [], (
-        f"{leaked} are declared inside :root, so var(--camelot-hue) resolves "
-        "against :root and every pill gets the fallback hue"
+    missing = [name for name in camelot if name not in sites]
+    assert missing == [], f"{missing} are not declared anywhere in tokens.css"
+
+    leaked = {
+        name: where
+        for name, where in sites.items()
+        if any(".pill" not in selector for selector in where)
+    }
+    assert leaked == {}, (
+        f"{sorted(leaked)} are declared outside .pill ({leaked}), so "
+        "var(--camelot-hue) resolves where they are DECLARED - against a rule "
+        "that never carries a hue - and every pill gets the fallback"
     )
-    assert ".pill {" in body, "the camelot properties must be declared on .pill"
