@@ -52,6 +52,76 @@ def without_comments(text):
     return COMMENT.sub("", text)
 
 
+class _CannotModel(AssertionError):
+    """The source uses syntax whose meaning this file cannot compute.
+
+    Raised, never swallowed, and never narrowed into a special case. Four
+    rounds on this file have now established the same thing four times: a
+    guard that MIS-READS a construct is worse than one that refuses it,
+    because the mis-read is silent and the refusal is not. A maintainer who
+    writes CSS this file turns down gets an obvious failure naming the file,
+    the construct and the line, and either rewrites one declaration or teaches
+    the reader the construct. A maintainer whose CSS is mis-read gets a dead
+    accessibility feature and a green suite - which is what happened with
+    `!important` and with a semicolon inside a string, and what this class
+    exists to stop happening a third time.
+
+    It subclasses AssertionError so pytest reports it as a failing check
+    rather than an error in the tests, which is what it is: the stylesheet
+    does not meet a constraint this file imposes.
+    """
+
+
+#: A quote opens a CSS string, and a string can contain ANYTHING - `;`, `}`,
+#: `{`, a whole fake ruleset.
+_QUOTE = re.compile(r"""["']""")
+
+
+def _splittable(text, where=None):
+    r"""`text`, or a refusal if this file cannot split it into declarations.
+
+    THE SECOND CLOSED-FORM REFUSAL IN THIS FILE, and it is the same shape as
+    the first. Every declaration lookup here ends in a `[^;{}]` value or a
+    `([^{}]+)\{([^{}]*)\}` rule split, and both of those read the CHARACTERS
+    `;`, `{` and `}` as structure. Inside a CSS string they are not structure,
+    they are content:
+
+        .exportv__progress {
+          content: "x; position: sticky; bottom: calc(var(--space-6) * -1);";
+        }
+
+    splits into three declarations that say the block is stuck to the bottom
+    of the scrollport, and the rule can be emptied of every real sticky
+    declaration with the guard still green. That was reported, live, in round
+    6. `content: "{}"` is worse: it hides a whole rule from the rule splitter,
+    so a later rule redeclaring `position` becomes invisible.
+
+    The fix is NOT to split correctly. A correct splitter needs the string
+    grammar, the escape grammar and the url() token, and every previous round
+    that answered an evasion by handling it better left the next spelling
+    open. Refusing is complete in one line: if the region contains a quote at
+    all, this file does not know where its declarations begin, and says so.
+
+    What it costs, said plainly: `content: "→"` and `font-family: "Inter"` are
+    legitimate CSS that these stylesheets may no longer contain. That is the
+    trade, taken deliberately - see the note in tokens.css, where the font
+    stacks are written as identifier sequences for exactly this reason.
+    """
+    quote = _QUOTE.search(text)
+    if quote is not None:
+        line = text.count("\n", 0, quote.start()) + 1
+        excerpt = " ".join(text[max(0, quote.start() - 60) : quote.start() + 60].split())
+        raise _CannotModel(
+            f"{where or 'this CSS'} contains a string ({quote.group()} on line "
+            f"{line}: ...{excerpt}...). A string can hold a `;`, a `{{` or a "
+            f"`}}`, so this file cannot say where the declarations in it begin "
+            f"or end, and it will not guess. Rewrite the value without quotes "
+            f"- an unquoted identifier sequence is usually the same thing - or "
+            f"teach `_splittable` the string grammar."
+        )
+    return text
+
+
 #: How each kind of source is made to look the way a browser sees it. Keyed by
 #: suffix, so the reader is chosen by what the FILE IS rather than by how its
 #: path happened to be spelled at the call site.
@@ -97,9 +167,15 @@ def css(path):
 
     Three separate corrections were what let the fourth, fifth and sixth sites
     survive, so there is one correction and it lives at the reader.
+
+    AND THE SAME ARGUMENT, FOR STRINGS. A sheet containing a quote is refused
+    here rather than handed on to be split wrongly - see `_splittable`. This
+    is the reader, so no real stylesheet reaches a consumer without passing
+    it; the splitters check again for the synthetic sheets the tests build by
+    hand, which never come through here.
     """
     assert path.suffix == ".css", f"{path.name} is not a stylesheet"
-    return source(path)
+    return _splittable(source(path), path.name)
 
 
 def js(path):
@@ -157,20 +233,87 @@ _DECLARATION_BOUNDARY = r"(?:\A|[{};])\s*"
 _DECLARATION_VALUE = r"([^;{}]+)"
 
 
+#: The `!important` flag, which CSS allows to be spaced and cased freely. It
+#: is a WELL-DEFINED TOKEN, which is why refusing it is closed-form: there is
+#: no need to decide what it means, only to notice that it is there.
+_IMPORTANT = re.compile(r"!\s*important\s*$", re.I)
+
+
+def _declarations_of(name, text):
+    """Every value `name` is declared with in `text`, in document order."""
+    return [
+        value.strip()
+        for value in re.findall(
+            rf"{_DECLARATION_BOUNDARY}{re.escape(name)}\s*:\s*{_DECLARATION_VALUE}",
+            _splittable(text),
+        )
+    ]
+
+
 def _declaration(name, text):
     """The value `name` is DECLARED with in `text`, or None if it is not.
 
     `text` is expected to have come through `css()` already. `_custom_property`
     is the single exception and strips for itself, because it is handed a sheet
     as a STRING by callers that cannot be made to strip first.
+
+    THE LAST DECLARATION WINS, which is the cascade - `re.search` returns the
+    first, so a rule that declared `bottom` twice, or two rules merged by
+    `_rule`, was read off the declaration the browser discards.
+
+    AND `!important` BREAKS THAT, so it is REFUSED rather than modelled. An
+    earlier `.setc__status { position: static !important; }` beats a later
+    `position: sticky` in the browser, and last-wins reads the sticky one: the
+    status line is in normal flow and this file reports it stuck. That was
+    live and green in round 6.
+
+    Modelling it properly means the whole cascade - origin, layer, importance,
+    specificity, order - and this file has no selector engine and no document.
+    Noticing the flag needs one regex. So a name whose declarations include an
+    important one is not resolved at all: `_important_declaration` is the
+    other half, for the one place in these sheets where `!important` is the
+    POINT rather than an accident.
     """
-    # The LAST one, which is the cascade. `re.search` returns the first, so a
-    # rule that declared `bottom` twice - or two rules merged by `_rule` - was
-    # read off the declaration the browser discards.
-    declared = re.findall(
-        rf"{_DECLARATION_BOUNDARY}{re.escape(name)}\s*:\s*{_DECLARATION_VALUE}", text
-    )
-    return declared[-1].strip() if declared else None
+    declared = _declarations_of(name, text)
+    if not declared:
+        return None
+    important = [value for value in declared if _IMPORTANT.search(value)]
+    if important:
+        raise _CannotModel(
+            f"`{name}` is declared `!important` here ({important[-1]!r}), and this "
+            f"file resolves a name by taking the LAST declaration - which an "
+            f"EARLIER `!important` one beats in the browser. It has no cascade, so "
+            f"it will not guess: drop the flag, or read the name with "
+            f"`_important_declaration`, which requires it."
+        )
+    return declared[-1]
+
+
+def _important_declaration(name, text):
+    """The value of `name` where EVERY declaration of it carries `!important`.
+
+    The other half of the refusal above, and deliberately just as strict in
+    its own direction. A region where some declarations of a name are
+    important and some are not is exactly the cascade this file cannot
+    compute, so it is refused from here too rather than resolved by the same
+    last-wins rule that `!important` invalidates.
+
+    Its one caller is the reduced-motion block, where the flag is the point:
+    `animation-duration: 1ms` without it loses to any component that declares
+    its own duration, so the preference would be honoured by the tokens and
+    ignored by everything that does not use them.
+    """
+    declared = _declarations_of(name, text)
+    if not declared:
+        return None
+    ordinary = [value for value in declared if not _IMPORTANT.search(value)]
+    if ordinary:
+        raise _CannotModel(
+            f"`{name}` is declared both with and without `!important` here "
+            f"({ordinary[-1]!r} is not flagged), so which one applies is the "
+            f"cascade, which this file does not have. Flag them all, or none."
+        )
+    return _IMPORTANT.sub("", declared[-1]).strip()
 
 
 def _declares(name, value_pattern, text):
@@ -185,6 +328,12 @@ def _declares(name, value_pattern, text):
     return declared is not None and re.search(value_pattern, declared) is not None
 
 
+def _declares_important(name, value_pattern, text):
+    """`_declares`, for a name whose declarations all have to be flagged."""
+    declared = _important_declaration(name, text)
+    return declared is not None and re.search(value_pattern, declared) is not None
+
+
 _CUSTOM_DECLARATION = re.compile(
     rf"{_DECLARATION_BOUNDARY}(--[a-zA-Z0-9-]+)\s*:\s*{_DECLARATION_VALUE}"
 )
@@ -196,11 +345,22 @@ def _custom_properties(text):
     The same anchoring as `_declaration`, from the other side: the dict is
     keyed by the WHOLE name, so `--not--text-xs` is its own key and can never
     answer for `--text-xs`. Later declarations win, which is the cascade.
+
+    And the same two refusals, for the same reason: "later wins" is not the
+    cascade when an earlier declaration is flagged, and a sheet with a string
+    in it cannot be split into declarations at all.
     """
-    return {
-        match.group(1): match.group(2).strip()
-        for match in _CUSTOM_DECLARATION.finditer(text)
-    }
+    declared = {}
+    for match in _CUSTOM_DECLARATION.finditer(_splittable(text)):
+        value = match.group(2).strip()
+        if _IMPORTANT.search(value):
+            raise _CannotModel(
+                f"`{match.group(1)}` is declared `!important` ({value!r}). This "
+                f"dict is built later-wins, which an earlier flagged declaration "
+                f"beats in the browser, so it is not built at all."
+            )
+        declared[match.group(1)] = value
+    return declared
 
 
 def _block_body(match, text):
@@ -528,7 +688,23 @@ def _mentions(selector, entry):
     return re.search(rf"{re.escape(selector)}(?![\w-])", entry) is not None
 
 
-def _rule(body, selector, properties):
+#: Any declaration in a list, as (property, value). Only used to NAME what is
+#: wrong in a refusal - the lookups themselves stay anchored per name.
+_ANY_DECLARATION = re.compile(
+    rf"{_DECLARATION_BOUNDARY}(--[a-zA-Z0-9-]+|[a-zA-Z-]+)\s*:\s*{_DECLARATION_VALUE}"
+)
+
+
+def _important_properties(declarations):
+    """The names in `declarations` that carry `!important`, in order."""
+    return [
+        match.group(1)
+        for match in _ANY_DECLARATION.finditer(_splittable(declarations))
+        if _IMPORTANT.search(match.group(2).strip())
+    ]
+
+
+def _rule(body, selector, properties, where="this stylesheet"):
     r"""(declarations, rules this cannot evaluate) for exactly `selector`.
 
     THE FIFTH PLACE THIS FILE MATCHED A NAME AS A SUBSTRING. The three rules
@@ -558,9 +734,23 @@ def _rule(body, selector, properties):
     applies, unevaluated = [], []
     for selector_text, declarations in _rules(body):
         entries = [entry.strip() for entry in selector_text.split(",")]
+        names = selector in entries or any(_mentions(selector, entry) for entry in entries)
+        if names:
+            flagged = _important_properties(declarations)
+            if flagged:
+                raise _CannotModel(
+                    f"{where}: `{' '.join(selector_text.split())}` declares "
+                    f"{', '.join(flagged)} `!important`. Every rule here is merged "
+                    f"in document order and read last-wins, and an `!important` "
+                    f"declaration beats a later ordinary one - an EARLIER "
+                    f"`{selector} {{ position: static !important; }}` leaves the "
+                    f"block in normal flow with this file reporting it stuck. "
+                    f"Modelling that means the cascade; this file has no selector "
+                    f"engine and no document, so it refuses instead."
+                )
         if selector in entries:
             applies.append(" ".join(declarations.split()))
-        elif any(_mentions(selector, entry) for entry in entries):
+        elif names:
             clashing = sorted(
                 name for name in properties if _declaration(name, declarations) is not None
             )
@@ -953,7 +1143,14 @@ DECOY_DECLARATIONS = [
     # `_custom_properties` left this file green until this row existed: the
     # name pattern is greedy, so `--not--text-xs` is captured whole either way
     # and none of the rows above can tell the two apart there.
-    ("--decoy", '.x { content: "--decoy: 1px"; }'),
+    #
+    # This row used to be `.x { content: "--decoy: 1px"; }` and asserted that
+    # the lookup returned None. It is written without the string now, because
+    # a string is no longer something this file reads carefully - it is
+    # something it REFUSES, and the quoted spelling is pinned as a refusal in
+    # `UNSPLITTABLE_SHEETS` instead. Same claim, without asking a lookup to be
+    # right about text it has declared it cannot parse.
+    ("--decoy", ".x { --outer: var(--decoy: 1px); }"),
 ]
 
 
@@ -974,6 +1171,192 @@ def test_a_longer_name_that_contains_a_real_one_declares_something_else(name, sh
     assert name not in _custom_properties(sheet)
 
 
+#: Sheets this file REFUSES to split, because a quote in them means it cannot
+#: say where a declaration begins. Every row is CSS a browser reads perfectly
+#: well and this file will not: that is the trade, and it is pinned here so
+#: nobody can quietly reintroduce splitting-by-guess.
+#:
+#: The first row is the evasion as it was reported - with the real sticky
+#: declarations deleted, the string alone satisfied every check the sticky
+#: guard makes, and the block scrolled out of reach with `1 passed`.
+UNSPLITTABLE_SHEETS = [
+    ("the reported evasion", ".exportv__progress {\n"
+                             '  content: "x; position: sticky; bottom: '
+                             'calc(var(--space-6) * -1); background: var(--surface);";\n}'),
+    ("a brace inside a string", '.x { content: "{}" } .setc__status { position: static; }'),
+    ("a single-quoted string", ".x { content: 'a; b'; }"),
+    ("a quoted font name", ':root { --font-sans: "SF Pro Text", sans-serif; }'),
+    ("a quoted attribute selector", '.x[data-y="z"] { position: sticky; }'),
+    ("a bare quote", '.x { content: "; }'),
+]
+
+
+@pytest.mark.parametrize(
+    "what,sheet", UNSPLITTABLE_SHEETS, ids=[name for name, _ in UNSPLITTABLE_SHEETS]
+)
+def test_a_stylesheet_with_a_string_in_it_is_refused_rather_than_split(what, sheet):
+    """Every entry point, not just the one the evasion came in through.
+
+    `_splittable` is called from the reader and from all three splitters, so
+    this asserts on all four: a consumer that reached around one of them would
+    be the sixth place this file has been wrong about the same thing.
+    """
+    for name, call in (
+        ("_declaration", lambda: _declaration("position", sheet)),
+        ("_declares", lambda: _declares("position", r"^sticky", sheet)),
+        ("_custom_properties", lambda: _custom_properties(sheet)),
+        ("_rules", lambda: _rules(sheet)),
+        ("_rule", lambda: _rule(sheet, ".exportv__progress", STICKY_PROPERTIES)),
+    ):
+        with pytest.raises(_CannotModel) as refusal:
+            call()
+        assert "string" in str(refusal.value), (
+            f"{name} refused {what} without saying why: {refusal.value}"
+        )
+
+
+def test_the_stylesheet_reader_refuses_a_string_too(tmp_path):
+    """The reader is the entry point every real sheet comes through, so the
+    refusal has to be there and not only in the splitters underneath it.
+
+    Through a real file rather than a string, because the reader is what is
+    being tested and its argument is a path. In `tmp_path`, not by rewriting a
+    shipped sheet: a test that edits `src/` leaves the tree broken if it is
+    interrupted, and the point of this file is not to need that.
+    """
+    sheet = tmp_path / "app.css"
+    sheet.write_text('/* fine */\n.x { content: "a; b"; }\n', encoding="utf-8")
+
+    with pytest.raises(_CannotModel) as refusal:
+        css(sheet)
+
+    assert "app.css" in str(refusal.value), (
+        f"the refusal does not name the file: {refusal.value}"
+    )
+
+
+def test_the_shipped_stylesheets_are_ones_this_file_can_actually_split():
+    """...and the other direction, or every check above is vacuous.
+
+    A refusal that fires on the real sheets would be found in seconds. A
+    refusal that fires on NOTHING - because `_splittable` stopped looking -
+    would not, and every string evasion would be open again with this file
+    green. So the shipped sheets are read here, through the reader, and the
+    absence of a quote in them is the thing asserted.
+    """
+    assert stylesheets(), "no stylesheets found at all"
+    for sheet in stylesheets():
+        body = css(sheet)
+        assert _QUOTE.search(body) is None, f"{sheet.name} carries a string"
+        assert _rules(body), f"{sheet.name} split into no rules"
+
+
+#: Declarations this file REFUSES to resolve, because `!important` is not the
+#: cascade it implements. The first row is the evasion as it was reported: an
+#: EARLIER static rule with the flag on it beat the later sticky one in the
+#: browser while `_rule` merged them and last-wins read the sticky one.
+REFUSED_DECLARATIONS = [
+    ("an earlier flagged rule", "position",
+     ".setc__status { position: static !important; }\n"
+     ".setc__status { position: sticky; bottom: 0; }"),
+    ("a flagged declaration on its own", "position",
+     ".setc__status { position: sticky !important; bottom: 0; }"),
+    ("spaced and capitalised", "position",
+     ".setc__status { position: static ! IMPORTANT; }\n"
+     ".setc__status { position: sticky; }"),
+    ("a flagged offset", "bottom",
+     ".x { bottom: 0 !important; }"),
+]
+
+
+@pytest.mark.parametrize(
+    "what,name,sheet", REFUSED_DECLARATIONS,
+    ids=[name for name, _, _ in REFUSED_DECLARATIONS],
+)
+def test_an_important_declaration_is_refused_rather_than_ranked(what, name, sheet):
+    with pytest.raises(_CannotModel) as refusal:
+        _declaration(name, sheet)
+    assert "important" in str(refusal.value).lower(), refusal.value
+
+
+def test_the_rule_reader_names_the_file_the_selector_and_the_property():
+    """The refusal has to be actionable, or a maintainer deletes it.
+
+    Naming only "something is !important" makes someone grep a 1700-line
+    stylesheet. The three things they need are which file, which rule and
+    which property, and `_rule` knows all three at the point it gives up.
+    """
+    sheet = (".setc__status { position: static !important; }\n"
+             ".setc__status { position: sticky; bottom: 0; }")
+
+    with pytest.raises(_CannotModel) as refusal:
+        _rule(sheet, ".setc__status", STICKY_PROPERTIES, where="app.css")
+
+    message = str(refusal.value)
+    assert "app.css" in message, message
+    assert ".setc__status" in message, message
+    assert "position" in message, message
+
+
+def test_a_flagged_rule_that_only_mentions_the_selector_is_refused_too():
+    """`.never-used.setc__status { position: static !important; }` does not
+    apply to the status line on its own - but whether it does needs a selector
+    engine, and the `unevaluated` path exists precisely because this file has
+    none. Handing it back as "unevaluated" would be fine; reading past it
+    because the flag made it unresolvable would not."""
+    sheet = (".never-used.setc__status { position: static !important; }\n"
+             ".setc__status { position: sticky; bottom: 0; }")
+
+    with pytest.raises(_CannotModel):
+        _rule(sheet, ".setc__status", STICKY_PROPERTIES, where="app.css")
+
+
+def test_an_important_declaration_is_read_where_the_flag_is_the_point():
+    """...and the refusal is not simply "never look at `!important`".
+
+    `_important_declaration` is the other half. It reads a flagged declaration
+    and refuses an UNFLAGGED one, which is the same claim from the other side:
+    what it cannot do is rank the two against each other.
+    """
+    flagged = "* { animation-duration: 1ms !important; }"
+    assert _important_declaration("animation-duration", flagged) == "1ms"
+    assert _declares_important("animation-duration", r"^1ms$", flagged)
+
+    with pytest.raises(_CannotModel):
+        _important_declaration("animation-duration", "* { animation-duration: 1ms; }")
+
+    mixed = ("* { animation-duration: 1ms !important; }\n"
+             ".x { animation-duration: 700ms; }")
+    with pytest.raises(_CannotModel):
+        _important_declaration("animation-duration", mixed)
+
+
+def test_the_shipped_sheets_declare_nothing_important_the_guard_resolves():
+    """The floor under the refusals above.
+
+    They are only worth having if the real sheets pass them, and the one place
+    these stylesheets DO use `!important` - the reduced-motion block - is read
+    through `_important_declaration`, which requires it. So: every rule the
+    sticky guard reads is unflagged, and the reduced-motion block is flagged.
+    """
+    body = css(APP_CSS)
+    for selector in (".setc__status", ".exportv__progress"):
+        declarations, _unevaluated = _rule(body, selector, STICKY_PROPERTIES,
+                                           where=APP_CSS.name)
+        assert declarations, f"{selector} is gone"
+        assert _important_properties(declarations) == [], (
+            f"{selector} declares something !important: {declarations}"
+        )
+
+    reduced = _block_body(REDUCED_MOTION_QUERY.search(css(TOKENS_CSS)), css(TOKENS_CSS))
+    assert _important_properties(reduced) == [
+        "animation-duration",
+        "animation-iteration-count",
+        "transition-duration",
+        "scroll-behavior",
+    ], "the reduced-motion block no longer flags what it overrides"
+
+
 #: The other direction, or the check above is satisfied by a lookup that never
 #: finds anything. Spacing, the end of a block, the start of the text and a
 #: missing final semicolon are all real CSS.
@@ -982,7 +1365,11 @@ REAL_DECLARATIONS = [
     ("--motion-fast", ":root{--motion-fast:1ms}", "1ms"),
     ("--text-xs", ":root { --a: 1px; --text-xs: 0.6875rem; }", "0.6875rem"),
     ("--text-xs", ":root { --not--text-xs: 1px; --text-xs: 0.6875rem; }", "0.6875rem"),
-    ("animation-duration", "* { animation-duration: 1ms !important; }", "1ms !important"),
+    # `!important` is no longer resolved by `_declaration` at all - it is
+    # refused, and `REFUSED_DECLARATIONS` below is where that is pinned. What
+    # stays here is the reduced-motion block's shape read the other way, by
+    # the function that REQUIRES the flag.
+    ("animation-duration", "* { animation-duration: 1ms; }", "1ms"),
     ("position", "position: sticky; bottom: 0;", "sticky"),
     ("bottom", "position: sticky; bottom: calc(var(--space-6) * -1);",
      "calc(var(--space-6) * -1)"),
@@ -1298,8 +1685,13 @@ def _rules(text):
 
     Takes text that has ALREADY been through `css()`. Stripping again here
     would be a second place the rule lives, which is the shape of the bug this
-    replaced."""
-    return re.findall(r"([^{}]+)\{([^{}]*)\}", text)
+    replaced.
+
+    Refuses a string, because `{` and `}` inside one are content rather than
+    structure: `.x { content: "{}" }` splits into a rule whose selector is
+    `content: "` and whose body is empty, and the real `.x` rule vanishes from
+    the result entirely."""
+    return re.findall(r"([^{}]+)\{([^{}]*)\}", _splittable(text))
 
 
 def _declared_durations():
@@ -1338,17 +1730,31 @@ def test_reduced_motion_is_respected_at_the_token_level():
     reduced = _block_body(query, body)
     assert reduced is not None, "the prefers-reduced-motion block is never closed"
 
-    for name in (
-        "--motion-base",
-        "--motion-fast",
-        "animation-duration",
-        "transition-duration",
+    # The two TOKENS, which every component reads through `var()`. Ordinary
+    # declarations: nothing else declares them inside this block, so last-wins
+    # is the cascade and `_declaration` resolves them.
+    #
+    # ANCHORED. Unanchored, renaming these two to `--not--motion-fast` and
+    # `--not--motion-base` satisfied this loop while leaving the real ones at
+    # 110 ms and 170 ms - the whole application ignoring the preference with
+    # this file green.
+    #
+    # ...and the two PROPERTIES, which are the backstop for anything that does
+    # not read the tokens, and which are read with `_important_declaration`
+    # because the flag on them is load-bearing rather than incidental: without
+    # it a component declaring its own `animation-duration` wins on
+    # specificity and the preference is ignored for exactly the animations
+    # most likely to have one. Asserting that they ARE flagged is a claim this
+    # test did not make before - `_declaration` used to hand back
+    # `"1ms !important"` and `_milliseconds` read the 1 out of it, so the flag
+    # could be deleted with this test green.
+    for name, resolve in (
+        ("--motion-base", _declaration),
+        ("--motion-fast", _declaration),
+        ("animation-duration", _important_declaration),
+        ("transition-duration", _important_declaration),
     ):
-        # ANCHORED. Unanchored, renaming these two tokens to `--not--motion-fast`
-        # and `--not--motion-base` satisfied this loop while leaving the real
-        # ones at 110 ms and 170 ms - the whole application ignoring the
-        # preference with this file green.
-        declared = _declaration(name, reduced)
+        declared = resolve(name, reduced)
         assert declared is not None, f"{name} is not overridden under prefers-reduced-motion"
 
         milliseconds = _milliseconds(declared)
@@ -1359,8 +1765,9 @@ def test_reduced_motion_is_respected_at_the_token_level():
             f"{name} is still {milliseconds:g} ms under prefers-reduced-motion"
         )
 
-    # A 1 ms animation that still repeats forever is still motion.
-    assert _declares("animation-iteration-count", r"^1\b", reduced), (
+    # A 1 ms animation that still repeats forever is still motion. Flagged for
+    # the same reason as the durations beside it.
+    assert _declares_important("animation-iteration-count", r"^1\b", reduced), (
         "repeating animations are not stopped under prefers-reduced-motion"
     )
 
@@ -1772,7 +2179,7 @@ def test_the_set_creator_status_line_cannot_be_scrolled_out_of_reach():
     was done by hand against real Chrome and recorded in the PR description.
     """
     body = css(APP_CSS)
-    declarations, unevaluated = _rule(body, ".setc__status", STICKY_PROPERTIES)
+    declarations, unevaluated = _rule(body, ".setc__status", STICKY_PROPERTIES, where=APP_CSS.name)
 
     assert declarations, "the Set Creator status rule is gone"
     assert unevaluated == [], (
@@ -1810,7 +2217,7 @@ def test_the_export_progress_block_cannot_be_scrolled_out_of_reach():
     is worse than no guard, because it reads as coverage.
     """
     body = css(APP_CSS)
-    declarations, unevaluated = _rule(body, ".exportv__progress", STICKY_PROPERTIES)
+    declarations, unevaluated = _rule(body, ".exportv__progress", STICKY_PROPERTIES, where=APP_CSS.name)
 
     assert declarations, "the Export progress rule is gone"
     assert unevaluated == [], (
@@ -2219,7 +2626,7 @@ def test_the_message_box_keeps_the_newlines_its_bodies_are_written_with():
     PR description.
     """
     body = css(APP_CSS)
-    declarations, unevaluated = _rule(body, ".message-box__message", ("white-space",))
+    declarations, unevaluated = _rule(body, ".message-box__message", ("white-space",), where=APP_CSS.name)
 
     assert declarations, "the message-box body rule is gone"
     assert unevaluated == [], (
