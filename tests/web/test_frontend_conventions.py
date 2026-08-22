@@ -76,6 +76,32 @@ class _CannotModel(AssertionError):
 #: `{`, a whole fake ruleset.
 _QUOTE = re.compile(r"""["']""")
 
+#: The at-rules these stylesheets are allowed to use, which is the same thing
+#: as the at-rules this file models.
+#:
+#: `@media` it models by treating everything inside one as CONDITIONAL - see
+#: `_rule`, which will not merge a nested rule, and
+#: `test_reduced_motion_is_respected_at_the_token_level`, which reads INTO one
+#: block deliberately and bounds itself to it. `@keyframes` it models the same
+#: way: its `from`/`to` rules are nested, so they are never read as page rules,
+#: and their durations are enumerated for a ceiling rather than resolved.
+#:
+#: EVERYTHING ELSE IS REFUSED, and the two that matter are why:
+#:
+#:   * `@import` pulls in a stylesheet this file never opens. Every rule in it
+#:     is invisible here, so `.setc__status { position: static }` in the
+#:     imported sheet undoes the checked one with the guard green.
+#:   * `@layer` reorders the cascade wholesale. A rule in a later layer beats
+#:     an earlier layer's rule regardless of order or specificity, which is
+#:     the same "precedence this file cannot compute" that `!important` is.
+#:
+#: `@font-face`, `@property`, `@page`, `@container`, `@supports` and the rest
+#: are refused too, not because they are dangerous but because refusing what
+#: is not modelled is the rule. Adding one is one line here plus whatever
+#: modelling it needs.
+_AT_RULE = re.compile(r"@([\w-]+)")
+MODELLED_AT_RULES = ("media", "keyframes")
+
 
 def _splittable(text, where=None):
     r"""`text`, or a refusal if this file cannot split it into declarations.
@@ -106,7 +132,27 @@ def _splittable(text, where=None):
     legitimate CSS that these stylesheets may no longer contain. That is the
     trade, taken deliberately - see the note in tokens.css, where the font
     stacks are written as identifier sequences for exactly this reason.
+
+    AND THE SAME REFUSAL FOR AT-RULES, for the same reason one level up. See
+    `MODELLED_AT_RULES`: an `@import` is a stylesheet this file never opens
+    and a `@layer` is a cascade it cannot rank, so a sheet using either is
+    refused rather than read past.
     """
+    unmodelled = [
+        (match.group(1), text.count("\n", 0, match.start()) + 1)
+        for match in _AT_RULE.finditer(text)
+        if match.group(1).lower() not in MODELLED_AT_RULES
+    ]
+    if unmodelled:
+        name, line = unmodelled[0]
+        raise _CannotModel(
+            f"{where or 'this CSS'} uses `@{name}` (line {line}), which this file "
+            f"does not model. `@import` hides a whole stylesheet from it and "
+            f"`@layer` reorders the cascade underneath it, so neither can be read "
+            f"past - and an at-rule it has never been taught is in the same "
+            f"position. Add it to MODELLED_AT_RULES with the handling it needs."
+        )
+
     quote = _QUOTE.search(text)
     if quote is not None:
         line = text.count("\n", 0, quote.start()) + 1
@@ -721,7 +767,28 @@ def _rule(body, selector, properties, where="this stylesheet"):
         first one invisibly. The cascade is not "the first rule wins".
 
     So a rule counts when `selector` is one whole entry in its selector LIST,
-    and EVERY such rule is merged in document order.
+    is written at the TOP LEVEL of the sheet, and EVERY such rule is merged in
+    document order.
+
+    THE TOP-LEVEL PART IS THE SEVENTH INSTANCE OF THE SAME DEFECT, found while
+    looking for one. A rule inside an at-rule is conditional, and this file
+    cannot evaluate the condition - it has no viewport, no media, no UA and no
+    layer order. Reading a nested rule as though it were unconditional meant
+    the whole shipped rule could be wrapped in
+
+        @media (min-width: 99999px) { .exportv__progress { ... } }
+
+    and the guard reported the block stuck while it applied to nobody: the
+    Stop button back below the fold, `2 passed`. `@media print`, `@supports
+    (not (all: x))` and a losing `@layer` are the same move.
+
+    A nested rule is therefore never merged. If it names the selector and
+    declares something being checked it is handed back as UNEVALUATED, which
+    is the channel that already exists for exactly this - "whether this
+    applies needs a selector engine and a document, which this does not have".
+    If the only rule for the selector was nested, `applies` comes back empty
+    and the caller says the rule is gone, which is what a rule matching no
+    viewport is.
 
     `properties` is what the caller is about to assert on. Any OTHER rule that
     names this selector and declares one of them is handed back rather than
@@ -732,7 +799,7 @@ def _rule(body, selector, properties, where="this stylesheet"):
     and are not reported.
     """
     applies, unevaluated = [], []
-    for selector_text, declarations in _rules(body):
+    for selector_text, declarations, depth in _rules(body):
         entries = [entry.strip() for entry in selector_text.split(",")]
         names = selector in entries or any(_mentions(selector, entry) for entry in entries)
         if names:
@@ -748,14 +815,17 @@ def _rule(body, selector, properties, where="this stylesheet"):
                     f"Modelling that means the cascade; this file has no selector "
                     f"engine and no document, so it refuses instead."
                 )
-        if selector in entries:
+        if selector in entries and depth == 0:
             applies.append(" ".join(declarations.split()))
         elif names:
             clashing = sorted(
                 name for name in properties if _declaration(name, declarations) is not None
             )
             if clashing:
-                unevaluated.append((" ".join(selector_text.split()), clashing))
+                where_nested = "" if depth == 0 else f" (nested {depth} deep)"
+                unevaluated.append(
+                    (" ".join(selector_text.split()) + where_nested, clashing)
+                )
     return "; ".join(applies), unevaluated
 
 
@@ -1495,6 +1565,118 @@ def test_the_shipped_stylesheets_are_ones_this_file_can_actually_split():
         assert _rules(body), f"{sheet.name} split into no rules"
 
 
+#: A rule that only applies under a condition this file cannot evaluate. THIS
+#: IS THE SEVENTH INSTANCE, found by looking for one against the six fixed
+#: above, and it was green: the whole shipped `.exportv__progress` rule could
+#: be wrapped in a media query matching no real viewport, and the guard
+#: reported the block stuck with the Stop button back below the fold.
+#:
+#: Each row is the rule the guard checks, moved somewhere it does not apply.
+CONDITIONAL_RULES = [
+    ("a viewport nothing has",
+     "@media (min-width: 99999px) {\n"
+     "  .exportv__progress { position: sticky; bottom: 0; background: var(--surface-2); }\n}"),
+    ("print only",
+     "@media print {\n"
+     "  .exportv__progress { position: sticky; bottom: 0; background: var(--surface-2); }\n}"),
+    ("a feature query that fails",
+     "@supports (not (all: initial)) {\n"
+     "  .exportv__progress { position: sticky; bottom: 0; }\n}"),
+    ("a keyframe step",
+     "@keyframes drift {\n"
+     "  to { position: sticky; bottom: 0; }\n"
+     "  from { position: sticky; bottom: 0; }\n}"),
+]
+
+
+@pytest.mark.parametrize(
+    "what,sheet", CONDITIONAL_RULES, ids=[name for name, _ in CONDITIONAL_RULES]
+)
+def test_a_rule_inside_an_at_rule_is_not_read_as_though_it_always_applied(what, sheet):
+    """A nested rule is conditional, and this file cannot evaluate conditions.
+
+    `@supports` and `@keyframes` are refused one step earlier, at the reader,
+    because they are not in MODELLED_AT_RULES - so both spellings are checked
+    here: either the sheet is turned down, or the rule is not merged. What must
+    NOT happen is the third thing, which is what happened: the rule read as if
+    it were written at the top of the sheet.
+    """
+    try:
+        declarations, _unevaluated = _rule(sheet, ".exportv__progress", STICKY_PROPERTIES)
+    except _CannotModel:
+        return
+    assert declarations == "", (
+        f"{what} was merged as though it applied unconditionally: {declarations}"
+    )
+
+
+def test_a_nested_rule_that_clashes_is_handed_back_rather_than_dropped():
+    """Not merged is not the same as not mentioned.
+
+    A nested rule redeclaring a checked property is exactly what the
+    `unevaluated` channel is for: this file cannot say whether it applies, and
+    saying nothing is the defect rather than the fix. So the real rule stays
+    checked AND the conditional one is reported.
+    """
+    sheet = (".exportv__progress { position: sticky; bottom: 0; }\n"
+             "@media (min-width: 99999px) {\n"
+             "  .exportv__progress { position: static; }\n}")
+
+    declarations, unevaluated = _rule(sheet, ".exportv__progress", STICKY_PROPERTIES)
+
+    assert _declares("position", r"^sticky\b", declarations), declarations
+    assert unevaluated, "the conditional rule was dropped in silence"
+    assert "nested" in unevaluated[0][0], unevaluated
+    assert unevaluated[0][1] == ["position"], unevaluated
+
+
+def test_a_top_level_rule_is_still_read_when_the_sheet_has_a_media_block():
+    """...and the other direction, or the check above is satisfied by a reader
+    that stopped merging anything at all. tokens.css really does carry an
+    `@media` block, so "nested" has to mean nested rather than "after the
+    first at-rule in the file"."""
+    sheet = ("@media (prefers-reduced-motion: reduce) {\n"
+             "  :root { --motion-fast: 1ms; }\n}\n"
+             ".exportv__progress { position: sticky; bottom: 0; }")
+
+    declarations, unevaluated = _rule(sheet, ".exportv__progress", STICKY_PROPERTIES)
+
+    assert _declares("position", r"^sticky\b", declarations), declarations
+    assert unevaluated == [], unevaluated
+
+
+#: At-rules the reader turns down, and what each of them would otherwise hide.
+UNMODELLED_AT_RULES = [
+    ("an imported stylesheet", '@import url(other.css);\n.x { position: sticky; }'),
+    ("a cascade layer", "@layer base, app;\n.x { position: sticky; }"),
+    ("a layer block", "@layer app { .x { position: sticky; } }"),
+    ("a feature query", "@supports (position: sticky) { .x { position: sticky; } }"),
+    ("a container query", "@container (min-width: 1px) { .x { position: sticky; } }"),
+    ("a font face", "@font-face { font-family: X; src: url(x.woff2); }"),
+]
+
+
+@pytest.mark.parametrize(
+    "what,sheet", UNMODELLED_AT_RULES, ids=[name for name, _ in UNMODELLED_AT_RULES]
+)
+def test_an_at_rule_this_file_does_not_model_is_refused(what, sheet):
+    with pytest.raises(_CannotModel) as refusal:
+        _splittable(sheet, "app.css")
+    assert "@" in str(refusal.value), refusal.value
+
+
+def test_the_at_rules_the_sheets_actually_use_are_modelled():
+    """The floor. A refusal that turned down `@media` would be found at once;
+    one that turns down NOTHING would not, and `@import` would be open again
+    with this file green."""
+    assert stylesheets(), "no stylesheets found at all"
+    used = set()
+    for sheet in stylesheets():
+        used.update(match.group(1).lower() for match in _AT_RULE.finditer(css(sheet)))
+    assert used, "no at-rule found in any stylesheet; the pattern stopped matching"
+    assert used <= set(MODELLED_AT_RULES), f"a shipped sheet uses {used - set(MODELLED_AT_RULES)}"
+
+
 #: Declarations this file REFUSES to resolve, because `!important` is not the
 #: cascade it implements. The first row is the evasion as it was reported: an
 #: EARLIER static rule with the flag on it beat the later sticky one in the
@@ -1925,7 +2107,7 @@ def _milliseconds(value):
 
 
 def _rules(text):
-    """(selector, declarations) for every innermost block in ``text``.
+    """(selector, declarations, depth) for every innermost block in ``text``.
 
     Takes text that has ALREADY been through `css()`. Stripping again here
     would be a second place the rule lives, which is the shape of the bug this
@@ -1934,15 +2116,29 @@ def _rules(text):
     Refuses a string, because `{` and `}` inside one are content rather than
     structure: `.x { content: "{}" }` splits into a rule whose selector is
     `content: "` and whose body is empty, and the real `.x` rule vanishes from
-    the result entirely."""
-    return re.findall(r"([^{}]+)\{([^{}]*)\}", _splittable(text))
+    the result entirely.
+
+    DEPTH is how many blocks are still open where the rule begins - 0 for a
+    rule written at the top of the sheet, 1 for one inside an `@media`, an
+    `@supports`, a `@layer` or a `@keyframes`. It is reported rather than
+    discarded because a rule's at-rule context decides WHETHER IT APPLIES, and
+    a reader that drops it says `@media (min-width: 99999px) { .exportv__progress
+    { position: sticky; } }` and `.exportv__progress { position: sticky; }`
+    are the same rule. They are not: the first applies to nobody.
+    """
+    found = []
+    for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", _splittable(text)):
+        opening = match.start(2) - 1
+        depth = text.count("{", 0, opening) - text.count("}", 0, opening)
+        found.append((match.group(1), match.group(2), depth))
+    return found
 
 
 def _declared_durations():
     """(milliseconds, declaration) for every duration in every stylesheet."""
     found = []
     for sheet in stylesheets():
-        for _selector, declarations in _rules(css(sheet)):
+        for _selector, declarations, _depth in _rules(css(sheet)):
             for declaration in declarations.split(";"):
                 for number, unit in DURATION.findall(declaration):
                     found.append(
@@ -2957,7 +3153,7 @@ def test_the_camelot_colours_are_declared_on_the_pill_not_on_the_root():
     # match this file has now been wrong about three times: `--x--camelot-bg:`
     # satisfies it.
     sites = {}
-    for selector, declarations in _rules(body):
+    for selector, declarations, _depth in _rules(body):
         for name in _custom_properties(declarations):
             if name in camelot:
                 sites.setdefault(name, []).append(" ".join(selector.split()))
