@@ -102,6 +102,47 @@ _QUOTE = re.compile(r"""["']""")
 _AT_RULE = re.compile(r"@([\w-]+)")
 MODELLED_AT_RULES = ("media", "keyframes")
 
+#: A backslash in CSS starts an IDENTIFIER ESCAPE, and an escape means one
+#: element can be selected by names that share no characters.
+#: `.exportv\_\_progress` and `.\65 xportv__progress` are both the class
+#: `exportv__progress`; `_mentions` and the selector-list comparison in `_rule`
+#: see three different strings. So a later
+#:
+#:     .exportv\_\_progress { position: static; }
+#:
+#: undoes the checked rule and is invisible here - found by probing for it
+#: after the seventh, and green when it was found.
+#:
+#: Unescaping is not the fix. It needs the escape grammar, the whitespace rule
+#: that terminates a hex escape, and the surrogate rules - which is the same
+#: "parse it properly" answer that has now failed at every layer of this file.
+#: A backslash is refused, and these sheets contain none.
+_ESCAPE = re.compile(r"\\")
+
+#: A property NAME in CSS is ASCII case-insensitive: `POSITION: static` and
+#: `position: static` are the same declaration to a browser, and every lookup
+#: in this file is case-sensitive. So a later `.exportv__progress { POSITION:
+#: static; }` beat the checked rule while `_declaration("position", ...)` never
+#: saw it - found alongside the escape above, and green.
+#:
+#: Case-folding is NOT the fix, and this is the one place where "just handle
+#: it" is actively wrong rather than merely risky: a CUSTOM property name is
+#: case-SENSITIVE, so `--Motion-Fast` and `--motion-fast` are different
+#: properties. Folding with `re.I` would make the boundary lookup answer for
+#: the wrong one - a new instance of the exact defect the boundary exists to
+#: fix. Folding only non-custom names means telling them apart, which is more
+#: modelling and more room to be wrong.
+#:
+#: So a property name that is not already lowercase is refused. It costs
+#: nothing: all 69 distinct property names in these sheets are lowercase, and
+#: nobody writes `POSITION:` by accident.
+#: The `(?!--)` is the case-sensitivity of custom properties, from the other
+#: side: `--Motion-Fast` is a DIFFERENT property from `--motion-fast`, not a
+#: mis-spelling of it, so refusing it would be a false red. A vendor prefix
+#: (`-WebKit-transform`) is a single dash and is folded like any other
+#: property name, so it is refused.
+_MIXED_CASE_PROPERTY = re.compile(r"(?:\A|[{};])\s*(?!--)([a-zA-Z-]*[A-Z][a-zA-Z-]*)\s*:")
+
 
 def _splittable(text, where=None):
     r"""`text`, or a refusal if this file cannot split it into declarations.
@@ -133,10 +174,14 @@ def _splittable(text, where=None):
     trade, taken deliberately - see the note in tokens.css, where the font
     stacks are written as identifier sequences for exactly this reason.
 
-    AND THE SAME REFUSAL FOR AT-RULES, for the same reason one level up. See
-    `MODELLED_AT_RULES`: an `@import` is a stylesheet this file never opens
-    and a `@layer` is a cascade it cannot rank, so a sheet using either is
-    refused rather than read past.
+    AND THE SAME REFUSAL, three more times, for three more things a browser
+    reads differently from a regex. See `MODELLED_AT_RULES` (an `@import` is a
+    stylesheet this file never opens and a `@layer` is a cascade it cannot
+    rank), `_ESCAPE` (`.exportv\_\_progress` is the same class as
+    `.exportv__progress`) and `_MIXED_CASE_PROPERTY` (`POSITION` is the same
+    property as `position`). Each was found by probing for it rather than
+    reported, each was green, and each is one line to refuse and a grammar to
+    parse.
     """
     unmodelled = [
         (match.group(1), text.count("\n", 0, match.start()) + 1)
@@ -151,6 +196,30 @@ def _splittable(text, where=None):
             f"`@layer` reorders the cascade underneath it, so neither can be read "
             f"past - and an at-rule it has never been taught is in the same "
             f"position. Add it to MODELLED_AT_RULES with the handling it needs."
+        )
+
+    escape = _ESCAPE.search(text)
+    if escape is not None:
+        line = text.count("\n", 0, escape.start()) + 1
+        raise _CannotModel(
+            f"{where or 'this CSS'} contains an identifier escape (line {line}). "
+            f"`.exportv\\_\\_progress` is the same class as `.exportv__progress` "
+            f"and shares barely a character with it, so a rule spelled that way "
+            f"undoes a checked one invisibly. This file compares selectors as "
+            f"text and will not guess at the escape grammar: write the name "
+            f"unescaped, or teach `_splittable` to unescape."
+        )
+
+    mixed = _MIXED_CASE_PROPERTY.search(text)
+    if mixed is not None:
+        line = text.count("\n", 0, mixed.start()) + 1
+        raise _CannotModel(
+            f"{where or 'this CSS'} declares `{mixed.group(1)}` (line {line}), and "
+            f"a CSS property name is ASCII case-insensitive - so that is the same "
+            f"declaration as `{mixed.group(1).lower()}`, which every lookup here "
+            f"matches case-sensitively and would miss. Folding is not the answer: "
+            f"a CUSTOM property name IS case-sensitive, so folding would make "
+            f"`--Motion-Fast` answer for `--motion-fast`. Write it lowercase."
         )
 
     quote = _QUOTE.search(text)
@@ -1643,6 +1712,63 @@ def test_a_top_level_rule_is_still_read_when_the_sheet_has_a_media_block():
 
     assert _declares("position", r"^sticky\b", declarations), declarations
     assert unevaluated == [], unevaluated
+
+
+#: Two more spellings a browser reads as the checked rule and this file does
+#: not, both found by probing after the seventh was fixed, both green when
+#: they were found. They are the same defect as the `!important` and the
+#: string: a construct with a definite meaning that the regexes underneath
+#: this file quietly give a different one.
+DIFFERENTLY_SPELLED_RULES = [
+    ("an escaped class name",
+     ".exportv__progress { position: sticky; bottom: 0; }\n"
+     ".exportv\\_\\_progress { position: static; }"),
+    ("a hex-escaped first character",
+     ".exportv__progress { position: sticky; bottom: 0; }\n"
+     ".\\65 xportv__progress { position: static; }"),
+    ("an uppercase property name",
+     ".exportv__progress { position: sticky; bottom: 0; }\n"
+     ".exportv__progress { POSITION: static; }"),
+    ("a capitalised property name",
+     ".exportv__progress { position: sticky; bottom: 0; }\n"
+     ".exportv__progress { Bottom: auto; }"),
+    ("an uppercase name on the checked rule itself",
+     ".exportv__progress { POSITION: sticky; BOTTOM: 0; }"),
+]
+
+
+@pytest.mark.parametrize(
+    "what,sheet", DIFFERENTLY_SPELLED_RULES,
+    ids=[name for name, _ in DIFFERENTLY_SPELLED_RULES],
+)
+def test_a_rule_spelled_differently_from_the_one_checked_is_refused(what, sheet):
+    """A browser reads these as the checked rule. This file reads them as
+    something else, and until it refused them it read them as nothing at all -
+    which is worse, because a rule it cannot see cannot undo one it can."""
+    with pytest.raises(_CannotModel):
+        _rule(sheet, ".exportv__progress", STICKY_PROPERTIES, where="app.css")
+
+
+def test_the_shipped_sheets_are_spelled_the_way_this_file_reads_them():
+    """The floor under both refusals, and the reason they are shippable at
+    all: these stylesheets contain no backslash and no uppercase property
+    name, so refusing costs nothing and catches everything."""
+    assert stylesheets(), "no stylesheets found at all"
+    for sheet in stylesheets():
+        body = css(sheet)
+        assert _ESCAPE.search(body) is None, f"{sheet.name} escapes an identifier"
+        assert _MIXED_CASE_PROPERTY.search(body) is None, f"{sheet.name} has a mixed-case property"
+        # ...and the patterns still match something, or the two asserts above
+        # are satisfied by a regex that stopped working.
+    assert _ESCAPE.search(r".a\_b { x: 1px; }") is not None
+    assert _MIXED_CASE_PROPERTY.search(".a { POSITION: static; }") is not None
+    assert _MIXED_CASE_PROPERTY.search(".a { -WebKit-transform: none; }") is not None
+    # A custom property is case-SENSITIVE, so `--Motion-Fast` is a different
+    # property rather than a mis-spelling, and refusing it would be a false
+    # red. This assert is why the pattern carries a `(?!--)`; without it the
+    # refusal turns down legitimate CSS, which is the one way a loud guard
+    # gets deleted rather than fixed.
+    assert _MIXED_CASE_PROPERTY.search(":root { --Motion-Fast: 1ms; }") is None
 
 
 #: At-rules the reader turns down, and what each of them would otherwise hide.
