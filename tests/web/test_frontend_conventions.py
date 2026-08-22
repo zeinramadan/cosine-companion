@@ -12,6 +12,7 @@ So they are checked here. What this file cannot tell you is whether the result
 looks good; what it can tell you is that the system underneath it is real.
 """
 
+import ast
 import colorsys
 import re
 from pathlib import Path
@@ -28,10 +29,15 @@ INDEX_HTML = STATIC / "index.html"
 
 COMMENT = re.compile(r"/\*.*?\*/", re.S)
 JS_COMMENT = re.compile(r"/\*.*?\*/|(?<![:\w])//[^\n]*", re.S)
+HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
 
 
 def without_js_comments(text):
     return JS_COMMENT.sub("", text)
+
+
+def without_html_comments(text):
+    return HTML_COMMENT.sub("", text)
 
 
 HEX_COLOUR = re.compile(r"#[0-9a-fA-F]{3,8}\b")
@@ -46,14 +52,41 @@ def without_comments(text):
     return COMMENT.sub("", text)
 
 
+#: How each kind of source is made to look the way a browser sees it. Keyed by
+#: suffix, so the reader is chosen by what the FILE IS rather than by how its
+#: path happened to be spelled at the call site.
+STRIPPERS = {
+    ".css": without_comments,
+    ".js": without_js_comments,
+    ".html": without_html_comments,
+}
+
+
+def source(path):
+    """`path` as the browser sees it, whatever kind of source it is.
+
+    The reader for a path that is not known until run time - a glob result, a
+    loop variable, an import target resolved from another file. There is no
+    default: a suffix with no stripper is an ASSERTION, not a quiet raw read,
+    because a reader that passes through what it does not recognise is the
+    defect this file has now been wrong about three times over.
+    """
+    strip = STRIPPERS.get(path.suffix)
+    assert strip is not None, (
+        f"{path.name} is a kind of source this file has no reader for - add one "
+        f"to STRIPPERS rather than reading it raw"
+    )
+    return strip(read(path))
+
+
 def css(path):
     """A stylesheet as the BROWSER sees it: comments gone, once, here.
 
     Every CSS read in this file goes through this, and
-    `test_no_stylesheet_is_parsed_with_its_comments_still_in` fails if a new
-    one does not. That is not tidiness. A commented-out declaration is not a
-    declaration - the browser has no such custom property, no such font size
-    and no such media block - and a regex reading one as live is a guard
+    `test_no_source_file_is_read_without_its_comments_being_stripped` fails if
+    a new one does not. That is not tidiness. A commented-out declaration is
+    not a declaration - the browser has no such custom property, no such font
+    size and no such media block - and a regex reading one as live is a guard
     describing a stylesheet that does not exist. It was wrong in both
     directions at once here: `--ink-secondary` declared ONLY inside a comment
     counted as defined, so a token every component uses could go undefined
@@ -65,13 +98,26 @@ def css(path):
     Three separate corrections were what let the fourth, fifth and sixth sites
     survive, so there is one correction and it lives at the reader.
     """
-    return without_comments(read(path))
+    assert path.suffix == ".css", f"{path.name} is not a stylesheet"
+    return source(path)
 
 
 def js(path):
     """The same, for scripts. A `setProperty('--x')` inside a comment defines
-    nothing, and a hex inside one styles nothing."""
-    return without_js_comments(read(path))
+    nothing, and a hex inside one styles nothing - and a `hue: (position - 1)
+    * 30` inside one computes nothing, which is the read of `format.js` that
+    was still raw when round 5 opened."""
+    assert path.suffix == ".js", f"{path.name} is not a script"
+    return source(path)
+
+
+def html(path):
+    """And for the markup. `<!-- <main> -->` is not a landmark, a commented-out
+    `data-destination` is not a nav item, and a commented-out placeholder
+    eyebrow is not a placeholder - all three are claims this file makes about
+    index.html by grepping it."""
+    assert path.suffix == ".html", f"{path.name} is not markup"
+    return source(path)
 
 
 # ---------------------------------------------------------------------------
@@ -484,13 +530,102 @@ def scripts():
 
 THIS_FILE = Path(__file__).resolve()
 
-# The path names whose contents are CSS or JavaScript. Anything read under one
-# of these names has to come through `css()` or `js()`.
-STRIPPED_SOURCES = ("TOKENS_CSS", "APP_CSS", "sheet", "script", "current")
+#: The four readers that make a source file look the way a browser sees it,
+#: plus `read`, which is the only thing in this file that touches the
+#: filesystem. Inside their definitions a raw read is what they ARE; anywhere
+#: else it is the defect below.
+#:
+#: This is a closed set of five functions at the top of one file, not an open
+#: set of spellings. A sixth reader added without registering it here does not
+#: slip through - the `read` in its body is reported, loudly, as an
+#: unclassified raw read.
+READER_DEFINITIONS = ("read", "source", "css", "js", "html")
+
+#: Names that get bytes off disk. `read` is this file's own; `open` is the
+#: builtin.
+RAW_READ_NAMES = ("read", "open")
+
+#: ...and the same thing reached as an attribute, which is how `pathlib`,
+#: `io`, `codecs` and `builtins` all spell it.
+RAW_READ_ATTRIBUTES = ("read_text", "read_bytes", "read", "open")
+
+#: Calls that hand back stripped source. A call to one of these is fine
+#: wherever it appears and whatever path it is given.
+STRIPPING_READERS = ("source", "css", "js", "html")
 
 
-def test_no_stylesheet_or_script_is_parsed_with_its_comments_still_in():
-    """The single rule `css()` and `js()` exist to enforce, checked on THIS file.
+def _reads(tree):
+    """Every read of a source file in `tree`, as (stripped, raw).
+
+    STRUCTURAL, and deliberately the other way round from the scan it
+    replaces. That one recognised five variable NAMES - `TOKENS_CSS`,
+    `APP_CSS`, `sheet`, `script`, `current` - and passed everything else in
+    silence, so `read(JS / "format.js")`, `read(JS / "modal.js")`,
+    `read(JS / "components" / "drawer.js")` and `read(INDEX_HTML)` were all
+    invisible to it. The space of ways to spell a path is unbounded, so a list
+    of spellings always loses; PR #24 spent six rounds proving that.
+
+    So the path is not classified at all. The READER is. Every way of getting
+    bytes off disk is a violation unless it is `read(THIS_FILE)` - this file's
+    own source, which is what is being parsed here - or sits inside one of the
+    five reader definitions. A composed path, a path bound to a new name, an
+    alias of `read`, a bare `Path.read_text()`, an `open()` and a new
+    raw-reading helper are all reported for the same reason and without the
+    scan needing to understand any of them.
+
+    Nothing is skipped for being unrecognised. A reference to `read` that is
+    not a direct call - an alias, a dict entry, an argument passed to
+    something else - is reported as such, because the scan cannot follow it
+    and a scan that silently passes what it cannot follow is the bug, not the
+    fix.
+    """
+    stripped, raw = [], []
+
+    def report(node, what):
+        raw.append(f"line {node.lineno}: {what}")
+
+    def visit(node, in_reader):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            in_reader = in_reader or node.name in READER_DEFINITIONS
+
+        if isinstance(node, ast.Call):
+            call = node.func
+            if isinstance(call, ast.Name) and call.id in STRIPPING_READERS:
+                if not in_reader:
+                    stripped.append(f"line {node.lineno}: {ast.unparse(node)}")
+            elif isinstance(call, ast.Name) and call.id == "read":
+                if not in_reader and not _reads_this_file(node):
+                    report(node, f"{ast.unparse(node)} - raw, use a stripping reader")
+                for child in node.args + node.keywords:
+                    visit(child, in_reader)
+                return
+            elif isinstance(call, ast.Attribute) and call.attr in RAW_READ_ATTRIBUTES:
+                if not in_reader:
+                    report(node, f"{ast.unparse(node)} - raw, use a stripping reader")
+
+        if isinstance(node, ast.Name) and node.id in RAW_READ_NAMES and not in_reader:
+            report(node, f"`{node.id}` is referenced outside a direct call, so this "
+                         f"scan cannot say what it reads")
+
+        for child in ast.iter_child_nodes(node):
+            visit(child, in_reader)
+
+    visit(tree, False)
+    return stripped, raw
+
+
+def _reads_this_file(call):
+    """`read(THIS_FILE)` exactly, and nothing that merely resembles it."""
+    return (
+        len(call.args) == 1
+        and not call.keywords
+        and isinstance(call.args[0], ast.Name)
+        and call.args[0].id == "THIS_FILE"
+    )
+
+
+def test_no_source_file_is_read_without_its_comments_being_stripped():
+    """The single rule the readers exist to enforce, checked on THIS file's AST.
 
     Not a style point. Six separate regexes in here read tokens.css and app.css
     raw, and every one of them was wrong about the browser:
@@ -511,24 +646,101 @@ def test_no_stylesheet_or_script_is_parsed_with_its_comments_still_in():
 
     Two of those were reported and four were found by looking for the rest,
     which is the reason this test exists at all rather than a sixth correction:
-    correcting the sites one at a time is what left four of them standing. The
-    rule is enforced at the READER, and a new site that skips it fails here.
-    """
-    source = read(THIS_FILE)
-    raw = re.findall(r"[^_\w](read)\(\s*(" + "|".join(STRIPPED_SOURCES) + r")\b", source)
+    correcting the sites one at a time is what left four of them standing.
 
-    assert raw == [], (
-        f"{[name for _call, name in raw]} are read without stripping comments - "
-        f"use css() for a stylesheet and js() for a script"
+    AND THE SCAN ITSELF WAS THE SEVENTH. It recognised five variable names, so
+    it never saw `read(JS / "format.js")` two hundred lines below it -
+    commenting out `hue: (position - 1) * 30,` and substituting `hue: 0,` left
+    every Camelot pill at hue zero with 129 Python and 168 JS tests green.
+    Enumerating the spellings of a path is the same losing game as enumerating
+    the decoys a substring lookup accepts, so it is not played: `_reads` walks
+    the AST and reports every reader that is not a stripping one, whatever it
+    is handed.
+    """
+    stripped, raw = _reads(ast.parse(read(THIS_FILE)))
+
+    assert raw == [], "source read without stripping comments:\n  " + "\n  ".join(raw)
+    # ...and not vacuously. If every call site went away, or the scan stopped
+    # recognising them, `raw == []` would pass with nothing being checked. This
+    # is the floor, and unlike the `count("css(") >= 6` it replaces it is a
+    # property of the scan rather than a tally of a substring.
+    assert stripped, (
+        "the AST scan found no stripping reader called anywhere in this file; "
+        "it has stopped seeing reads rather than found none to report"
     )
-    # ...and not vacuously: if every call site went away this would pass with
-    # nothing being checked anywhere. No mutation turns this line red, and it
-    # is kept anyway: the state it catches - the readers gone - takes most of
-    # this file down with it, so it is a floor under a failure that announces
-    # itself elsewhere first, not a rule of its own.
-    assert source.count("css(") >= 6 and source.count("js(") >= 3, (
-        "the stripping readers are barely used; this guard has stopped guarding anything"
-    )
+
+
+#: Every way of reading a source file that the scan this replaces could not
+#: see. `read(JS / "format.js")` is not hypothetical - it was live in this file
+#: when round 5 opened, and it is what let the Camelot hue be commented out
+#: with 129 Python and 168 JS tests green. The rest are the same read spelled
+#: differently, which is the point: the spellings are unbounded, so the scan
+#: classifies the READER and never the path.
+EVASIONS = [
+    ("a composed path", 'def test_x():\n    body = read(JS / "components" / "drawer.js")\n'),
+    ("a path bound to a new name", 'FORMAT_JS = JS / "format.js"\n'
+                                   'def test_x():\n    body = read(FORMAT_JS)\n'),
+    ("a path built out of strings", 'def test_x():\n'
+                                    '    body = read(Path(str(JS) + "/format.js"))\n'),
+    ("an alias of the raw reader", 'raw = read\ndef test_x():\n    body = raw(TOKENS_CSS)\n'),
+    ("the raw reader in a table", 'READERS = {"raw": read}\n'
+                                  'def test_x():\n    READERS["raw"](TOKENS_CSS)\n'),
+    ("the raw reader passed on", 'def test_x():\n    body = "".join(map(read, scripts()))\n'),
+    ("a bare Path.read_text", 'def test_x():\n    body = (JS / "format.js").read_text()\n'),
+    ("read_bytes", 'def test_x():\n    body = (CSS / "app.css").read_bytes()\n'),
+    ("open()", 'def test_x():\n    body = open(INDEX_HTML).read()\n'),
+    ("io.open()", 'def test_x():\n    body = io.open(INDEX_HTML).read()\n'),
+    ("a new helper that reads raw", 'def slurp(path):\n    return path.read_text()\n'
+                                    'def test_x():\n    slurp(TOKENS_CSS)\n'),
+]
+
+#: ...and the forms that are fine, or the check above is satisfied by a scan
+#: that reports everything.
+PERMITTED_READS = [
+    ("a stylesheet", 'def test_x():\n    body = css(TOKENS_CSS)\n'),
+    ("a script", 'def test_x():\n    body = js(JS / "format.js")\n'),
+    ("markup", 'def test_x():\n    body = html(INDEX_HTML)\n'),
+    ("a path only known at run time", 'def test_x():\n'
+                                      '    for path in stylesheets():\n'
+                                      '        body = source(path)\n'),
+    ("this file's own source", 'def test_x():\n    body = read(THIS_FILE)\n'),
+]
+
+
+@pytest.mark.parametrize("what,snippet", EVASIONS, ids=[name for name, _ in EVASIONS])
+def test_the_self_scan_reports_a_read_however_it_is_spelled(what, snippet):
+    """A rule nobody has seen fail is a rule nobody has seen work.
+
+    `test_no_source_file_is_read_without_its_comments_being_stripped` asserts
+    an EMPTY list, and an empty list is what a scan that has stopped matching
+    also produces. These are the inputs that tell the two apart, and every one
+    of them passed the enumerated scan this replaces.
+    """
+    _stripped, raw = _reads(ast.parse(snippet))
+
+    assert raw, f"{what} was not reported at all"
+
+
+@pytest.mark.parametrize(
+    "what,snippet", PERMITTED_READS, ids=[name for name, _ in PERMITTED_READS]
+)
+def test_the_self_scan_leaves_a_stripping_reader_alone(what, snippet):
+    """The other direction. A scan that reported everything would pass the
+    check above while making the readers unusable, and someone would delete
+    it."""
+    _stripped, raw = _reads(ast.parse(snippet))
+
+    assert raw == [], f"{what} was reported as a raw read: {raw}"
+
+
+def test_the_self_scan_counts_only_the_call_sites_it_is_a_floor_under():
+    """The non-vacuity floor is about the CALL SITES, not the readers' own
+    bodies - `css`, `js` and `html` each call `source(path)` inside themselves,
+    and those three survive the deletion of every test in this file."""
+    _stripped, raw = _reads(ast.parse('def css(path):\n    return source(path)\n'))
+
+    assert raw == []
+    assert _stripped == [], "the readers' own bodies are counted as call sites"
 
 
 def test_the_stylesheet_reader_really_does_strip():
@@ -710,6 +922,21 @@ def test_a_media_query_that_only_begins_like_the_preference_is_not_it():
         "@media (prefers-reduced-motion: reduce) and (min-width: 99999px) {}"
     )
     assert not REDUCED_MOTION_QUERY.search("@media (prefers-reduced-motion: no-preference) {}")
+
+
+def test_the_markup_reader_really_does_strip():
+    """Guard the guard, the third of three. index.html carries no comment
+    today, so nothing else in this file would notice a stripper that removed
+    everything or nothing - which is exactly the state the CSS reader was in
+    before six regexes were found to be wrong about the browser."""
+    assert without_html_comments("<main><!-- <aside> --></main>") == "<main></main>"
+    assert without_html_comments("<!--\n<main>\n-->") == "", "a multi-line comment survived"
+    assert without_html_comments("<main>x</main>") == "<main>x</main>", "the stripper ate the markup"
+
+    stripped = html(INDEX_HTML)
+
+    assert "<!--" not in stripped and "-->" not in stripped, "comments survived the reader"
+    assert "<main" in stripped, "the reader ate the markup"
 
 
 def test_a_commented_out_custom_property_is_not_a_declaration():
@@ -1079,7 +1306,7 @@ def test_every_camelot_pill_is_readable(tokens, position, mode):
 def test_harmonic_neighbours_are_adjacent_in_hue(tokens):
     """The reason the pills are coloured at all: hue = (n-1)*30 walks the wheel,
     so 7A and 8A sit next to each other in colour as well as in number."""
-    body = read(JS / "format.js")
+    body = js(JS / "format.js")
 
     assert "(position - 1) * 30" in body
 
@@ -1092,7 +1319,7 @@ def test_harmonic_neighbours_are_adjacent_in_hue(tokens):
 def test_the_page_has_no_inline_styles():
     """An inline style is a colour or a spacing value outside the system, and
     it beats every stylesheet rule that would have corrected it."""
-    assert not re.search(r'\sstyle\s*=\s*"', read(INDEX_HTML))
+    assert not re.search(r'\sstyle\s*=\s*"', html(INDEX_HTML))
 
 
 def test_nothing_is_loaded_from_another_origin():
@@ -1101,9 +1328,18 @@ def test_nothing_is_loaded_from_another_origin():
     the UI depend on one."""
     offenders = []
     for path in [INDEX_HTML] + stylesheets() + scripts():
-        for match in re.finditer(r"""(?:https?:)?//[^\s'")]+""", read(path)):
+        # `source()`, because the kind of file is not known until the loop
+        # runs. A CDN URL inside a comment loads nothing, so reading these raw
+        # was a false RED waiting to happen.
+        for match in re.finditer(r"""(?:https?:)?//[^\s'")]+""", source(path)):
             if match.group(0).startswith("//"):
-                continue  # a `// comment` in JavaScript
+                # Still skipped, and this is the one thing here that is looser
+                # than it looks: a protocol-relative `//cdn.example.com/x.js`
+                # IS an external origin and is not reported. The JS stripper
+                # eats one written in a string anyway, so tightening this would
+                # be a claim about CSS and markup only. Named rather than
+                # quietly relied on.
+                continue
             offenders.append(f"{path.name}: {match.group(0)}")
 
     assert offenders == [], f"external origins referenced: {offenders}"
@@ -1118,7 +1354,7 @@ def test_the_shell_uses_real_landmarks():
     "skip to main content" and every screen reader's landmark rotor navigate
     by; a div with a class is not in that list at all.
     """
-    body = read(INDEX_HTML)
+    body = html(INDEX_HTML)
 
     assert re.search(r"<nav\b", body)
     assert re.search(r"<aside\b", body)
@@ -1140,7 +1376,7 @@ def test_all_five_destinations_are_present():
     ``test_the_unimplemented_destinations_say_so``; this one only asks that
     none of the five disappeared.
     """
-    body = read(INDEX_HTML)
+    body = html(INDEX_HTML)
 
     for destination in ("explore", "set-creator", "library", "export", "settings"):
         assert f'data-destination="{destination}"' in body
@@ -1169,7 +1405,7 @@ def test_the_unimplemented_destinations_say_so():
     So the count comes from the markup: whatever still renders a placeholder
     must say it is coming, and nothing else may claim to.
     """
-    body = read(INDEX_HTML)
+    body = html(INDEX_HTML)
     sections = _destination_sections(body)
     assert sections, "no destination sections found; the regex stopped matching"
 
@@ -1218,7 +1454,7 @@ def test_the_derived_placeholder_check_still_discriminates():
     The second half is the part the old test was really protecting: not that a
     placeholder exists, but that one would be SEEN.
     """
-    body = read(INDEX_HTML)
+    body = html(INDEX_HTML)
 
     unbuilt = [
         name for name, markup in _destination_sections(body) if 'class="placeholder"' in markup
@@ -1248,7 +1484,7 @@ def test_the_derived_placeholder_check_still_discriminates():
 def test_the_set_creator_destination_is_no_longer_a_placeholder():
     """The claim this PR makes about index.html, on its own so that landing it
     does not edit a line another destination's PR is also editing."""
-    body = read(INDEX_HTML)
+    body = html(INDEX_HTML)
     sections = dict(_destination_sections(body))
 
     assert "set-creator" in sections, "the Set Creator section was renamed or removed"
@@ -1263,7 +1499,7 @@ def test_the_export_destination_is_no_longer_a_placeholder():
     """The claim this PR makes about index.html, on its own hunk for the reason
     the Set Creator's version of it gives: landing a destination must not edit a
     line another destination's PR is also editing."""
-    body = read(INDEX_HTML)
+    body = html(INDEX_HTML)
     sections = dict(_destination_sections(body))
 
     assert "export" in sections, "the Export section was renamed or removed"
@@ -1278,7 +1514,7 @@ def test_nothing_says_soon_now_that_every_destination_is_built():
     """`.nav__soon` was the badge on an unbuilt destination. Export was the last
     one wearing it, so a nav item carrying it now is a claim about a destination
     that does not exist."""
-    assert 'class="nav__soon"' not in read(INDEX_HTML)
+    assert 'class="nav__soon"' not in html(INDEX_HTML)
 
 
 def test_the_set_creator_status_line_cannot_be_scrolled_out_of_reach():
@@ -1555,11 +1791,11 @@ def test_the_modal_layer_the_dialogs_mount_into_exists():
     """`modal.js` looks this up by id; a rename would leave every dialog
     building nodes into nothing and failing silently at the moment a user
     presses `+ Add Anchor`."""
-    body = read(INDEX_HTML)
+    body = html(INDEX_HTML)
 
     assert 'id="modal-layer"' in body
-    assert 'getElementById(LAYER_ID)' in read(JS / "modal.js")
-    assert "const LAYER_ID = 'modal-layer';" in read(JS / "modal.js")
+    assert 'getElementById(LAYER_ID)' in js(JS / "modal.js")
+    assert "const LAYER_ID = 'modal-layer';" in js(JS / "modal.js")
 
 
 def test_the_drawer_renders_playlists_from_the_field_it_is_given():
@@ -1590,7 +1826,7 @@ def test_the_drawer_renders_playlists_from_the_field_it_is_given():
     mutant turns those red and leaves this one green, which is the whole reason
     both exist.
     """
-    body = read(JS / "components" / "drawer.js")
+    body = js(JS / "components" / "drawer.js")
 
     # Still no endpoint, as a matter of source text: the field rides on the
     # track detail the drawer already fetches, so no route was added. That it
@@ -1654,7 +1890,7 @@ def test_the_html_sink_check_would_catch_a_real_assignment():
 
 def test_every_interactive_control_is_a_real_element():
     """A clickable div is not keyboard reachable and announces nothing."""
-    body = read(INDEX_HTML)
+    body = html(INDEX_HTML)
 
     assert not re.search(r"<div[^>]*\bonclick", body)
     for match in re.finditer(r"<button[^>]*>", body):
@@ -1785,7 +2021,7 @@ def test_no_screen_renders_the_services_playlist_counter():
 
 def test_the_entry_module_is_loaded_as_a_module():
     """`type="module"` is what makes the import graph above work at all."""
-    assert '<script type="module" src="/js/main.js"></script>' in read(INDEX_HTML)
+    assert '<script type="module" src="/js/main.js"></script>' in html(INDEX_HTML)
 
 
 def test_the_camelot_colours_are_declared_on_the_pill_not_on_the_root():
