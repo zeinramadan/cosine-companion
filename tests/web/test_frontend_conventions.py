@@ -32,12 +32,42 @@ JS_COMMENT = re.compile(r"/\*.*?\*/|(?<![:\w])//[^\n]*", re.S)
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
 
 
+def _without(pattern, text):
+    r"""`text` with every `pattern` match replaced by a SPACE, not deleted.
+
+    A COMMENT SEPARATES TOKENS. CSS's tokenizer consumes a comment and emits
+    nothing, so `posi/**/tion` is two identifiers - `posi` and `tion` - and
+
+        .exportv__progress { posi/**/tion: sticky; bottom: calc(...); }
+
+    is an INVALID declaration that a browser drops. The block returns to
+    normal flow and the Stop button scrolls out of reach. Deleting the comment
+    instead of separating with it produced `position: sticky` here, so the
+    guard read a declaration that does not exist - the same defect as reading
+    a commented-out one as live, in the opposite direction, and green when it
+    was found. `sti/**/cky` and `var(--space/**/-6)` were the same.
+
+    So the substitution is a space, which is what a comment IS to a tokenizer,
+    and the newlines the comment spanned are kept after it so the line numbers
+    in a refusal still point at the right line.
+
+    Not a refusal, unlike most of this round: this is not a construct the file
+    declines to model, it is a stripper that was wrong about what a comment
+    does. `calc(1px/**/+2px)` types as two adjacent operands both ways, and
+    `.a/**/b` is a rule the browser drops and this file now merely fails to
+    match - the safe direction.
+    """
+    return pattern.sub(
+        lambda match: " " + "\n" * match.group().count("\n"), text
+    )
+
+
 def without_js_comments(text):
-    return JS_COMMENT.sub("", text)
+    return _without(JS_COMMENT, text)
 
 
 def without_html_comments(text):
-    return HTML_COMMENT.sub("", text)
+    return _without(HTML_COMMENT, text)
 
 
 HEX_COLOUR = re.compile(r"#[0-9a-fA-F]{3,8}\b")
@@ -49,7 +79,7 @@ def read(path):
 
 
 def without_comments(text):
-    return COMMENT.sub("", text)
+    return _without(COMMENT, text)
 
 
 class _CannotModel(AssertionError):
@@ -1515,10 +1545,13 @@ def test_the_self_scan_leaves_a_stripping_reader_alone(what, snippet, counts):
 #: hue be commented out - and pointing `.html` at it leaves every `<!-- -->`.
 #: Both survived with this file green until this table existed, because
 #: index.html carries no comment and drawer.js's header is a `/* */` one.
+#: The comment becomes a SPACE rather than nothing - see `_without`, and
+#: `test_a_comment_separates_the_tokens_it_sits_between` for why the
+#: difference is a live sticky rule rather than tidiness.
 READER_DISPATCH = [
-    (".css", "/* gone */\n//kept", "\n//kept"),
-    (".js", "/* gone */\n// gone\nkept", "\n\nkept"),
-    (".html", "<!-- gone -->/* kept */", "/* kept */"),
+    (".css", "/* gone */\n//kept", " \n//kept"),
+    (".js", "/* gone */\n// gone\nkept", " \n \nkept"),
+    (".html", "<!-- gone -->/* kept */", " /* kept */"),
 ]
 
 
@@ -1875,6 +1908,62 @@ def test_the_shipped_sheets_are_spelled_the_way_this_file_reads_them():
     # refusal turns down legitimate CSS, which is the one way a loud guard
     # gets deleted rather than fixed.
     assert _MIXED_CASE_PROPERTY.search(":root { --Motion-Fast: 1ms; }") is None
+
+
+#: Where a comment sits INSIDE a token. A comment is consumed by the CSS
+#: tokenizer and emits nothing, so `posi/**/tion` is two identifiers and the
+#: declaration is invalid - a browser drops it, the initial value applies and
+#: the block returns to normal flow. Deleting the comment produced
+#: `position: sticky` here, which is a declaration that does not exist.
+#:
+#: Found by probing after the reported evasions, and green: the shipped sticky
+#: rule could be made invalid to a browser and unchanged to this file by four
+#: characters.
+COMMENTS_INSIDE_TOKENS = [
+    ("in the property name",
+     ".exportv__progress { posi/**/tion: sticky; bottom: 0; }"),
+    ("in the value keyword",
+     ".exportv__progress { position: sti/**/cky; bottom: 0; }"),
+    ("in a custom property name",
+     ".exportv__progress { position: sticky; bottom: calc(var(--space/**/-6) * -1); }"),
+]
+
+
+@pytest.mark.parametrize(
+    "what,sheet", COMMENTS_INSIDE_TOKENS, ids=[name for name, _ in COMMENTS_INSIDE_TOKENS]
+)
+def test_a_comment_separates_the_tokens_it_sits_between(what, sheet):
+    """The declaration must not come back live, by any route.
+
+    This is the one correction in this round that is NOT a refusal, because it
+    is not a construct the file declines to model - it is a stripper that was
+    wrong about what a comment does. The right behaviour is a space, which is
+    what a comment is to a tokenizer, and it lands at the reader where the
+    other comment rule already lives.
+    """
+    declarations, _unevaluated = _rule(
+        without_comments(sheet), ".exportv__progress", STICKY_PROPERTIES, where="app.css"
+    )
+    with pytest.raises(AssertionError):
+        assert_sticks_to_the_bottom("the progress block", declarations)
+
+
+def test_the_stripper_keeps_the_lines_a_comment_spanned():
+    """...so a refusal's line number still points at the right line. A
+    multi-line comment replaced by one space would shift everything after it
+    up, and every message in `_splittable` names a line."""
+    text = without_comments("a\n/* two\nlines */\nb")
+
+    assert text.count("\n") == 3, text
+    assert text.splitlines()[-1] == "b", text
+
+
+def test_the_stripper_still_removes_the_comment_itself():
+    """The other direction, or the space substitution is satisfied by a
+    stripper that stopped stripping."""
+    assert without_comments("/* gone */") == " "
+    assert "gone" not in without_comments(".a { /* gone */ color: red; }")
+    assert "color: red" in without_comments(".a { /* gone */ color: red; }")
 
 
 #: Sheets a browser and this file's regexes read differently because of a
@@ -2299,8 +2388,18 @@ def test_the_markup_reader_really_does_strip():
     today, so nothing else in this file would notice a stripper that removed
     everything or nothing - which is exactly the state the CSS reader was in
     before six regexes were found to be wrong about the browser."""
-    assert without_html_comments("<main><!-- <aside> --></main>") == "<main></main>"
-    assert without_html_comments("<!--\n<main>\n-->") == "", "a multi-line comment survived"
+    # A SPACE, not nothing - see `_without`. In markup the difference is
+    # cosmetic; in CSS it is the difference between a declaration the browser
+    # applies and one it drops, and there is one stripper rule rather than
+    # three so that cannot be true in one reader and false in another.
+    assert without_html_comments("<main><!-- <aside> --></main>") == "<main> </main>"
+    # Whitespace and the newlines it spanned, not the empty string - the
+    # substitution keeps line numbers true; see
+    # `test_the_stripper_keeps_the_lines_a_comment_spanned`.
+    assert without_html_comments("<!--\n<main>\n-->").strip() == "", (
+        "a multi-line comment survived"
+    )
+    assert "<main>" not in without_html_comments("<!--\n<main>\n-->")
     assert without_html_comments("<main>x</main>") == "<main>x</main>", "the stripper ate the markup"
 
     stripped = html(INDEX_HTML)
