@@ -974,11 +974,36 @@ def _rule(body, selector, properties, where="this stylesheet"):
 STICKY_PROPERTIES = ("position", "bottom", "background")
 
 
-# WHAT IS STILL MATCHED LOOSELY IN THIS FILE, and why. Every CSS name and every
-# CSS selector now goes through `_declaration`, `_custom_properties` or `_rule`,
-# and every read of a source file through `css()`, `js()`, `html()` or
-# `source()`. What is left is written down here rather than discovered in
-# round six:
+# WHAT THIS FILE REFUSES, and what it still matches loosely. Every CSS name and
+# every CSS selector goes through `_declaration`, `_custom_properties` or
+# `_rule`; every read of a source file through `css()`, `js()`, `html()` or
+# `source()`; and every read PRIMITIVE in this file's own text through
+# `_reads`.
+#
+# REFUSED rather than modelled, each because reading it wrongly is silent and
+# refusing it is not, and each pinned by a table of its own:
+#
+#   * `!important` anywhere in a name being resolved (`_declaration`,
+#     `_custom_properties`, `_rule`) - precedence needs the cascade;
+#     `_important_declaration` reads the reduced-motion block, where the flag
+#     is the point, and refuses an UNFLAGGED declaration in turn;
+#   * a QUOTE anywhere in a sheet - a string can hold `;`, `{` or `}`;
+#   * an AT-RULE outside `@media` and `@keyframes` - `@import` hides a whole
+#     stylesheet and `@layer` reorders the cascade;
+#   * a rule NESTED inside an at-rule, which is conditional, and whose
+#     condition this file cannot evaluate;
+#   * a BACKSLASH - an identifier escape makes one class two strings;
+#   * a MIXED-CASE property name - CSS folds it and every lookup here does not;
+#   * any CHARACTER outside `\t\n\f\r` and printable ASCII - Python's `\s`
+#     is a bigger set than CSS whitespace, and a homoglyph is not a comparison
+#     this file can win;
+#   * a COMMENT DELIMITER surviving the stripper - an unterminated comment ends
+#     the sheet for the browser and ends nothing for `COMMENT`;
+#   * a READ PRIMITIVE outside a registered module-level reader, and any import
+#     outside `PERMITTED_IMPORTS`.
+#
+# What is still matched loosely, written down here rather than discovered in a
+# later round:
 #
 #   * ABSENCE checks - `HEX_COLOUR`, `COLOUR_FUNCTION`, `HTML_SINK`,
 #     `"playlists_created" in body`, `'class="nav__soon"'`. Over-matching is
@@ -1003,6 +1028,16 @@ STICKY_PROPERTIES = ("position", "bottom", "background")
 #     the behavioural test that establishes what the module DOES.
 #   * `body.split('data-destination="export"')[1].split("</button>")[0]` takes
 #     a region between two substrings rather than parsing the markup.
+#   * The refusals are over CSS SOURCE TEXT, so what they establish is what the
+#     stylesheet says. `test_no_script_writes_the_geometry_the_stylesheet_is_
+#     checked_for` is what makes the stylesheet the only thing that needs
+#     saying it, and the two sticky tests still cannot lay anything out - where
+#     those blocks actually land was measured by hand in a real browser and is
+#     recorded in the PR description.
+#   * A stylesheet in `src/web/static/css/` that no `<link>` in index.html
+#     loads is still read by the sheet-wide checks. That direction is safe
+#     (more is checked, not less) and `test_nothing_is_loaded_from_another_
+#     origin` is what bounds where they come from.
 
 
 def stylesheets():
