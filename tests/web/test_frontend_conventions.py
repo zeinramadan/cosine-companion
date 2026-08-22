@@ -574,6 +574,37 @@ def _rule(body, selector, properties):
 STICKY_PROPERTIES = ("position", "bottom", "background")
 
 
+# WHAT IS STILL MATCHED LOOSELY IN THIS FILE, and why. Every CSS name and every
+# CSS selector now goes through `_declaration`, `_custom_properties` or `_rule`,
+# and every read of a source file through `css()`, `js()`, `html()` or
+# `source()`. What is left is written down here rather than discovered in
+# round six:
+#
+#   * ABSENCE checks - `HEX_COLOUR`, `COLOUR_FUNCTION`, `HTML_SINK`,
+#     `"playlists_created" in body`, `'class="nav__soon"'`. Over-matching is
+#     the safe direction for these: a loose pattern makes them fail loudly,
+#     never pass quietly.
+#   * `":focus-visible" in body` is an existence check and `:not(:focus-visible)`
+#     satisfies it. The ring's VALUE is asserted from the token, and
+#     `test_focus_is_never_removed_without_being_replaced` is the guard that
+#     does the work.
+#   * `--focus-ring` is checked for a non-zero `px`/`rem`/`em` ANYWHERE in its
+#     value, not specifically in the thickness position of the box-shadow.
+#   * `test_nothing_is_loaded_from_another_origin` skips a match beginning
+#     `//`, so a protocol-relative `//cdn.example.com/x.js` is not reported.
+#     Named at that site.
+#   * `_destination_sections` requires `class="view"` exactly, so a section
+#     that gains a second class becomes invisible to it - a false green rather
+#     than a false red, and the reason the tests around it assert BOTH that
+#     nothing is unbuilt and that the derivation still tells the two apart.
+#   * The `.js` greps - `"track.playlists" in body`, `"folder_path"`,
+#     `"(position - 1) * 30"`, `getElementById(LAYER_ID)` - are substring
+#     presence checks on stripped source. Each says so at its site and names
+#     the behavioural test that establishes what the module DOES.
+#   * `body.split('data-destination="export"')[1].split("</button>")[0]` takes
+#     a region between two substrings rather than parsing the markup.
+
+
 def stylesheets():
     return sorted(CSS.glob("*.css"))
 
@@ -1741,10 +1772,17 @@ def test_the_export_progress_block_cannot_be_scrolled_out_of_reach():
 # substituted value, the recursion limit, the `position: sticky` assert, the
 # missing-`bottom` assert, and the `(?:^|;)` anchor that stops `padding-bottom`
 # being read as `bottom`. Each is covered below or in a test underneath, and
-# each was re-run to a red. Two branches survive with no discriminating input at
-# all and are documented AS such at their sites rather than papered over: the
-# `inside_maths` save/restore in `_Typer.unit`, and the `STICKY_KEYWORDS`
-# special case.
+# each was re-run to a red. ONE branch survives with no discriminating input at
+# all and is documented AS such at its site rather than papered over: the
+# `inside_maths` save/restore in `_Typer.unit`.
+#
+# This used to say two, and named the `STICKY_KEYWORDS` special case as the
+# second. That was wrong. The branch is reachable and it is pinned - deleting
+# it turns `test_a_css_wide_keyword_is_rejected_as_a_keyword_and_named` red,
+# because what it uniquely produces is the DIAGNOSIS and the diagnosis is what
+# that test asserts. What is true of it is narrower and is said where it
+# belongs: it changes no accept-or-reject verdict, so no row of the table below
+# can tell it apart.
 OFFSETS_THAT_RESOLVE = [
     "calc(var(--space-6) * -1)",  # what both sticky rules actually ship
     "0",  # unitless zero IS a length in a property value
@@ -2122,7 +2160,7 @@ def test_the_message_box_keeps_the_newlines_its_bodies_are_written_with():
 
 
 def test_no_screen_renders_the_services_playlist_counter():
-    """`playlists_created` is not a count of files, and the web UI must not read it.
+    r"""`playlists_created` is not a count of files, and the web UI must not read it.
 
     `playlist_exporter.py:171-173` increments it beside `successful` inside one
     `try`, so in per-seed mode the two are the same number; what it counts is
@@ -2139,7 +2177,10 @@ def test_no_screen_renders_the_services_playlist_counter():
     reader of the field, in any component, before anyone has to think of a
     string to assert against. Comments are stripped first - the reasoning above
     is written out in `export.js`, and prose about a field must not be what
-    satisfies a check that the field is unused.
+    satisfies a check that the field is unused. Once, by `js()`: this stripped
+    `^\s*//` a second time on its own, which was inert (deleting it left this
+    file green) and was a second place the rule lived, which is the shape of
+    the bug the single reader replaced.
 
     The field stays on the wire, and should: `web/api.py` sends what the
     service returned, faithfully, and a client that wants it is not this one.
@@ -2157,7 +2198,6 @@ def test_no_screen_renders_the_services_playlist_counter():
     offenders = {}
     for script in scanned:
         body = js(script)
-        body = re.sub(r"^\s*//.*$", "", body, flags=re.M)
         if "playlists_created" in body:
             offenders[script.name] = [
                 line.strip() for line in body.splitlines() if "playlists_created" in line
