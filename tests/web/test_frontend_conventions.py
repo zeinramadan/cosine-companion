@@ -27,6 +27,12 @@ APP_CSS = CSS / "app.css"
 INDEX_HTML = STATIC / "index.html"
 
 COMMENT = re.compile(r"/\*.*?\*/", re.S)
+JS_COMMENT = re.compile(r"/\*.*?\*/|(?<![:\w])//[^\n]*", re.S)
+
+
+def without_js_comments(text):
+    return JS_COMMENT.sub("", text)
+
 
 HEX_COLOUR = re.compile(r"#[0-9a-fA-F]{3,8}\b")
 COLOUR_FUNCTION = re.compile(r"\b(?:rgba?|hsla?|lab|lch|oklch|color)\s*\(")
@@ -38,6 +44,34 @@ def read(path):
 
 def without_comments(text):
     return COMMENT.sub("", text)
+
+
+def css(path):
+    """A stylesheet as the BROWSER sees it: comments gone, once, here.
+
+    Every CSS read in this file goes through this, and
+    `test_no_stylesheet_is_parsed_with_its_comments_still_in` fails if a new
+    one does not. That is not tidiness. A commented-out declaration is not a
+    declaration - the browser has no such custom property, no such font size
+    and no such media block - and a regex reading one as live is a guard
+    describing a stylesheet that does not exist. It was wrong in both
+    directions at once here: `--ink-secondary` declared ONLY inside a comment
+    counted as defined, so a token every component uses could go undefined
+    with the suite green; the whole `prefers-reduced-motion` block could be
+    commented out with the suite green; and a commented-out font size, a
+    commented-out `:root` and a commented-out colour override each produced a
+    RED for something the browser never sees.
+
+    Three separate corrections were what let the fourth, fifth and sixth sites
+    survive, so there is one correction and it lives at the reader.
+    """
+    return without_comments(read(path))
+
+
+def js(path):
+    """The same, for scripts. A `setProperty('--x')` inside a comment defines
+    nothing, and a hex inside one styles nothing."""
+    return without_js_comments(read(path))
 
 
 # A `position: sticky` block is only stuck in the block direction if its offset
@@ -304,7 +338,7 @@ def assert_sticks_to_the_bottom(rule_name, declarations):
     value = match.group(1).strip()
 
     try:
-        resolved = _type_of(value, read(TOKENS_CSS))
+        resolved = _type_of(value, css(TOKENS_CSS))
     except _NotALength as why:
         raise AssertionError(
             f"{rule_name} has `bottom: {value}`, which {why} - so the declaration is "
@@ -331,9 +365,84 @@ def scripts():
 # ---------------------------------------------------------------------------
 
 
+THIS_FILE = Path(__file__).resolve()
+
+# The path names whose contents are CSS or JavaScript. Anything read under one
+# of these names has to come through `css()` or `js()`.
+STRIPPED_SOURCES = ("TOKENS_CSS", "APP_CSS", "sheet", "script", "current")
+
+
+def test_no_stylesheet_or_script_is_parsed_with_its_comments_still_in():
+    """The single rule `css()` and `js()` exist to enforce, checked on THIS file.
+
+    Not a style point. Six separate regexes in here read tokens.css and app.css
+    raw, and every one of them was wrong about the browser:
+
+      * a `--ink-secondary` that exists ONLY inside a comment counted as
+        DEFINED, so the one token every component uses could be commented out
+        and this whole file stayed green while the page lost its secondary
+        text colour;
+      * the entire `@media (prefers-reduced-motion: reduce)` block could be
+        commented out and stayed green - the exact failure its own docstring
+        calls "worse than none, because it reads like a check";
+      * a commented-out seventh font size counted against the six-size ceiling;
+      * a commented-out `--ink-secondary` override SHADOWED the live one in the
+        contrast fixture, so the ratios were computed from a colour the browser
+        never sees;
+      * a commented-out `:root {` block was read as the real one and reported a
+        camelot leak that does not exist.
+
+    Two of those were reported and four were found by looking for the rest,
+    which is the reason this test exists at all rather than a sixth correction:
+    correcting the sites one at a time is what left four of them standing. The
+    rule is enforced at the READER, and a new site that skips it fails here.
+    """
+    source = read(THIS_FILE)
+    raw = re.findall(r"[^_\w](read)\(\s*(" + "|".join(STRIPPED_SOURCES) + r")\b", source)
+
+    assert raw == [], (
+        f"{[name for _call, name in raw]} are read without stripping comments - "
+        f"use css() for a stylesheet and js() for a script"
+    )
+    # ...and not vacuously: if every call site went away this would pass with
+    # nothing being checked anywhere. No mutation turns this line red, and it
+    # is kept anyway: the state it catches - the readers gone - takes most of
+    # this file down with it, so it is a floor under a failure that announces
+    # itself elsewhere first, not a rule of its own.
+    assert source.count("css(") >= 6 and source.count("js(") >= 3, (
+        "the stripping readers are barely used; this guard has stopped guarding anything"
+    )
+
+
+def test_the_stylesheet_reader_really_does_strip():
+    """Guard the guard, the twin of the JS one further down. A reader that
+    stripped everything would make every check above vacuous, and one that
+    stripped nothing is the bug this replaced."""
+    stripped = css(TOKENS_CSS)
+
+    assert "/*" not in stripped and "*/" not in stripped, "comments survived the reader"
+    assert "--ink-secondary" in stripped, "the reader ate the declarations"
+    assert ":root" in stripped, "the reader ate the selectors"
+
+
+def test_a_commented_out_custom_property_is_not_a_declaration():
+    """The other boundary. `_type_of` takes a sheet as a STRING and cannot know
+    whether its caller stripped it, so it strips at that edge too - and the
+    lookup there is unanchored `re.search`, so a commented declaration matches
+    on one line as readily as on its own. Both edges are load-bearing and both
+    are pinned; what was wrong before was the six unguarded readers between
+    them, not the number of edges.
+    """
+    with pytest.raises(_NotALength) as raised:
+        _type_of("var(--parked)", ":root { /* --parked: 1px; */ }")
+    assert "tokens.css does not declare" in str(raised.value)
+
+    assert _type_of("var(--parked)", ":root { --parked: 1px; }") == "length"
+
+
 def test_there_is_a_token_file_and_it_is_where_the_colours_live():
     assert TOKENS_CSS.is_file()
-    assert HEX_COLOUR.search(without_comments(read(TOKENS_CSS))), (
+    assert HEX_COLOUR.search(css(TOKENS_CSS)), (
         "tokens.css defines no colour at all, which makes every check below vacuous"
     )
 
@@ -348,7 +457,7 @@ def test_no_stylesheet_other_than_tokens_contains_a_literal_colour():
     for sheet in stylesheets():
         if sheet == TOKENS_CSS:
             continue
-        body = without_comments(read(sheet))
+        body = css(sheet)
         found = HEX_COLOUR.findall(body) + [
             match.group(0) for match in COLOUR_FUNCTION.finditer(body)
         ]
@@ -362,7 +471,7 @@ def test_no_script_sets_a_literal_colour():
     """Styling from JS is the other way the token layer leaks."""
     offenders = {}
     for script in scripts():
-        body = read(script)
+        body = js(script)
         found = HEX_COLOUR.findall(body)
         if found:
             offenders[str(script.relative_to(JS))] = sorted(set(found))
@@ -373,14 +482,14 @@ def test_no_script_sets_a_literal_colour():
 def test_every_custom_property_used_is_actually_defined():
     """A typo in a var() name is silent: the declaration is simply dropped and
     the element inherits, which usually still looks plausible."""
-    defined = set(re.findall(r"^\s*(--[a-z0-9-]+)\s*:", read(TOKENS_CSS), re.M))
+    defined = set(re.findall(r"^\s*(--[a-z0-9-]+)\s*:", css(TOKENS_CSS), re.M))
     # Properties the components set on an element at runtime.
     for script in scripts():
-        defined.update(re.findall(r"setProperty\(\s*['\"](--[a-z0-9-]+)", read(script)))
+        defined.update(re.findall(r"setProperty\(\s*['\"](--[a-z0-9-]+)", js(script)))
 
     used = set()
     for sheet in stylesheets():
-        used.update(re.findall(r"var\(\s*(--[a-z0-9-]+)", without_comments(read(sheet))))
+        used.update(re.findall(r"var\(\s*(--[a-z0-9-]+)", css(sheet)))
 
     assert defined, "no custom properties found; the regex stopped matching"
     assert used - defined == set(), f"undefined custom properties: {sorted(used - defined)}"
@@ -388,7 +497,7 @@ def test_every_custom_property_used_is_actually_defined():
 
 def test_the_type_scale_has_at_most_six_sizes():
     """More than six and the hierarchy stops being a hierarchy."""
-    sizes = re.findall(r"^\s*(--text-[a-z0-9]+)\s*:", read(TOKENS_CSS), re.M)
+    sizes = re.findall(r"^\s*(--text-[a-z0-9]+)\s*:", css(TOKENS_CSS), re.M)
 
     assert 1 <= len(sizes) <= 6, f"{len(sizes)} font sizes: {sizes}"
 
@@ -418,15 +527,19 @@ def _milliseconds(value):
 
 
 def _rules(text):
-    """(selector, declarations) for every innermost block in ``text``."""
-    return re.findall(r"([^{}]+)\{([^{}]*)\}", without_comments(text))
+    """(selector, declarations) for every innermost block in ``text``.
+
+    Takes text that has ALREADY been through `css()`. Stripping again here
+    would be a second place the rule lives, which is the shape of the bug this
+    replaced."""
+    return re.findall(r"([^{}]+)\{([^{}]*)\}", text)
 
 
 def _declared_durations():
     """(milliseconds, declaration) for every duration in every stylesheet."""
     found = []
     for sheet in stylesheets():
-        for _selector, declarations in _rules(read(sheet)):
+        for _selector, declarations in _rules(css(sheet)):
             for declaration in declarations.split(";"):
                 for number, unit in DURATION.findall(declaration):
                     found.append(
@@ -448,7 +561,7 @@ def test_reduced_motion_is_respected_at_the_token_level():
     for a stylesheet which does not reduce motion at all is worse than none,
     because it reads like a check.
     """
-    body = read(TOKENS_CSS)
+    body = css(TOKENS_CSS)
 
     assert "@media (prefers-reduced-motion: reduce)" in body
     reduced = body[body.index("@media (prefers-reduced-motion: reduce)") :]
@@ -514,7 +627,7 @@ def test_there_is_a_visible_focus_ring(tokens):
     while removing the focus indicator from the whole application, which is the
     exact outcome the check is here to prevent.
     """
-    body = without_comments(read(APP_CSS))
+    body = css(APP_CSS)
 
     assert ":focus-visible" in body
     assert "--focus-ring" in body
@@ -533,7 +646,7 @@ def test_there_is_a_visible_focus_ring(tokens):
 def test_focus_is_never_removed_without_being_replaced():
     """`outline: none` with nothing in its place is the single commonest way a
     keyboard user is locked out of an interface."""
-    body = without_comments(read(APP_CSS))
+    body = css(APP_CSS)
     blocks = re.findall(r"([^{}]+)\{([^{}]*)\}", body)
 
     for selector, declarations in blocks:
@@ -575,7 +688,7 @@ def _from_hsl(hue, saturation, lightness):
 @pytest.fixture(scope="module")
 def tokens():
     return dict(
-        re.findall(r"^\s*(--[a-z0-9-]+)\s*:\s*([^;]+);", read(TOKENS_CSS), re.M)
+        re.findall(r"^\s*(--[a-z0-9-]+)\s*:\s*([^;]+);", css(TOKENS_CSS), re.M)
     )
 
 
@@ -859,7 +972,7 @@ def test_the_set_creator_status_line_cannot_be_scrolled_out_of_reach():
     SOURCE-TEXT check - it cannot lay anything out - and the behavioural half
     was done by hand against real Chrome and recorded in the PR description.
     """
-    body = without_comments(read(APP_CSS))
+    body = css(APP_CSS)
     match = re.search(r"\.setc__status\s*\{([^}]*)\}", body)
 
     assert match, "the Set Creator status rule is gone"
@@ -895,7 +1008,7 @@ def test_the_export_progress_block_cannot_be_scrolled_out_of_reach():
     is the defect the rule was written to fix. A guard a wrong value satisfies
     is worse than no guard, because it reads as coverage.
     """
-    body = without_comments(read(APP_CSS))
+    body = css(APP_CSS)
     match = re.search(r"\.exportv__progress\s*\{([^}]*)\}", body)
 
     assert match, "the Export progress rule is gone"
@@ -1181,19 +1294,13 @@ def test_the_drawer_renders_playlists_from_the_field_it_is_given():
 #: `/* ... */` and `// ...`, so a rule about what the CODE does is not tripped
 #: by a comment saying the code does not do it - which is exactly what
 #: drawer.js's header says about innerHTML.
-JS_COMMENT = re.compile(r"/\*.*?\*/|(?<![:\w])//[^\n]*", re.S)
-
 HTML_SINK = re.compile(r"\b(innerHTML|outerHTML|insertAdjacentHTML|document\.write)\b")
-
-
-def without_js_comments(text):
-    return JS_COMMENT.sub("", text)
 
 
 def test_the_comment_stripper_still_strips_something():
     """Guard the guard: a stripper that removed everything, or nothing, would
     make the check below vacuous in one direction or noisy in the other."""
-    stripped = without_js_comments(read(JS / "components" / "drawer.js"))
+    stripped = js(JS / "components" / "drawer.js")
 
     assert "innerHTML" not in stripped, "the drawer's own header is not being stripped"
     assert "export function mountDrawer" in stripped, "the stripper ate the code"
@@ -1212,7 +1319,7 @@ def test_no_component_ever_writes_html_as_a_string():
     """
     offenders = {}
     for script in scripts():
-        found = HTML_SINK.findall(without_js_comments(read(script)))
+        found = HTML_SINK.findall(js(script))
         if found:
             offenders[str(script.relative_to(JS))] = sorted(set(found))
 
@@ -1245,7 +1352,9 @@ def test_every_script_file_is_reachable_from_the_entry_module():
         if current in reachable or not current.is_file():
             continue
         reachable.add(current)
-        for target in re.findall(r"from\s+'([^']+)'", read(current)):
+        # Stripped: a commented-out `import` makes an orphaned module look
+        # reachable, which is the one thing this test exists to notice.
+        for target in re.findall(r"from\s+'([^']+)'", js(current)):
             queue.append((current.parent / target).resolve())
 
     orphans = sorted(str(path.relative_to(JS)) for path in set(scripts()) - reachable)
@@ -1267,7 +1376,7 @@ def test_every_mount_function_the_entry_module_imports_is_also_called():
     is the same hole ``test_no_component_ever_writes_html_as_a_string`` strips
     comments to avoid.
     """
-    body = without_js_comments(read(JS / "main.js"))
+    body = js(JS / "main.js")
 
     imported = set()
     for names in re.findall(r"import\s*\{([^}]*)\}\s*from", body):
@@ -1299,7 +1408,7 @@ def test_the_message_box_keeps_the_newlines_its_bodies_are_written_with():
     anything out. The rendered result was checked by hand and recorded in the
     PR description.
     """
-    body = without_comments(read(APP_CSS))
+    body = css(APP_CSS)
     match = re.search(r"\.message-box__message\s*\{([^}]*)\}", body)
 
     assert match, "the message-box body rule is gone"
@@ -1343,7 +1452,7 @@ def test_no_screen_renders_the_services_playlist_counter():
 
     offenders = {}
     for script in scanned:
-        body = without_comments(read(script))
+        body = js(script)
         body = re.sub(r"^\s*//.*$", "", body, flags=re.M)
         if "playlists_created" in body:
             offenders[script.name] = [
@@ -1372,7 +1481,7 @@ def test_the_camelot_colours_are_declared_on_the_pill_not_on_the_root():
     lightness difference still worked and made the result look intentional. It
     was caught by sampling pixels out of a screenshot, not by any assertion.
     """
-    body = read(TOKENS_CSS)
+    body = css(TOKENS_CSS)
     root_block = body[body.index(":root {") : body.index("\n}", body.index(":root {"))]
 
     leaked = [name for name in ("--camelot-bg", "--camelot-fg", "--camelot-edge")
