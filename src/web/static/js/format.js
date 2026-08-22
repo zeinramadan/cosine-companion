@@ -76,7 +76,10 @@ export function scoreBar(fraction, label) {
 
   const fill = document.createElement('div');
   fill.className = 'score__fill';
-  fill.style.width = `${(clamped * 100).toFixed(1)}%`;
+  /* A custom property the sheet consumes, not an inline width. The
+     stylesheet is the only place this application's geometry is
+     written - see test_no_script_puts_css_on_the_page_outside_the_stylesheet. */
+  fill.style.setProperty('--score', `${(clamped * 100).toFixed(1)}%`);
   track.append(fill);
 
   const value = document.createElement('span');

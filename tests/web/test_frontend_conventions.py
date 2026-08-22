@@ -3045,94 +3045,132 @@ def test_the_set_creator_status_line_cannot_be_scrolled_out_of_reach():
     assert _declares("background", r"^var\(\s*--surface", declarations), declarations
 
 
-#: Every way a script can put a declaration on an element without the
-#: stylesheet, as a pattern over stripped JS. `\1` is the property being
-#: written, so the message can name it.
-_INLINE_STYLE = (
-    re.compile(r"\.style\.([A-Za-z][\w-]*)\s*="),
-    re.compile(r"\.style\.setProperty\(\s*['\"]([^'\"]+)['\"]"),
-    re.compile(r"\.(cssText)\s*="),
-    re.compile(r"setAttribute\(\s*['\"](style)['\"]"),
+#: THE PRIMITIVES, not the write shapes. A script reaches the cascade through
+#: one of these words and there is no way round them: `style` covers the
+#: `style` property, the `style` ATTRIBUTE and a `<style>` element; `cssText`
+#: is the bulk write; `insertRule`/`deleteRule`/`adoptedStyleSheets` are the
+#: CSSOM.
+#:
+#: WRITTEN THIS WAY BECAUSE THE FIRST VERSION OF THIS CHECK WAS THE DEFECT
+#: THIS WHOLE ROUND IS ABOUT. It matched `.style.<name> =`,
+#: `.style.setProperty('<name>')`, `.cssText =` and `setAttribute('style')` -
+#: four shapes - and `el.style['position'] = 'static'`,
+#: `Object.assign(el.style, {position: 'static'})`, `const s = el.style; s.position = ...`,
+#: `setProperty('bot' + 'tom', ...)`, an injected `<style>` element,
+#: `adoptedStyleSheets` and `insertRule` all walked through it. Eight of nine
+#: spellings, in a check written to close a hole. The shapes are unbounded;
+#: the words are five.
+INLINE_STYLE_PRIMITIVES = ("style", "cssText", "insertRule", "deleteRule",
+                           "adoptedStyleSheets")
+
+#: The one permitted use, and it is a syntactic class rather than a named file
+#: or a named property: `setProperty` of a CUSTOM property. `--camelot-hue`,
+#: `--progress` and `--score` are per-element VALUES that the stylesheet then
+#: consumes - `.progress__fill { width: var(--progress, 0%); }` - so the
+#: DECLARATION still lives in app.css, which is what the checks above read.
+_STYLE_MENTION = re.compile(r"\b(" + "|".join(INLINE_STYLE_PRIMITIVES) + r")\b")
+_CUSTOM_PROPERTY_WRITE = re.compile(
+    r"\.style\.setProperty\(\s*(['\"])--[\w-]+\1\s*,"
 )
 
 
-def test_no_script_writes_the_geometry_the_stylesheet_is_checked_for():
-    """The boundary of the two checks above, closed rather than assumed.
+def test_no_script_puts_css_on_the_page_outside_the_stylesheet():
+    """The boundary of the two sticky checks, closed rather than assumed.
 
     `test_the_set_creator_status_line_...` and
-    `test_the_export_progress_block_...` read app.css and conclude that those
-    two blocks are stuck to the bottom of the scrollport. That conclusion holds
+    `test_the_export_progress_block_...` read app.css and conclude those two
+    blocks are stuck to the bottom of the scrollport. That conclusion holds
     only while the STYLESHEET is where their geometry is written. One line -
 
         progress.style.position = 'static';
 
     - beats every rule in the sheet, and no amount of care about the CSS would
-    have noticed: an inline style is not CSS source text and the sticky guard
-    reads CSS source text.
+    notice: an inline style is not CSS source text and the sticky guards read
+    CSS source text.
 
-    So no script writes any of them, by any route: a `.style.<name> =`, a
-    `setProperty`, a `cssText`, or a `style` attribute. The properties are
-    STICKY_PROPERTIES - the same tuple the sticky guard reads off the rule, so
-    this cannot drift away from what it is protecting.
+    So no script reaches the cascade at all, except by setting a custom
+    property that app.css consumes. FLAT, and refusing the five words rather
+    than a list of write shapes, because the shapes are unbounded and the
+    first version of this check proved it by missing eight of nine.
 
-    A custom property is allowed through `setProperty`, and that is not an
-    exemption for a file, it is the syntactic class `--*`: `--camelot-hue` and
-    `--progress` are per-element VALUES the stylesheet then consumes, so the
-    sheet is still where the declaration lives. `format.js` writing
-    `fill.style.width` is allowed too, and deliberately: `width` is not one of
-    the three properties anything here concludes anything from. If it ever
-    becomes one, adding it to STICKY_PROPERTIES turns this red at the same
-    moment, which is the point of deriving the list rather than writing it out.
+    What it costs, stated: `clipboard.js` styled its off-screen scratch
+    textarea inline and now uses a `.clipboard-scratch` class; `format.js`
+    wrote `fill.style.width` and now sets `--score`, which app.css consumes
+    exactly as it already consumed `--progress`. Both are the same rendering.
+    A component that genuinely needs to compute a length now writes a custom
+    property, which is one line and leaves the declaration in the sheet.
     """
     offences = []
     for script in scripts():
         body = js(script)
-        for pattern in _INLINE_STYLE:
-            for match in pattern.finditer(body):
-                written = match.group(1)
-                if written.startswith("--"):
+        for line_number, line in enumerate(body.splitlines(), start=1):
+            for match in _STYLE_MENTION.finditer(line):
+                if match.group(1) == "style" and _CUSTOM_PROPERTY_WRITE.search(line):
                     continue
-                if written in ("cssText", "style") or written in STICKY_PROPERTIES:
-                    offences.append(f"{script.name}: {' '.join(match.group().split())}")
+                offences.append(f"{script.name}:{line_number}: {' '.join(line.split())}")
+                break
 
     assert offences == [], (
-        "a script writes geometry the stylesheet is checked for:\n  "
+        "a script puts CSS on the page outside app.css:\n  "
         + "\n  ".join(offences)
-        + "\nThe sticky guards read app.css, and an inline style beats every rule "
-          "in it. Put the declaration in the sheet."
+        + "\nThe sticky guards read app.css, and anything here beats every rule "
+          "in it. Put the declaration in the sheet and set a custom property if "
+          "a value has to be computed."
     )
 
 
-def test_the_inline_style_check_would_catch_each_route_in():
-    """A rule nobody has seen fail is a rule nobody has seen work - and this
-    one has four patterns, so all four are exercised."""
-    caught = []
-    for source_text in (
-        "progress.style.position = 'static';",
-        "progress.style.setProperty('bottom', 'auto');",
-        "progress.style.cssText = 'position: static';",
-        "progress.setAttribute('style', 'position: static');",
-    ):
-        for pattern in _INLINE_STYLE:
-            match = pattern.search(source_text)
-            if match and (match.group(1) in STICKY_PROPERTIES
-                          or match.group(1) in ("cssText", "style")):
-                caught.append(source_text)
-                break
-    assert len(caught) == 4, f"only caught {caught}"
+#: Nine spellings of the same act. The first is the only one the shape-matching
+#: version of this check caught.
+INLINE_STYLE_ROUTES = [
+    ("the obvious one", "el.style.position = 'static';"),
+    ("bracket access", "el.style['position'] = 'static';"),
+    ("bracket access, computed", "el.style['posi' + 'tion'] = 'static';"),
+    ("Object.assign onto style", "Object.assign(el.style, { position: 'static' });"),
+    ("an alias of style", "const s = el.style;"),
+    ("setProperty with a built name", "el.style.setProperty('bot' + 'tom', 'auto');"),
+    ("a style attribute", "el.setAttribute('style', 'position: static');"),
+    ("cssText", "el.cssText = 'position: static';"),
+    ("an injected style element", "document.createElement('style');"),
+    ("adoptedStyleSheets", "document.adoptedStyleSheets = [sheet];"),
+    ("insertRule", "sheet.insertRule('.exportv__progress{position:static}');"),
+]
 
-    # ...and the two live, legitimate writes are NOT caught, or the check
-    # above is one a maintainer deletes rather than obeys.
-    for allowed in (
-        "element.style.setProperty('--camelot-hue', `${hue}deg`);",
-        "fill.style.width = `${percent}%`;",
-    ):
-        for pattern in _INLINE_STYLE:
-            match = pattern.search(allowed)
-            if match:
-                assert match.group(1).startswith("--") or match.group(1) not in STICKY_PROPERTIES, (
-                    f"{allowed} would be reported"
-                )
+
+@pytest.mark.parametrize(
+    "what,line", INLINE_STYLE_ROUTES, ids=[name for name, _ in INLINE_STYLE_ROUTES]
+)
+def test_every_route_to_the_cascade_is_reported(what, line):
+    """A rule nobody has seen fail is a rule nobody has seen work, and this
+    one has been wrong once already."""
+    assert _STYLE_MENTION.search(line), f"{what} is not reported"
+    assert not (
+        _STYLE_MENTION.search(line).group(1) == "style"
+        and _CUSTOM_PROPERTY_WRITE.search(line)
+    ), f"{what} was treated as a custom-property write"
+
+
+#: ...and the writes that are fine, or the check above is one a maintainer
+#: deletes rather than obeys. All three are live in the shipped scripts.
+CUSTOM_PROPERTY_WRITES = [
+    "element.style.setProperty('--camelot-hue', `${parsed.hue}deg`);",
+    "progressFill.style.setProperty('--progress', `${percent.toFixed(1)}%`);",
+    "fill.style.setProperty('--score', `${(clamped * 100).toFixed(1)}%`);",
+]
+
+
+@pytest.mark.parametrize("line", CUSTOM_PROPERTY_WRITES)
+def test_setting_a_custom_property_is_left_alone(line):
+    assert _CUSTOM_PROPERTY_WRITE.search(line), line
+
+
+def test_the_stylesheet_declares_what_those_custom_properties_feed():
+    """The other half of permitting them: a custom property is only "the
+    declaration still lives in app.css" if app.css actually consumes it."""
+    sheet = css(APP_CSS)
+    for name in ("--progress", "--score"):
+        assert re.search(rf"var\(\s*{re.escape(name)}\b", sheet), (
+            f"{name} is set by a script and read by no rule in app.css"
+        )
 
 
 def test_the_export_progress_block_cannot_be_scrolled_out_of_reach():

@@ -1152,7 +1152,10 @@ button {
 
 .score__fill {
   position: absolute;
+  /* `--score` is set per element by format.js; the width lives here, like
+     .progress__fill's. */
   inset: 0 auto 0 0;
+  width: var(--score, 0%);
   border-radius: var(--radius-pill);
   background: var(--gradient-score);
   transition: width var(--motion-base) var(--ease-out);
