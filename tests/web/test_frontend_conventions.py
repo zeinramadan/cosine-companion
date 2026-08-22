@@ -2911,6 +2911,96 @@ def test_the_set_creator_status_line_cannot_be_scrolled_out_of_reach():
     assert _declares("background", r"^var\(\s*--surface", declarations), declarations
 
 
+#: Every way a script can put a declaration on an element without the
+#: stylesheet, as a pattern over stripped JS. `\1` is the property being
+#: written, so the message can name it.
+_INLINE_STYLE = (
+    re.compile(r"\.style\.([A-Za-z][\w-]*)\s*="),
+    re.compile(r"\.style\.setProperty\(\s*['\"]([^'\"]+)['\"]"),
+    re.compile(r"\.(cssText)\s*="),
+    re.compile(r"setAttribute\(\s*['\"](style)['\"]"),
+)
+
+
+def test_no_script_writes_the_geometry_the_stylesheet_is_checked_for():
+    """The boundary of the two checks above, closed rather than assumed.
+
+    `test_the_set_creator_status_line_...` and
+    `test_the_export_progress_block_...` read app.css and conclude that those
+    two blocks are stuck to the bottom of the scrollport. That conclusion holds
+    only while the STYLESHEET is where their geometry is written. One line -
+
+        progress.style.position = 'static';
+
+    - beats every rule in the sheet, and no amount of care about the CSS would
+    have noticed: an inline style is not CSS source text and the sticky guard
+    reads CSS source text.
+
+    So no script writes any of them, by any route: a `.style.<name> =`, a
+    `setProperty`, a `cssText`, or a `style` attribute. The properties are
+    STICKY_PROPERTIES - the same tuple the sticky guard reads off the rule, so
+    this cannot drift away from what it is protecting.
+
+    A custom property is allowed through `setProperty`, and that is not an
+    exemption for a file, it is the syntactic class `--*`: `--camelot-hue` and
+    `--progress` are per-element VALUES the stylesheet then consumes, so the
+    sheet is still where the declaration lives. `format.js` writing
+    `fill.style.width` is allowed too, and deliberately: `width` is not one of
+    the three properties anything here concludes anything from. If it ever
+    becomes one, adding it to STICKY_PROPERTIES turns this red at the same
+    moment, which is the point of deriving the list rather than writing it out.
+    """
+    offences = []
+    for script in scripts():
+        body = js(script)
+        for pattern in _INLINE_STYLE:
+            for match in pattern.finditer(body):
+                written = match.group(1)
+                if written.startswith("--"):
+                    continue
+                if written in ("cssText", "style") or written in STICKY_PROPERTIES:
+                    offences.append(f"{script.name}: {' '.join(match.group().split())}")
+
+    assert offences == [], (
+        "a script writes geometry the stylesheet is checked for:\n  "
+        + "\n  ".join(offences)
+        + "\nThe sticky guards read app.css, and an inline style beats every rule "
+          "in it. Put the declaration in the sheet."
+    )
+
+
+def test_the_inline_style_check_would_catch_each_route_in():
+    """A rule nobody has seen fail is a rule nobody has seen work - and this
+    one has four patterns, so all four are exercised."""
+    caught = []
+    for source_text in (
+        "progress.style.position = 'static';",
+        "progress.style.setProperty('bottom', 'auto');",
+        "progress.style.cssText = 'position: static';",
+        "progress.setAttribute('style', 'position: static');",
+    ):
+        for pattern in _INLINE_STYLE:
+            match = pattern.search(source_text)
+            if match and (match.group(1) in STICKY_PROPERTIES
+                          or match.group(1) in ("cssText", "style")):
+                caught.append(source_text)
+                break
+    assert len(caught) == 4, f"only caught {caught}"
+
+    # ...and the two live, legitimate writes are NOT caught, or the check
+    # above is one a maintainer deletes rather than obeys.
+    for allowed in (
+        "element.style.setProperty('--camelot-hue', `${hue}deg`);",
+        "fill.style.width = `${percent}%`;",
+    ):
+        for pattern in _INLINE_STYLE:
+            match = pattern.search(allowed)
+            if match:
+                assert match.group(1).startswith("--") or match.group(1) not in STICKY_PROPERTIES, (
+                    f"{allowed} would be reported"
+                )
+
+
 def test_the_export_progress_block_cannot_be_scrolled_out_of_reach():
     """The same claim as the Set Creator status line, for the control that
     needs it most.

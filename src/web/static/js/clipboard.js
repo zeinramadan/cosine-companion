@@ -28,8 +28,11 @@ export async function copyToClipboard(text) {
   const scratch = document.createElement('textarea');
   scratch.value = text;
   scratch.setAttribute('readonly', '');
-  scratch.style.position = 'fixed';
-  scratch.style.opacity = '0';
+  /* Off-screen through a class rather than an inline style. The stylesheet is
+     the only place this application's geometry is written, which is what makes
+     the source-text checks over app.css complete rather than approximate - see
+     test_no_script_writes_the_geometry_the_stylesheet_is_checked_for. */
+  scratch.className = 'clipboard-scratch';
   document.body.append(scratch);
   scratch.select();
   let copied = false;
