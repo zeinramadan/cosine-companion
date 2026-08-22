@@ -82,7 +82,7 @@ button {
   height: 100vh;
 }
 
-.app[data-drawer="open"] {
+.app[data-drawer=open] {
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr) var(--drawer-width);
 }
 
@@ -153,7 +153,7 @@ button {
   color: var(--ink-primary);
 }
 
-.nav__item[aria-current="page"] {
+.nav__item[aria-current=page] {
   background: var(--surface-3);
   color: var(--ink-primary);
   font-weight: var(--weight-medium);
@@ -374,11 +374,11 @@ button {
   color: var(--ink-tertiary);
 }
 
-.settings__status[data-state="success"] {
+.settings__status[data-state=success] {
   color: var(--accent-2);
 }
 
-.settings__status[data-state="error"] {
+.settings__status[data-state=error] {
   color: var(--danger);
 }
 
@@ -490,7 +490,7 @@ button {
   background: var(--surface-3);
 }
 
-.anchors__row[aria-selected="true"] {
+.anchors__row[aria-selected=true] {
   background: var(--surface-4);
   border-color: var(--accent);
 }
@@ -512,7 +512,7 @@ button {
    fills the slot with an ordinary pick, so the row above the set would
    otherwise claim a position the set does not give it. The note carries the
    meaning on its own - colour is the second signal, not the only one. */
-.anchors__row[data-dropped="true"] {
+.anchors__row[data-dropped=true] {
   border-color: var(--danger);
 }
 
@@ -546,7 +546,7 @@ button {
 
 /* An anchor is the track the set was built AROUND, so it is the row that reads
    as fixed. The 🔒 says so too; this is a second signal, not the only one. */
-.setlist__row[data-anchor="true"] {
+.setlist__row[data-anchor=true] {
   background: var(--surface-3);
   border-color: var(--border-strong);
 }
@@ -703,11 +703,11 @@ button {
   font-size: var(--text-sm);
 }
 
-.exportv__info[data-tone="ok"] {
+.exportv__info[data-tone=ok] {
   color: var(--accent);
 }
 
-.exportv__info[data-tone="warn"] {
+.exportv__info[data-tone=warn] {
   color: var(--danger);
 }
 
@@ -852,11 +852,11 @@ button {
   font-size: var(--text-sm);
 }
 
-.track-selector__count[data-state="empty"] {
+.track-selector__count[data-state=empty] {
   color: var(--ink-tertiary);
 }
 
-.track-selector__count[data-state="chosen"] {
+.track-selector__count[data-state=chosen] {
   color: var(--accent);
 }
 
@@ -879,7 +879,7 @@ button {
 
 /* A row already in the export selection, prefixed `✓ ` (:934). The tick is the
    signal; this only quiets what has already been chosen. */
-.picker__option[data-already="true"] {
+.picker__option[data-already=true] {
   color: var(--ink-tertiary);
 }
 
@@ -1073,7 +1073,7 @@ button {
   background: var(--surface-2);
 }
 
-.picker__option[aria-selected="true"] {
+.picker__option[aria-selected=true] {
   background: var(--surface-4);
   border-color: var(--accent);
 }
@@ -1110,12 +1110,12 @@ button {
   white-space: nowrap;
 }
 
-.pill[data-mode="major"] {
+.pill[data-mode=major] {
   background: var(--camelot-bg-major);
   color: var(--camelot-fg-major);
 }
 
-.pill[data-unknown="true"] {
+.pill[data-unknown=true] {
   border-color: var(--border-subtle);
   background: var(--surface-3);
   color: var(--ink-tertiary);
@@ -1354,7 +1354,7 @@ button {
   transition: background var(--motion-fast) var(--ease-out);
 }
 
-.palette__option[aria-selected="true"] {
+.palette__option[aria-selected=true] {
   background: var(--surface-4);
 }
 
@@ -1675,11 +1675,11 @@ button {
   font-size: var(--text-sm);
 }
 
-.library__status[data-state="success"] {
+.library__status[data-state=success] {
   color: var(--accent-2);
 }
 
-.library__status[data-state="error"] {
+.library__status[data-state=error] {
   color: var(--danger);
 }
 
@@ -1714,7 +1714,7 @@ button {
   color: var(--ink-primary);
 }
 
-.library-row__option[aria-selected="true"] {
+.library-row__option[aria-selected=true] {
   background: var(--surface-4);
   color: var(--ink-primary);
 }
@@ -1843,7 +1843,7 @@ button {
   color: var(--ink-primary);
 }
 
-.segmented__option[aria-pressed="true"] {
+.segmented__option[aria-pressed=true] {
   background: var(--surface-4);
   color: var(--ink-primary);
   font-weight: var(--weight-medium);

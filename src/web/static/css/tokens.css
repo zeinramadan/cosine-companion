@@ -70,12 +70,21 @@
   /* -- type --------------------------------------------------------------
    * Six sizes, no more. The system stack first: on macOS this resolves to SF,
    * which is what every other native surface uses.
+   *
+   * The multi-word family names are UNQUOTED, which CSS allows: a family name
+   * is either a string or a sequence of identifiers, and `SF Pro Text` is the
+   * second. It is written that way on purpose. A stylesheet string can contain
+   * a `;` or a `}`, and neither the declaration splitter nor the rule splitter
+   * in tests/web/test_frontend_conventions.py can see inside one - so the
+   * reader there REFUSES a sheet that contains a quote rather than splitting
+   * it wrongly. Adding one back here is a deliberate act with a loud failure
+   * attached, not an accident.
    */
   --font-sans:
-    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
+    -apple-system, BlinkMacSystemFont, SF Pro Text, Helvetica Neue,
     Helvetica, Arial, sans-serif;
   --font-mono:
-    ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    ui-monospace, SF Mono, SFMono-Regular, Menlo, Consolas, monospace;
 
   --text-xs: 0.6875rem;   /* 11px - eyebrow labels, pill text */
   --text-sm: 0.8125rem;   /* 13px - metadata, secondary rows */
