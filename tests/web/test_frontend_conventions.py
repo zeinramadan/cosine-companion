@@ -76,6 +76,46 @@ class _CannotModel(AssertionError):
 #: `{`, a whole fake ruleset.
 _QUOTE = re.compile(r"""["']""")
 
+#: CSS WHITESPACE IS FIVE CHARACTERS: space, tab, line feed, form feed and
+#: carriage return. Python's `\s` is a much larger set on a `str` - it also
+#: matches U+000B, U+001C-U+001F, U+0085, U+00A0, U+3000 and every other
+#: Unicode space - and every anchored lookup in this file is built out of
+#: `\s*`. So
+#:
+#:     .exportv__progress {<U+00A0>position: sticky; ... }
+#:
+#: reads here as a declaration and does not exist in the browser: an
+#: identifier cannot start with U+00A0, so the declaration is invalid, it is
+#: dropped, the initial `auto` applies and the block scrolls out of reach.
+#: Five different characters did that, silently, with the guard green.
+#:
+#: The pattern is the AGREED SET, written as a character class rather than as
+#: a list of the ways to disagree - the disagreements are a Unicode table and
+#: the agreement is four control characters and printable ASCII. It also
+#: forecloses everything else non-ASCII does to a text comparison at the same
+#: time: a homoglyph class name, a zero-width joiner inside a selector, an
+#: RTL override. None of those is enumerable and none of them survives this.
+#:
+#: Comments are stripped before this runs, so the `§`, `·`, `–` and emoji in
+#: the two sheets' prose are unaffected; what is left has to be ASCII.
+_ALIEN_CHARACTER = re.compile(r"[^\t\n\f\r\x20-\x7e]")
+
+#: An UNTERMINATED comment runs to the end of the stylesheet in CSS, and
+#: matches nothing at all in `COMMENT`, whose `.*?\*/` needs a terminator. So
+#:
+#:     /* a browser ignores everything from here { }
+#:     .exportv__progress { position: sticky; ... }
+#:
+#: leaves the rule live for this file and commented out for the browser. The
+#: `{ }` is what makes it work: it resets the rule splitter so the selector
+#: after it comes out clean. Without the brace pair the leftover comment text
+#: lands in the selector and the rule is reported unevaluated, which is why
+#: this looked safe.
+#:
+#: Anything left of a comment delimiter after stripping means the stripper and
+#: the browser disagree about where the source ends, so it is refused.
+_COMMENT_REMNANT = re.compile(r"/\*|\*/")
+
 #: The at-rules these stylesheets are allowed to use, which is the same thing
 #: as the at-rules this file models.
 #:
@@ -174,14 +214,21 @@ def _splittable(text, where=None):
     trade, taken deliberately - see the note in tokens.css, where the font
     stacks are written as identifier sequences for exactly this reason.
 
-    AND THE SAME REFUSAL, three more times, for three more things a browser
-    reads differently from a regex. See `MODELLED_AT_RULES` (an `@import` is a
-    stylesheet this file never opens and a `@layer` is a cascade it cannot
-    rank), `_ESCAPE` (`.exportv\_\_progress` is the same class as
-    `.exportv__progress`) and `_MIXED_CASE_PROPERTY` (`POSITION` is the same
-    property as `position`). Each was found by probing for it rather than
-    reported, each was green, and each is one line to refuse and a grammar to
-    parse.
+    AND THE SAME REFUSAL, five more times, for five more things a browser
+    reads differently from a regex. Each was found by probing for it after the
+    two above were reported, each was green when it was found, and each is one
+    line to refuse and a grammar to parse:
+
+      * `MODELLED_AT_RULES` - an `@import` is a stylesheet this file never
+        opens and a `@layer` is a cascade it cannot rank;
+      * `_ESCAPE` - `.exportv\_\_progress` is the same class as
+        `.exportv__progress` and shares almost no characters with it;
+      * `_MIXED_CASE_PROPERTY` - `POSITION` is the same property as `position`;
+      * `_ALIEN_CHARACTER` - Python's `\s` matches characters CSS does not
+        treat as whitespace, so a U+00A0 makes a declaration that is live here
+        and invalid there;
+      * `_COMMENT_REMNANT` - an unterminated comment ends the sheet for the
+        browser and ends nothing for `COMMENT`.
     """
     unmodelled = [
         (match.group(1), text.count("\n", 0, match.start()) + 1)
@@ -196,6 +243,30 @@ def _splittable(text, where=None):
             f"`@layer` reorders the cascade underneath it, so neither can be read "
             f"past - and an at-rule it has never been taught is in the same "
             f"position. Add it to MODELLED_AT_RULES with the handling it needs."
+        )
+
+    alien = _ALIEN_CHARACTER.search(text)
+    if alien is not None:
+        line = text.count("\n", 0, alien.start()) + 1
+        raise _CannotModel(
+            f"{where or 'this CSS'} contains U+{ord(alien.group()):04X} (line "
+            f"{line}), which is not a character CSS and this file agree about. "
+            f"CSS whitespace is five characters and Python's `\\s` matches many "
+            f"more, so a U+00A0 before a property name reads as a declaration "
+            f"here and is invalid - dropped - in the browser. Outside comments "
+            f"these stylesheets are ASCII."
+        )
+
+    remnant = _COMMENT_REMNANT.search(text)
+    if remnant is not None:
+        line = text.count("\n", 0, remnant.start()) + 1
+        raise _CannotModel(
+            f"{where or 'this CSS'} still contains `{remnant.group()}` after its "
+            f"comments were stripped (line {line}), so the stripper and the "
+            f"browser disagree about where this sheet ends. An unterminated "
+            f"comment runs to the end of the file in CSS and matches nothing in "
+            f"`COMMENT`, which leaves every rule after it live here and absent "
+            f"there. Close the comment."
         )
 
     escape = _ESCAPE.search(text)
@@ -1769,6 +1840,87 @@ def test_the_shipped_sheets_are_spelled_the_way_this_file_reads_them():
     # refusal turns down legitimate CSS, which is the one way a loud guard
     # gets deleted rather than fixed.
     assert _MIXED_CASE_PROPERTY.search(":root { --Motion-Fast: 1ms; }") is None
+
+
+#: Sheets a browser and this file's regexes read differently because of a
+#: single CHARACTER. Both rows below were found by probing after the two
+#: reported evasions were fixed, and both were green.
+DISAGREEING_CHARACTERS = [
+    # CSS whitespace is space, tab, LF, FF and CR. Python's `\s` is much
+    # larger, and every anchored lookup here is built out of `\s*`, so each of
+    # these reads as a declaration and is invalid - dropped - in the browser.
+    ("a no-break space", "\u00a0"),
+    ("an ideographic space", "\u3000"),
+    ("a vertical tab", "\u000b"),
+    ("a next-line control", "\u0085"),
+    ("a file separator control", "\u001c"),
+    # Not whitespace at all, but the same class of defect: a text comparison
+    # that a character makes wrong.
+    ("a zero-width space", "\u200b"),
+]
+
+
+@pytest.mark.parametrize(
+    "what,character", DISAGREEING_CHARACTERS,
+    ids=[name for name, _ in DISAGREEING_CHARACTERS],
+)
+def test_a_character_css_and_this_file_disagree_about_is_refused(what, character):
+    sheet = (".exportv__progress {" + character + "position: sticky;"
+             + character + "bottom: 0; }")
+    with pytest.raises(_CannotModel) as refusal:
+        _rule(sheet, ".exportv__progress", STICKY_PROPERTIES, where="app.css")
+    assert "U+" in str(refusal.value), refusal.value
+
+
+UNTERMINATED_COMMENTS = [
+    # The brace pair is what makes this one work: it resets the rule splitter
+    # so the selector after it comes out clean. Without it the leftover comment
+    # text lands in the selector and the rule is merely unevaluated, which is
+    # why the plain spelling looked safe.
+    ("with a brace pair to reset the splitter",
+     "/* a browser ignores everything from here { }\n"
+     ".exportv__progress { position: sticky; bottom: 0; }"),
+    ("plain",
+     "/* a browser ignores everything from here\n"
+     ".exportv__progress { position: sticky; bottom: 0; }"),
+    ("a stray closer",
+     ".a { color: red; } */\n.exportv__progress { position: sticky; bottom: 0; }"),
+]
+
+
+@pytest.mark.parametrize(
+    "what,sheet", UNTERMINATED_COMMENTS, ids=[name for name, _ in UNTERMINATED_COMMENTS]
+)
+def test_a_comment_the_stripper_could_not_close_is_refused(what, sheet):
+    """An unterminated comment runs to the end of the stylesheet in CSS and
+    matches nothing in `COMMENT`, so every rule after it is live here and
+    absent there - the exact inversion of the commented-out-declaration bug
+    this file's readers exist to fix."""
+    with pytest.raises(_CannotModel) as refusal:
+        _rule(without_comments(sheet), ".exportv__progress", STICKY_PROPERTIES,
+              where="app.css")
+    assert "comment" in str(refusal.value).lower(), refusal.value
+
+
+def test_the_shipped_sheets_are_ascii_with_every_comment_closed():
+    """The floor under both refusals above.
+
+    The `§`, `·`, `–` and emoji in these sheets' prose are all inside
+    comments, which are stripped before any of this runs - so the refusal
+    costs the maintainer nothing and catches every character that would make a
+    text comparison lie.
+    """
+    assert stylesheets(), "no stylesheets found at all"
+    for sheet in stylesheets():
+        body = css(sheet)
+        assert _ALIEN_CHARACTER.search(body) is None, f"{sheet.name} is not ASCII"
+        assert _COMMENT_REMNANT.search(body) is None, f"{sheet.name} has an open comment"
+    # ...and both patterns still match something.
+    assert _ALIEN_CHARACTER.search(".a { \u00a0color: red; }") is not None
+    assert _COMMENT_REMNANT.search(".a { } /* open") is not None
+    # Comments themselves may say whatever they like: the reader strips them
+    # first, and asserting otherwise would make this a prose rule.
+    assert _ALIEN_CHARACTER.search(without_comments("/* \u00a7 2.6 - \u2013 */\n.a { b: c; }")) is None
 
 
 #: At-rules the reader turns down, and what each of them would otherwise hide.
