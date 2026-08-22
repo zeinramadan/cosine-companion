@@ -576,6 +576,11 @@ DECOY_DECLARATIONS = [
     # value can run over a line break, and the tail of one is not a new
     # declaration.
     ("--fast", ":root { --font-sans:\n    --fast: 1ms; }"),
+    # A `--name:` inside a VALUE declares nothing. Deleting the boundary from
+    # `_custom_properties` left this file green until this row existed: the
+    # name pattern is greedy, so `--not--text-xs` is captured whole either way
+    # and none of the rows above can tell the two apart there.
+    ("--decoy", '.x { content: "--decoy: 1px"; }'),
 ]
 
 
@@ -665,6 +670,46 @@ def test_no_token_name_ends_in_another_token_name():
         f"these names end in another declared name: {ambiguous} - a lookup for "
         f"the shorter one can be answered by the longer one's declaration"
     )
+
+
+def test_a_block_ends_where_its_braces_end():
+    """The region-shaped half of the same defect, on the one input the real
+    sheet cannot supply.
+
+    The reduced-motion check used to read `body[body.index(query):]` - every
+    byte from the query to the end of the file - so a token declared AFTER the
+    block, applying unconditionally, satisfied a check scoped inside it. In
+    tokens.css that block happens to be last, so the shipped sheet cannot tell
+    a bounded read from an unbounded one and every mutation of the bound
+    stayed green until this test existed.
+    """
+    sheet = (
+        "@media (prefers-reduced-motion: reduce) {\n"
+        "  :root { --motion-fast: 1ms; }\n"
+        "}\n"
+        ":root { --motion-base: 170ms; }\n"
+    )
+    query = REDUCED_MOTION_QUERY.search(sheet)
+    assert query
+
+    reduced = _block_body(query, sheet)
+
+    assert _declaration("--motion-fast", reduced) == "1ms"
+    assert _declaration("--motion-base", reduced) is None, (
+        "a declaration written after the block was read as though it were inside it"
+    )
+
+
+def test_a_media_query_that_only_begins_like_the_preference_is_not_it():
+    """`@media (prefers-reduced-motion: reduce) and (min-width: 99999px)`
+    CONTAINS the text this used to look for and applies to nobody, so the query
+    is matched up to the brace that opens its block."""
+    assert REDUCED_MOTION_QUERY.search("@media (prefers-reduced-motion: reduce) {}")
+    assert REDUCED_MOTION_QUERY.search("@media(prefers-reduced-motion:reduce){}")
+    assert not REDUCED_MOTION_QUERY.search(
+        "@media (prefers-reduced-motion: reduce) and (min-width: 99999px) {}"
+    )
+    assert not REDUCED_MOTION_QUERY.search("@media (prefers-reduced-motion: no-preference) {}")
 
 
 def test_a_commented_out_custom_property_is_not_a_declaration():
