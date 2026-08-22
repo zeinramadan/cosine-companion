@@ -164,10 +164,13 @@ def _declaration(name, text):
     is the single exception and strips for itself, because it is handed a sheet
     as a STRING by callers that cannot be made to strip first.
     """
-    match = re.search(
+    # The LAST one, which is the cascade. `re.search` returns the first, so a
+    # rule that declared `bottom` twice - or two rules merged by `_rule` - was
+    # read off the declaration the browser discards.
+    declared = re.findall(
         rf"{_DECLARATION_BOUNDARY}{re.escape(name)}\s*:\s*{_DECLARATION_VALUE}", text
     )
-    return match.group(1).strip() if match else None
+    return declared[-1].strip() if declared else None
 
 
 def _declares(name, value_pattern, text):
@@ -515,6 +518,62 @@ def assert_sticks_to_the_bottom(rule_name, declarations):
     )
 
 
+def _mentions(selector, entry):
+    """Whether one selector in a rule's list names `selector` at all.
+
+    At a name boundary: `.setc__status-line` is a DIFFERENT class and not a
+    mention, while `.never-used.setc__status`, `.setc .setc__status` and
+    `.setc__status[hidden]` each name it.
+    """
+    return re.search(rf"{re.escape(selector)}(?![\w-])", entry) is not None
+
+
+def _rule(body, selector, properties):
+    r"""(declarations, rules this cannot evaluate) for exactly `selector`.
+
+    THE FIFTH PLACE THIS FILE MATCHED A NAME AS A SUBSTRING. The three rules
+    it guards were found with `re.search(rf"\.{name}\s*\{{([^}}]*)\}}")`, and
+    a selector is not a substring any more than a declaration is:
+
+      * `.never-used.setc__status { position: sticky; bottom: -2rem; }`
+        satisfied that search while applying only to an element carrying both
+        classes - so the status line a user sees is in normal flow and the
+        guard reports it stuck;
+      * so did `.setc .setc__status`, which needs an ancestor;
+      * and `re.search` is the FIRST match, so a second
+        `.setc__status { position: static; }` further down the sheet undid the
+        first one invisibly. The cascade is not "the first rule wins".
+
+    So a rule counts when `selector` is one whole entry in its selector LIST,
+    and EVERY such rule is merged in document order.
+
+    `properties` is what the caller is about to assert on. Any OTHER rule that
+    names this selector and declares one of them is handed back rather than
+    ignored: whether it applies needs a selector engine and a document, which
+    this does not have, and passing over what it cannot evaluate is the defect
+    rather than the fix. Rules that name the selector and declare none of them
+    - `.exportv__progress[hidden] { display: none; }` - change no answer here
+    and are not reported.
+    """
+    applies, unevaluated = [], []
+    for selector_text, declarations in _rules(body):
+        entries = [entry.strip() for entry in selector_text.split(",")]
+        if selector in entries:
+            applies.append(" ".join(declarations.split()))
+        elif any(_mentions(selector, entry) for entry in entries):
+            clashing = sorted(
+                name for name in properties if _declaration(name, declarations) is not None
+            )
+            if clashing:
+                unevaluated.append((" ".join(selector_text.split()), clashing))
+    return "; ".join(applies), unevaluated
+
+
+#: What `assert_sticks_to_the_bottom` and its callers read off a rule, so that
+#: another rule redeclaring one of them cannot go unnoticed.
+STICKY_PROPERTIES = ("position", "bottom", "background")
+
+
 def stylesheets():
     return sorted(CSS.glob("*.css"))
 
@@ -828,6 +887,10 @@ REAL_DECLARATIONS = [
     ("bottom", "bottom: 0", "0"),
     ("--motion-fast", "@media (prefers-reduced-motion: reduce) {\n"
                       "  :root { --motion-fast: 1ms; }\n}", "1ms"),
+    # The cascade. `re.search` returns the FIRST declaration, and the browser
+    # keeps the last.
+    ("bottom", "bottom: 1px; bottom: 2px;", "2px"),
+    ("position", ".x { position: sticky; } .x { position: static; }", "static"),
 ]
 
 
@@ -882,6 +945,85 @@ def test_no_token_name_ends_in_another_token_name():
         f"these names end in another declared name: {ambiguous} - a lookup for "
         f"the shorter one can be answered by the longer one's declaration"
     )
+
+
+#: Rules that NAME `.setc__status` without applying to a bare one. Each
+#: satisfied the `re.search(r"\.setc__status\s*\{...")` these replace.
+SELECTOR_DECOYS = [
+    ("a compound selector", ".never-used.setc__status { position: sticky; bottom: -2rem; }"),
+    ("a descendant selector", ".setc .setc__status { position: sticky; bottom: -2rem; }"),
+    ("an attribute selector", ".setc__status[hidden] { position: sticky; bottom: -2rem; }"),
+    ("a pseudo-class", ".setc__status:hover { position: sticky; bottom: -2rem; }"),
+    ("a child of it", ".setc__status > b { position: sticky; bottom: -2rem; }"),
+]
+
+
+@pytest.mark.parametrize("what,sheet", SELECTOR_DECOYS, ids=[n for n, _ in SELECTOR_DECOYS])
+def test_a_rule_that_only_names_a_selector_is_not_that_rule(what, sheet):
+    """The same defect as the declaration boundary, one level up.
+
+    None of these apply to an element that merely carries the class, so a
+    guard reading them as its rule reports a status line stuck to the bottom
+    of a scrollport it is in fact scrolling out of.
+    """
+    declarations, unevaluated = _rule(sheet, ".setc__status", STICKY_PROPERTIES)
+
+    assert declarations == "", f"{what} was read as the rule for .setc__status"
+    # ...and reported rather than passed over, because whether it applies to
+    # the element in front of the user is not something this can decide.
+    assert unevaluated, f"{what} was ignored instead of reported"
+
+
+def test_a_class_whose_name_merely_starts_the_same_is_a_different_class():
+    """The other direction: `.setc__status-line` is not `.setc__status`, and
+    reporting it would make the guard fail on legitimate CSS."""
+    declarations, unevaluated = _rule(
+        ".setc__status-line { position: static; }", ".setc__status", STICKY_PROPERTIES
+    )
+
+    assert declarations == ""
+    assert unevaluated == []
+
+
+def test_a_rule_that_names_the_selector_and_changes_nothing_is_not_reported():
+    """`.exportv__progress[hidden] { display: none; }` ships in app.css and
+    redeclares none of what the sticky check reads."""
+    _declarations, unevaluated = _rule(
+        ".x[hidden] { display: none; }", ".x", STICKY_PROPERTIES
+    )
+
+    assert unevaluated == []
+
+
+def test_every_rule_for_a_selector_is_read_and_the_last_one_wins():
+    """The cascade, which `re.search` cannot see: it returns the FIRST rule, so
+    a later one undoing it was invisible.
+
+    Both halves matter. A second rule that undoes the offset has to be caught,
+    and a second rule that SUPPLIES it has to count - reading only the first
+    would be a false red on a perfectly ordinary two-rule sheet.
+    """
+    undone = (
+        ".setc__status { position: sticky; bottom: -2rem; }\n"
+        ".setc__status { position: static; }\n"
+    )
+    declarations, unevaluated = _rule(undone, ".setc__status", STICKY_PROPERTIES)
+
+    assert unevaluated == []
+    assert _declaration("position", declarations) == "static", (
+        "the later rule was not read, so a rule that undoes the offset is invisible"
+    )
+    with pytest.raises(AssertionError) as raised:
+        assert_sticks_to_the_bottom("the status line", declarations)
+    assert "back in the normal flow" in str(raised.value)
+
+    supplied = (
+        ".setc__status { position: sticky; }\n"
+        ".a, .setc__status { bottom: calc(var(--space-6) * -1); }\n"
+    )
+    declarations, _unevaluated = _rule(supplied, ".setc__status", STICKY_PROPERTIES)
+
+    assert_sticks_to_the_bottom("the status line", declarations)
 
 
 def test_a_block_ends_where_its_braces_end():
@@ -1528,10 +1670,12 @@ def test_the_set_creator_status_line_cannot_be_scrolled_out_of_reach():
     was done by hand against real Chrome and recorded in the PR description.
     """
     body = css(APP_CSS)
-    match = re.search(r"\.setc__status\s*\{([^}]*)\}", body)
+    declarations, unevaluated = _rule(body, ".setc__status", STICKY_PROPERTIES)
 
-    assert match, "the Set Creator status rule is gone"
-    declarations = " ".join(match.group(1).split())
+    assert declarations, "the Set Creator status rule is gone"
+    assert unevaluated == [], (
+        f"another rule naming .setc__status redeclares what this checks: {unevaluated}"
+    )
     # By value - `bottom: auto` passed the presence check this used to make,
     # and means the status line scrolls away. Same claim, same guard as the
     # Export progress block below.
@@ -1564,10 +1708,12 @@ def test_the_export_progress_block_cannot_be_scrolled_out_of_reach():
     is worse than no guard, because it reads as coverage.
     """
     body = css(APP_CSS)
-    match = re.search(r"\.exportv__progress\s*\{([^}]*)\}", body)
+    declarations, unevaluated = _rule(body, ".exportv__progress", STICKY_PROPERTIES)
 
-    assert match, "the Export progress rule is gone"
-    declarations = " ".join(match.group(1).split())
+    assert declarations, "the Export progress rule is gone"
+    assert unevaluated == [], (
+        f"another rule naming .exportv__progress redeclares what this checks: {unevaluated}"
+    )
 
     assert_sticks_to_the_bottom("the progress block", declarations)
     # Opaque, or the rows scrolling under it read through it.
@@ -1964,11 +2110,14 @@ def test_the_message_box_keeps_the_newlines_its_bodies_are_written_with():
     PR description.
     """
     body = css(APP_CSS)
-    match = re.search(r"\.message-box__message\s*\{([^}]*)\}", body)
+    declarations, unevaluated = _rule(body, ".message-box__message", ("white-space",))
 
-    assert match, "the message-box body rule is gone"
-    assert _declares("white-space", r"^pre-line\b", match.group(1)), (
-        f"the message box collapses its newlines: {' '.join(match.group(1).split())}"
+    assert declarations, "the message-box body rule is gone"
+    assert unevaluated == [], (
+        f"another rule naming .message-box__message redeclares white-space: {unevaluated}"
+    )
+    assert _declares("white-space", r"^pre-line\b", declarations), (
+        f"the message box collapses its newlines: {declarations}"
     )
 
 
