@@ -810,55 +810,158 @@ def scripts():
 
 THIS_FILE = Path(__file__).resolve()
 
-#: The four readers that make a source file look the way a browser sees it,
-#: plus `read`, which is the only thing in this file that touches the
-#: filesystem. Inside their definitions a raw read is what they ARE; anywhere
-#: else it is the defect below.
+
+def own_source():
+    """This file's own text, raw, for the AST scan below to parse.
+
+    A REGISTERED READER rather than an exemption. The scan used to special-case
+    `read(THIS_FILE)` at the call site - one shape, matched exactly - and the
+    lesson of every round on this file is that a named door in a rule beats a
+    hole in it. There is nothing to strip here: this is Python, parsed as
+    Python, not source a browser ever sees.
+    """
+    return read(THIS_FILE)
+
+#: The readers that make a source file look the way a browser sees it, plus
+#: `read`, which is the only thing in this file that touches the filesystem,
+#: plus `own_source`, which is how this file gets its own text to parse.
+#: Inside their definitions a raw read is what they ARE; anywhere else it is
+#: the defect below.
 #:
-#: This is a closed set of five functions at the top of one file, not an open
-#: set of spellings. A sixth reader added without registering it here does not
-#: slip through - the `read` in its body is reported, loudly, as an
-#: unclassified raw read.
-READER_DEFINITIONS = ("read", "source", "css", "js", "html")
+#: This is a closed set of six functions at the top of one file, not an open
+#: set of spellings. A seventh reader added without registering it here does
+#: not slip through - the `read` in its body is reported, loudly, as an
+#: unclassified raw read. Only a MODULE-LEVEL `def` counts: a `def css(path)`
+#: written inside a test body is not this file's stylesheet reader, it is a
+#: local function that happens to share its name, and treating it as one is
+#: how a raw read hid inside a reader's name in round 6.
+READER_DEFINITIONS = ("read", "own_source", "source", "css", "js", "html")
 
-#: Names that get bytes off disk. `read` is this file's own; `open` is the
-#: builtin.
-RAW_READ_NAMES = ("read", "open")
+#: EVERY WAY OF GETTING BYTES OFF DISK, as a name or as an attribute. This is
+#: the inversion round 6 forced, and the direction matters more than the
+#: contents.
+#:
+#: The scan this replaces classified the SHAPE of a call - "a call to `read`",
+#: "a call whose function is an attribute named `read_text`" - and every round
+#: found a new shape it did not model. `UNSTRIPPED = Path.read_text` is not a
+#: call at all, so nothing about a call site could catch it;
+#: `linecache.getlines` is a call to an attribute nobody had listed. Shapes are
+#: unbounded. There is no finite list of them, and PR #24 and this one have
+#: between them spent nine rounds proving it.
+#:
+#: PRIMITIVES are not unbounded. A file's bytes reach Python through a small,
+#: nameable set of functions, and every one of them has to be SPELLED at the
+#: point it is used - so `UNSTRIPPED = Path.read_text` is caught at the
+#: ATTRIBUTE, before there is a call to have a shape at all.
+#:
+#: Refused as a NAME or as an ATTRIBUTE, wherever either appears: assigned,
+#: called, passed, put in a dict, defaulted into a signature, or merely
+#: mentioned. Not "reported unless the scan can follow it" - REPORTED.
+READ_PRIMITIVES = (
+    # builtins, io, codecs, gzip, tokenize, os and pathlib all spell it `open`
+    "open",
+    "fdopen",
+    # this file's own reader, and every file object
+    "read",
+    "readline",
+    "readlines",
+    "readinto",
+    # pathlib, importlib.resources
+    "read_text",
+    "read_bytes",
+    "read_binary",
+    # linecache - the one round 6 reported - and its singular
+    "getline",
+    "getlines",
+    # pkgutil, inspect
+    "get_data",
+    "getsource",
+    "getsourcelines",
+    "findsource",
+    # mmap, numpy
+    "mmap",
+    "loadtxt",
+    "genfromtxt",
+    "fromfile",
+)
 
-#: ...and the same thing reached as an attribute, which is how `pathlib`,
-#: `io`, `codecs` and `builtins` all spell it.
-RAW_READ_ATTRIBUTES = ("read_text", "read_bytes", "read", "open")
+#: Names that do not read a file themselves but hand out something that can,
+#: so a scan reading source text cannot say what happens next. Refused as
+#: NAMES only: `re.compile` is an attribute and is fine, a bare `compile(...)`
+#: is the builtin and is not.
+#:
+#: This set is what makes the one above hold. Every read primitive except the
+#: builtin `open` and the methods on a `Path` needs an IMPORT to reach, and
+#: `test_this_file_imports_nothing_that_can_reach_a_reader` closes that door;
+#: these are the builtins that get to a module or an attribute without one.
+INDIRECTION_NAMES = (
+    "__import__",
+    "__builtins__",
+    "eval",
+    "exec",
+    "compile",
+    "getattr",
+    "globals",
+    "locals",
+    "vars",
+    "input",
+)
 
 #: Calls that hand back stripped source. A call to one of these is fine
 #: wherever it appears and whatever path it is given.
 STRIPPING_READERS = ("source", "css", "js", "html")
 
+#: What this file is allowed to import, at any depth. This list is the closure
+#: argument under `READ_PRIMITIVES`: with nothing else importable the only
+#: names in scope are the builtins, these five modules and this file's own
+#: definitions - and of those, the only things that reach a file's bytes are
+#: the builtin `open` and the methods on a `pathlib.Path`, every one of which
+#: is a primitive above.
+#:
+#: `linecache`, `io`, `codecs`, `os`, `subprocess`, `fileinput`, `pkgutil`,
+#: `inspect`, `mmap` and `importlib` are each a way to read a file that no
+#: list of call shapes would have caught, and this one line forecloses all of
+#: them at once.
+PERMITTED_IMPORTS = ("ast", "colorsys", "re", "pathlib", "pytest")
+
 
 def _reads(tree):
     """Every read of a source file in `tree`, as (stripped, raw).
 
-    STRUCTURAL, and deliberately the other way round from the scan it
-    replaces. That one recognised five variable NAMES - `TOKENS_CSS`,
-    `APP_CSS`, `sheet`, `script`, `current` - and passed everything else in
-    silence, so `read(JS / "format.js")`, `read(JS / "modal.js")`,
-    `read(JS / "components" / "drawer.js")` and `read(INDEX_HTML)` were all
-    invisible to it. The space of ways to spell a path is unbounded, so a list
-    of spellings always loses; PR #24 spent six rounds proving that.
+    STRUCTURAL, and INVERTED - it looks for read primitives rather than for
+    call shapes. `READ_PRIMITIVES` says why that swap is the whole point.
 
-    So the path is not classified at all. The READER is. Every way of getting
-    bytes off disk is a violation unless it is `read(THIS_FILE)` - this file's
-    own source, which is what is being parsed here - or sits inside one of the
-    five reader definitions. A composed path, a path bound to a new name, an
-    alias of `read`, a bare `Path.read_text()`, an `open()` and a new
-    raw-reading helper are all reported for the same reason and without the
-    scan needing to understand any of them.
+    Three rules, and each was a hole in round 6 before it was a rule:
 
-    Nothing is skipped for being unrecognised. A reference to `read` that is
-    not a direct call - an alias, a dict entry, an argument passed to
-    something else - is reported as such, because the scan cannot follow it
-    and a scan that silently passes what it cannot follow is the bug, not the
-    fix.
+      * a primitive is refused wherever it is SPELLED, as a Name or as an
+        Attribute, whether or not it is being called. `UNSTRIPPED =
+        Path.read_text` then `UNSTRIPPED(APP_CSS, encoding="utf-8")` was a
+        real raw read that passed in silence, because neither line is a call
+        shape the old scan modelled;
+      * only a MODULE-LEVEL `def` whose name is registered is a reader. A
+        nested `def css(path): return path.read_text()` inside a test used to
+        turn its whole enclosing body into reader territory just by being
+        named `css`;
+      * a function's DECORATORS, ARGUMENT DEFAULTS and ANNOTATIONS are
+        evaluated where the `def` is written, not where its body runs, so they
+        are visited OUTSIDE the reader. `def css(path, _raw=APP_CSS.read_text())`
+        is a raw read at module scope wearing a reader's name.
+
+    A lambda is never a reader: it has no name to register, so its body is
+    read in whatever context the lambda itself appears in.
+
+    Nothing is skipped for being unrecognised, and there is no exemption for
+    this file's own source. `own_source` is a REGISTERED READER, so the one
+    legitimate raw read has a name instead of a special case, and
+    `read(THIS_FILE)` written anywhere else is reported like any other
+    primitive.
     """
+    readers = {
+        node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name in READER_DEFINITIONS
+    }
     stripped, raw = [], []
 
     def report(node, what):
@@ -866,42 +969,50 @@ def _reads(tree):
 
     def visit(node, in_reader):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            in_reader = in_reader or node.name in READER_DEFINITIONS
+            # Written here, evaluated here: outside the body, and so outside
+            # the reader even when the `def` is one.
+            for decorator in node.decorator_list:
+                visit(decorator, in_reader)
+            visit(node.args, in_reader)
+            if node.returns is not None:
+                visit(node.returns, in_reader)
+            for statement in node.body:
+                visit(statement, in_reader or node in readers)
+            return
 
-        if isinstance(node, ast.Call):
-            call = node.func
-            if isinstance(call, ast.Name) and call.id in STRIPPING_READERS:
-                if not in_reader:
-                    stripped.append(f"line {node.lineno}: {ast.unparse(node)}")
-            elif isinstance(call, ast.Name) and call.id == "read":
-                if not in_reader and not _reads_this_file(node):
-                    report(node, f"{ast.unparse(node)} - raw, use a stripping reader")
-                for child in node.args + node.keywords:
-                    visit(child, in_reader)
-                return
-            elif isinstance(call, ast.Attribute) and call.attr in RAW_READ_ATTRIBUTES:
-                if not in_reader:
-                    report(node, f"{ast.unparse(node)} - raw, use a stripping reader")
+        if isinstance(node, ast.Lambda):
+            visit(node.args, in_reader)
+            visit(node.body, in_reader)
+            return
 
-        if isinstance(node, ast.Name) and node.id in RAW_READ_NAMES and not in_reader:
-            report(node, f"`{node.id}` is referenced outside a direct call, so this "
-                         f"scan cannot say what it reads")
+        if not in_reader:
+            if isinstance(node, ast.Name):
+                if node.id in READ_PRIMITIVES:
+                    report(node, f"`{node.id}` gets bytes off disk, outside any reader")
+                elif node.id in INDIRECTION_NAMES:
+                    report(node, f"`{node.id}` reaches code this scan cannot read")
+            elif isinstance(node, ast.Attribute):
+                if node.attr in READ_PRIMITIVES:
+                    report(node, f"`.{node.attr}` gets bytes off disk, outside any reader")
+                elif node.attr.startswith("__") and node.attr.endswith("__"):
+                    # `().__class__.__base__.__subclasses__()` walks to every
+                    # object in the process and `f.__globals__` to every module
+                    # a function can see. A SYNTACTIC class rather than a list,
+                    # so there is nothing to enumerate - and this file uses no
+                    # dunder attribute at all, so it costs nothing to refuse.
+                    report(node, f"`.{node.attr}` reaches objects this scan cannot read")
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in STRIPPING_READERS
+            ):
+                stripped.append(f"line {node.lineno}: {ast.unparse(node)}")
 
         for child in ast.iter_child_nodes(node):
             visit(child, in_reader)
 
     visit(tree, False)
     return stripped, raw
-
-
-def _reads_this_file(call):
-    """`read(THIS_FILE)` exactly, and nothing that merely resembles it."""
-    return (
-        len(call.args) == 1
-        and not call.keywords
-        and isinstance(call.args[0], ast.Name)
-        and call.args[0].id == "THIS_FILE"
-    )
 
 
 def test_no_source_file_is_read_without_its_comments_being_stripped():
@@ -933,11 +1044,18 @@ def test_no_source_file_is_read_without_its_comments_being_stripped():
     commenting out `hue: (position - 1) * 30,` and substituting `hue: 0,` left
     every Camelot pill at hue zero with 129 Python and 168 JS tests green.
     Enumerating the spellings of a path is the same losing game as enumerating
-    the decoys a substring lookup accepts, so it is not played: `_reads` walks
-    the AST and reports every reader that is not a stripping one, whatever it
-    is handed.
+    the decoys a substring lookup accepts, so it is not played.
+
+    AND THE SCAN THAT REPLACED IT WAS THE EIGHTH, which is why it now runs the
+    other way round. Classifying CALL SHAPES is the same losing game one level
+    up: `UNSTRIPPED = Path.read_text` is not a call, a nested `def css` wore a
+    reader's name, and `linecache.getlines` was a shape nobody had listed. All
+    three were green in round 6. `_reads` classifies the READ PRIMITIVE
+    instead - as a Name or an Attribute, called or not, anywhere in the file -
+    and `test_this_file_imports_nothing_that_can_reach_a_reader` is what keeps
+    that list finite.
     """
-    stripped, raw = _reads(ast.parse(read(THIS_FILE)))
+    stripped, raw = _reads(ast.parse(own_source()))
 
     assert raw == [], "source read without stripping comments:\n  " + "\n  ".join(raw)
     # ...and not vacuously. If every call site went away, or the scan stopped
@@ -950,12 +1068,80 @@ def test_no_source_file_is_read_without_its_comments_being_stripped():
     )
 
 
-#: Every way of reading a source file that the scan this replaces could not
-#: see. `read(JS / "format.js")` is not hypothetical - it was live in this file
-#: when round 5 opened, and it is what let the Camelot hue be commented out
-#: with 129 Python and 168 JS tests green. The rest are the same read spelled
-#: differently, which is the point: the spellings are unbounded, so the scan
-#: classifies the READER and never the path.
+def test_this_file_imports_nothing_that_can_reach_a_reader():
+    """The closure argument under `READ_PRIMITIVES`, checked rather than
+    asserted in a comment.
+
+    The primitive list is only finite because the NAMESPACE is. Python has
+    many ways to read a file and no list of them is complete on its own -
+    `subprocess.run(["cat", path])`, `ctypes`, an extension module. What makes
+    the list above hold is that every one of those has to be IMPORTED first,
+    and with the imports fixed at these five modules the only things in scope
+    that reach a file's bytes are the builtin `open` and the methods on a
+    `pathlib.Path`, all of which are primitives.
+
+    So the two checks are one check in two halves, and this is the half that
+    is easy to forget: an `import linecache` at the top of a test function is
+    three words, and it puts a read primitive in scope that nothing else here
+    would have to notice. `linecache.getlines` is in the primitive list as
+    well - belt and braces, and because it is the one round 6 actually
+    reported - but the general answer is this test, not that entry.
+
+    Checked at any depth, because `import` inside a function body is still an
+    import.
+    """
+    imported = []
+    for node in ast.walk(ast.parse(own_source())):
+        if isinstance(node, ast.Import):
+            imported.extend((alias.name, node.lineno) for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            # A relative import has no module name; it is still an import of
+            # something this list does not cover, so it is reported as one.
+            imported.append((node.module or ".", node.lineno))
+
+    outside = [
+        f"line {line}: {name}"
+        for name, line in imported
+        if name.split(".")[0] not in PERMITTED_IMPORTS
+    ]
+    assert outside == [], (
+        "this file imports something PERMITTED_IMPORTS does not cover:\n  "
+        + "\n  ".join(outside)
+        + "\nEvery such module is a way to read a file that `_reads` would have "
+          "to enumerate call by call. Add it here only with the primitives it "
+          "brings added to READ_PRIMITIVES beside it."
+    )
+    # ...and not vacuously: an empty import list would pass the check above
+    # while meaning the parse found nothing.
+    assert len(imported) >= len(PERMITTED_IMPORTS), (
+        f"only {len(imported)} imports found; the scan has stopped seeing them"
+    )
+
+
+def test_the_import_check_reports_a_module_that_could_read_a_file():
+    """A rule nobody has seen fail is a rule nobody has seen work."""
+    for module in ("linecache", "io", "os", "subprocess", "importlib.resources"):
+        found = [
+            alias.name
+            for node in ast.walk(ast.parse(f"import {module}\n"))
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        ]
+        assert found, module
+        assert found[0].split(".")[0] not in PERMITTED_IMPORTS, (
+            f"{module} is treated as permitted, so the check above allows it"
+        )
+
+
+#: Every way of reading a source file that a scan classifying CALL SHAPES
+#: could not see. `read(JS / "format.js")` is not hypothetical - it was live in
+#: this file when round 5 opened, and it is what let the Camelot hue be
+#: commented out with 129 Python and 168 JS tests green. The rest are the same
+#: read spelled differently, which is the point: the spellings are unbounded,
+#: so the scan classifies the READ PRIMITIVE and never the path or the call.
+#:
+#: THE LAST FOUR ROWS ARE ROUND 6'S REPORT, and all four were green against
+#: the shape-classifying scan this replaces.
 EVASIONS = [
     ("a composed path", 'def test_x():\n    body = read(JS / "components" / "drawer.js")\n'),
     ("a path bound to a new name", 'FORMAT_JS = JS / "format.js"\n'
@@ -972,18 +1158,76 @@ EVASIONS = [
     ("io.open()", 'def test_x():\n    body = io.open(INDEX_HTML).read()\n'),
     ("a new helper that reads raw", 'def slurp(path):\n    return path.read_text()\n'
                                     'def test_x():\n    slurp(TOKENS_CSS)\n'),
+    ("read(THIS_FILE) somewhere else", 'def test_x():\n    body = read(THIS_FILE)\n'),
+    # -- reported in round 6, every one of them silent before this ---------
+    ("an UNBOUND method aliased", 'UNSTRIPPED = Path.read_text\n'
+                                  'def test_x():\n'
+                                  '    body = UNSTRIPPED(APP_CSS, encoding="utf-8")\n'),
+    ("an imported linecache.getlines", 'import linecache\ndef test_x():\n'
+                                       '    body = "".join(linecache.getlines(str(APP_CSS)))\n'),
+    ("a nested function named css", 'def test_x():\n'
+                                    '    def css(path):\n'
+                                    '        return path.read_text()\n'
+                                    '    body = css(APP_CSS)\n'),
+    ("a raw default on a function named css", 'def css(path, _raw=APP_CSS.read_text()):\n'
+                                              '    return _raw\n'),
+    # -- and the same three tricks the four above are instances of ---------
+    ("a nested function named read", 'def test_x():\n'
+                                     '    def read(path):\n'
+                                     '        return path.read_bytes()\n'
+                                     '    read(APP_CSS)\n'),
+    ("a reader defined inside a class", 'class Reader:\n'
+                                        '    def css(self, path):\n'
+                                        '        return path.read_text()\n'),
+    ("a raw annotation on a reader", 'def css(path) -> type(APP_CSS.read_text()):\n'
+                                     '    return source(path)\n'),
+    ("a raw decorator on a reader", '@pytest.mark.skipif(not APP_CSS.read_text(), reason="x")\n'
+                                    'def css(path):\n    return source(path)\n'),
+    ("a lambda that reads raw", 'css_of = lambda path: path.read_text()\n'),
+    ("getattr around the primitive", 'def test_x():\n'
+                                     '    body = getattr(APP_CSS, "read_" + "text")()\n'),
+    ("a dunder walk to the builtins", 'def test_x():\n'
+                                      '    ns = type(APP_CSS).__init__.__globals__\n'),
+    ("pkgutil.get_data", 'import pkgutil\ndef test_x():\n'
+                         '    body = pkgutil.get_data("web", "static/css/app.css")\n'),
+    ("a file object left open", 'def test_x():\n'
+                                '    handle = open(APP_CSS)\n    body = handle.readlines()\n'),
 ]
 
 #: ...and the forms that are fine, or the check above is satisfied by a scan
 #: that reports everything.
+#:
+#: The third column says whether the row should also register on the STRIPPED
+#: side, which is the floor under
+#: `test_no_source_file_is_read_without_its_comments_being_stripped`. It is a
+#: column rather than an `if "read(THIS_FILE)" not in snippet` at the call
+#: site: that test used to decide by looking for a substring of the snippet,
+#: which is the same loose match this whole file exists to stamp out, and it
+#: silently exempted any row that happened to contain those characters.
+COUNTS = True
+NO_STRIPPING_READER_CALLED = False
+
 PERMITTED_READS = [
-    ("a stylesheet", 'def test_x():\n    body = css(TOKENS_CSS)\n'),
-    ("a script", 'def test_x():\n    body = js(JS / "format.js")\n'),
-    ("markup", 'def test_x():\n    body = html(INDEX_HTML)\n'),
+    ("a stylesheet", 'def test_x():\n    body = css(TOKENS_CSS)\n', COUNTS),
+    ("a script", 'def test_x():\n    body = js(JS / "format.js")\n', COUNTS),
+    ("markup", 'def test_x():\n    body = html(INDEX_HTML)\n', COUNTS),
     ("a path only known at run time", 'def test_x():\n'
                                       '    for path in stylesheets():\n'
-                                      '        body = source(path)\n'),
-    ("this file's own source", 'def test_x():\n    body = read(THIS_FILE)\n'),
+                                      '        body = source(path)\n', COUNTS),
+    # A REGISTERED READER, not an exemption - the module-level `def` is what
+    # makes the raw read inside it legitimate, and it is the same `def` a
+    # reviewer reads when asking which functions may touch the filesystem.
+    ("this file's own source, through its reader",
+     'def own_source():\n    return read(THIS_FILE)\n'
+     'def test_x():\n    body = own_source()\n', NO_STRIPPING_READER_CALLED),
+    ("a registered reader doing its job",
+     'def read(path):\n    return path.read_text(encoding="utf-8")\n'
+     'def source(path):\n    return STRIPPERS[path.suffix](read(path))\n',
+     NO_STRIPPING_READER_CALLED),
+    # `re.compile` is an attribute, and the builtin `compile` is a name. The
+    # scan has to tell them apart or fourteen live call sites in this file
+    # become violations.
+    ("re.compile", 'PATTERN = re.compile(r"x")\n', NO_STRIPPING_READER_CALLED),
 ]
 
 
@@ -1002,21 +1246,21 @@ def test_the_self_scan_reports_a_read_however_it_is_spelled(what, snippet):
 
 
 @pytest.mark.parametrize(
-    "what,snippet", PERMITTED_READS, ids=[name for name, _ in PERMITTED_READS]
+    "what,snippet,counts", PERMITTED_READS, ids=[name for name, _, _ in PERMITTED_READS]
 )
-def test_the_self_scan_leaves_a_stripping_reader_alone(what, snippet):
+def test_the_self_scan_leaves_a_stripping_reader_alone(what, snippet, counts):
     """The other direction. A scan that reported everything would pass the
     check above while making the readers unusable, and someone would delete
     it."""
     stripped, raw = _reads(ast.parse(snippet))
 
     assert raw == [], f"{what} was reported as a raw read: {raw}"
-    # `read(THIS_FILE)` is permitted and is not a stripped read; everything
-    # else here has to be COUNTED, or the floor in
+    # ...and the rows that call one have to be COUNTED, or the floor in
     # `test_no_source_file_is_read_without_its_comments_being_stripped` is a
     # list the scan simply never fills.
-    if "read(THIS_FILE)" not in snippet:
-        assert stripped, f"{what} was not counted as a stripped read"
+    assert bool(stripped) == counts, (
+        f"{what}: expected stripping-reader calls={counts}, got {stripped}"
+    )
 
 
 #: (suffix, source, what the browser is left with). The three strippers are
