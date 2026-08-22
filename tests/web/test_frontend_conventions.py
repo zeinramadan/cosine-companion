@@ -818,9 +818,80 @@ def test_the_self_scan_leaves_a_stripping_reader_alone(what, snippet):
     """The other direction. A scan that reported everything would pass the
     check above while making the readers unusable, and someone would delete
     it."""
-    _stripped, raw = _reads(ast.parse(snippet))
+    stripped, raw = _reads(ast.parse(snippet))
 
     assert raw == [], f"{what} was reported as a raw read: {raw}"
+    # `read(THIS_FILE)` is permitted and is not a stripped read; everything
+    # else here has to be COUNTED, or the floor in
+    # `test_no_source_file_is_read_without_its_comments_being_stripped` is a
+    # list the scan simply never fills.
+    if "read(THIS_FILE)" not in snippet:
+        assert stripped, f"{what} was not counted as a stripped read"
+
+
+#: (suffix, source, what the browser is left with). The three strippers are
+#: each guarded on their own further down; this is the TABLE, which is what
+#: decides which of them a given file gets. Pointing `.js` at the CSS stripper
+#: leaves every `//` comment standing - the exact defect that let the Camelot
+#: hue be commented out - and pointing `.html` at it leaves every `<!-- -->`.
+#: Both survived with this file green until this table existed, because
+#: index.html carries no comment and drawer.js's header is a `/* */` one.
+READER_DISPATCH = [
+    (".css", "/* gone */\n//kept", "\n//kept"),
+    (".js", "/* gone */\n// gone\nkept", "\n\nkept"),
+    (".html", "<!-- gone -->/* kept */", "/* kept */"),
+]
+
+
+@pytest.mark.parametrize("suffix,before,after", READER_DISPATCH)
+def test_each_kind_of_source_gets_the_stripper_for_its_own_comment_syntax(
+    suffix, before, after
+):
+    assert STRIPPERS[suffix](before) == after
+
+
+def test_the_script_reader_strips_both_comment_forms():
+    """Guard the guard, against a real script rather than a synthetic string.
+
+    `test_the_comment_stripper_still_strips_something` reads drawer.js, whose
+    header is a `/* */` comment - so the CSS stripper satisfies it, and
+    mapping `.js` to the CSS stripper left this file green. A `//` comment has
+    to be shown gone from a file that has one.
+    """
+    stripped = js(JS / "format.js")
+
+    assert "Decimal digits are laid out in blocks" not in stripped, (
+        "a `//` comment survived js()"
+    )
+    assert "Rendering helpers shared by the palette" not in stripped, (
+        "a `/* */` comment survived js()"
+    )
+    assert "export function camelot" in stripped, "the reader ate the code"
+
+
+def test_a_reader_is_chosen_by_what_the_file_is():
+    """The three suffix asserts, which nothing in the tree can reach.
+
+    Every path this file reads ends in `.css`, `.js` or `.html`, so no call
+    exercises the wrong-reader case and all three asserts survived deletion
+    with the suite green. They are worth having - `css()` on a script strips
+    `/* */` and leaves every `//` comment standing, which is the reader being
+    wrong about the browser in the direction this whole file exists to stop -
+    so they are pinned here rather than left as decoration.
+    """
+    with pytest.raises(AssertionError, match="not a stylesheet"):
+        css(JS / "format.js")
+    with pytest.raises(AssertionError, match="not a script"):
+        js(TOKENS_CSS)
+    with pytest.raises(AssertionError, match="not markup"):
+        html(TOKENS_CSS)
+
+    # And `source()` has no default. A suffix with no stripper is an assertion,
+    # not a quiet raw read - unreachable from the tree as it stands, and the
+    # moment an `.svg` or a `.json` is read it is the difference between a
+    # loud failure and a silent one.
+    with pytest.raises(AssertionError, match="no reader for"):
+        source(STATIC / "nothing.svg")
 
 
 def test_the_self_scan_counts_only_the_call_sites_it_is_a_floor_under():
