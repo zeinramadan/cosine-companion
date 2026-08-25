@@ -8,7 +8,6 @@ when TensorFlow is absent.
 """
 
 import inspect
-import json
 import threading
 from urllib.parse import quote
 
@@ -332,7 +331,7 @@ def test_no_embeddings_is_a_completed_job_with_the_failure_outcome(web_library, 
     assert job["result"]["new_tracks_found"] == 3
 
 
-def test_observed_cancel_discards_partial_index_work_and_reports_no_result(
+def test_observed_cancel_reports_cancelled_with_no_partial_result(
     web_library, settings
 ):
     indexing = FakeIndexingService(raises=KeyboardInterrupt("cancel checkpoint"))
