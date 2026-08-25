@@ -480,9 +480,36 @@ def _declaration(name, text):
     is the single exception and strips for itself, because it is handed a sheet
     as a STRING by callers that cannot be made to strip first.
 
-    THE LAST DECLARATION WINS, which is the cascade - `re.search` returns the
-    first, so a rule that declared `bottom` twice, or two rules merged by
-    `_rule`, was read off the declaration the browser discards.
+    THE LAST DECLARATION WINS HERE, and that is the cascade only AT EQUAL
+    SPECIFICITY. `re.search` returns the first, so a rule that declared
+    `bottom` twice, or two rules merged by `_rule`, was read off the
+    declaration the browser discards - taking the last fixes that. It does not
+    make this the cascade, and this docstring used to say it did. Within one
+    rule's block, and between two rules written with the SAME selector, last
+    really does win. Between rules of different specificity it does not:
+
+        .setc .setc__status { position: static; }   /* written first  */
+        .setc__status       { position: sticky; }   /* written second */
+
+    computes `static`, because 0-2-0 beats 0-1-0 whatever the order, and this
+    function returns `sticky`.
+
+    THE TWO SHIPPED CALLERS ARE GUARDED ONE LAYER UP, not by this function.
+    `_rule` merges only rules whose selector is an exact top-level entry, and
+    hands back every OTHER rule that names the selector AND declares one of
+    the properties being checked in its `unevaluated` list;
+    `test_the_set_creator_status_line_cannot_be_scrolled_out_of_reach` and
+    `test_the_export_progress_block_cannot_be_scrolled_out_of_reach` both
+    assert `unevaluated == []`. Adding the `.setc .setc__status` rule above to
+    app.css turns the first one RED with
+    `[('.setc .setc__status', ['position'])]`, and the `.exportv` equivalent
+    turns the second one red the same way - both measured, not reasoned.
+
+    WHAT THAT DOES NOT COVER: a rule that reaches the element without naming
+    the class. `.exportv > div { position: static; }` is not a mention, so it
+    is neither merged nor reported, and the guard stays green - measured too.
+    Which rules match an element is a selector engine and a document, and this
+    file has neither.
 
     AND `!important` BREAKS THAT, so it is REFUSED rather than modelled. An
     earlier `.setc__status { position: static !important; }` beats a later
