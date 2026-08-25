@@ -550,10 +550,10 @@ def _declaration(name, text):
     `_type_of` does not see.
 
     THE TWO SHIPPED CALLERS ARE GUARDED ONE LAYER UP, not by this function.
-    `_rule` merges only rules whose selector is an exact top-level entry, and
-    walks the blocks `_rules` emits, putting any OTHER block whose selector
-    text names the selector and declares one of the properties being checked
-    into its `unevaluated` list;
+    `_rule` merges only blocks whose selector is an exact top-level entry, and
+    puts any OTHER block `_rules` emits whose selector text names the selector
+    and declares one of the properties being checked into its `unevaluated`
+    list;
     `test_the_set_creator_status_line_cannot_be_scrolled_out_of_reach` and
     `test_the_export_progress_block_cannot_be_scrolled_out_of_reach` both
     assert `unevaluated == []`. Adding the `.setc .setc__status` rule above to
@@ -1069,8 +1069,8 @@ def _rule(body, selector, properties, where="this stylesheet"):
     handed back rather than ignored: whether it applies needs a selector
     engine and a document, which this does not have, and passing over what it
     cannot evaluate is the defect rather than the fix. Blocks that name the
-    selector and declare none of them
-    - `.exportv__progress[hidden] { display: none; }` - change no answer here
+    selector and declare none of them - `.exportv__progress[hidden] { display:
+    none; }` - change no answer here
     and are not reported.
     """
     applies, unevaluated = [], []
@@ -1333,8 +1333,8 @@ STICKY_PROPERTIES = ("position", "bottom", "background")
 #     five words of `INLINE_STYLE_PRIMITIVES` in stripped script source, line
 #     by line; evasion 5 is a write to `.style` that spells none of them, and
 #     the two sticky tests still cannot lay anything out. Where those blocks
-#     actually land was measured by hand
-#     in a real browser and is recorded in the PR description.
+#     actually land was measured by hand in a real browser and is recorded in
+#     the PR description.
 #   * A stylesheet in `src/web/static/css/` that no `<link>` in index.html
 #     loads is still read by the sheet-wide checks, and NOTHING HERE NOTICES
 #     THE MISSING `<link>` - evasion 6. That is not "more is checked, not
@@ -3616,13 +3616,12 @@ def test_the_export_progress_block_cannot_be_scrolled_out_of_reach():
 # raise, branch and assert in `_tokenise`, `_Typer`, `_type_of` and
 # `assert_sticks_to_the_bottom` was disabled ONE AT A TIME and this file re-run
 # against the mutant. That turned up EIGHT survivors past the one that was
-# reported: the closing
-# token, the `var()` name check, the unclosed-`var(` check, the bareness of a
-# substituted value, the recursion limit, the `position: sticky` assert, the
-# missing-`bottom` assert, and the `_DECLARATION_BOUNDARY` anchor that stops
-# `padding-bottom` being read as `bottom`.
-# Each is covered below or in a test underneath, and
-# each was re-run to a red. ONE branch survives with no discriminating input at
+# reported: the closing token, the `var()` name check, the unclosed-`var(`
+# check, the bareness of a substituted value, the recursion limit, the
+# `position: sticky` assert, the missing-`bottom` assert, and the
+# `_DECLARATION_BOUNDARY` anchor that stops `padding-bottom` being read as
+# `bottom`. Each is covered below or in a test underneath, and each was re-run
+# to a red. ONE branch survives with no discriminating input at
 # all and is documented AS such at its site rather than papered over: the
 # `inside_maths` save/restore in `_Typer.unit`.
 #
@@ -3810,8 +3809,7 @@ def test_a_rule_with_no_bottom_offset_is_not_read_off_a_neighbouring_property():
 
     Two separate holes met here. The `_DECLARATION_BOUNDARY` anchor is what
     stops the search matching the tail of `padding-bottom`, and without it this
-    declaration
-    resolved to a length and PASSED. And the missing-offset assert underneath
+    declaration resolved to a length and PASSED. And the missing-offset assert underneath
     it was unreachable from the table: the empty-string row does not reach it,
     because the whitespace in the pattern backtracks and the capture matches
     the single space before the `;`,
