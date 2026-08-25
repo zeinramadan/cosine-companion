@@ -5,11 +5,19 @@ browser-automation dependency to test a handful of hand-written files is not
 worth the packaging risk, and the visual pass is done by hand in Safari. But
 several of the constraints are not visual at all: "tokens first", "no
 hard-coded hex", "respect prefers-reduced-motion", "real focus rings", "4.5:1
-contrast" are each easy to claim, easy to skip, and completely checkable from
-the source.
+contrast" are each easy to claim, easy to skip, and readable in the source.
 
-So they are checked here. What this file cannot tell you is whether the result
-looks good; what it can tell you is that the system underneath it is real.
+HOW TO READ A GREEN RUN OF THIS FILE. What these assertions run over is an
+APPROXIMATION of the source, derived from it by regex - stripped text, matched
+patterns, brace-counted regions - together with an AST of this file itself.
+Nothing here runs a browser, resolves a cascade or lays anything out. So a
+green run is EVIDENCE that the source says what these patterns look for. It is
+not proof of what the page does. Where a check's approximation is known to
+part company with the browser, the note above `stylesheets()` records it - and
+that note declares its list of holes NON-EXHAUSTIVE, which is meant literally:
+a hole absent from it is unlisted, not closed.
+
+It cannot tell you whether the result looks good.
 """
 
 import ast
@@ -85,16 +93,18 @@ def without_comments(text):
 class _CannotModel(AssertionError):
     """The source uses syntax whose meaning this file cannot compute.
 
-    Raised, never swallowed, and never narrowed into a special case. Four
-    rounds on this file have now established the same thing four times: a
-    guard that MIS-READS a construct is worse than one that refuses it,
-    because the mis-read is silent and the refusal is not. A maintainer who
-    writes CSS this file turns down gets an obvious failure naming the file,
-    the construct and the line, and either rewrites one declaration or teaches
-    the reader the construct. A maintainer whose CSS is mis-read gets a dead
-    accessibility feature and a green suite - which is what happened with
-    `!important` and with a semicolon inside a string, and what this class
-    exists to stop happening a third time.
+Four rounds on this file have now established the same thing four
+    times: a guard that MIS-READS a construct is worse than one that refuses
+    it, because the mis-read is silent and the refusal is not. A maintainer
+    whose CSS is refused gets a failure that names the construct, and either
+    rewrites one declaration or teaches the reader the construct. A maintainer
+    whose CSS is mis-read gets a dead accessibility feature and a green suite -
+    which is what happened with `!important` and with a semicolon inside a
+    string, and what this class exists to stop happening a third time.
+
+    The refusals raised from `_splittable` name the file and the line as well;
+    the ones raised from `_declaration`, `_custom_properties` and
+    `_important_declaration` are handed no file or line to name and do not.
 
     It subclasses AssertionError so pytest reports it as a failing check
     rather than an error in the tests, which is what it is: the stylesheet
@@ -194,8 +204,7 @@ _ESCAPE = re.compile(r"\\")
 #: `position: static` are the same declaration to a browser, and the NAME
 #: lookups here are case-sensitive - `_declarations_of` interpolates
 #: `re.escape(name)` into a pattern compiled with no flags, and so do
-#: `_CUSTOM_DECLARATION` and `_ANY_DECLARATION`. (The one `re.I` in this file
-#: is `_IMPORTANT`, which matches the FLAG, not a name.) So a later
+#: `_CUSTOM_DECLARATION` and `_ANY_DECLARATION`. So a later
 #: `.exportv__progress { POSITION: static; }` beat the checked rule while
 #: `_declaration("position", ...)` never saw it - found alongside the escape
 #: above, and green.
@@ -465,8 +474,8 @@ def html(path):
 #: name patterns interpolate it rather than re-spelling it: `_declarations_of`,
 #: `_CUSTOM_DECLARATION`, `_ANY_DECLARATION` and - with its own copy of the
 #: same alternation - `_MIXED_CASE_PROPERTY`. The looser matches this file also
-#: makes are not name lookups and do not come through here; they are listed in
-#: the boundary note above `stylesheets()`.
+#: makes are not name lookups and do not come through here; the boundary note
+#: above `stylesheets()` has a list of them that says it is non-exhaustive.
 #:
 #: Both ends are anchored: the boundary before the name, and the `:` that has
 #: to follow it, which is what stops `--motion` matching `--motion-fast`.
@@ -537,8 +546,9 @@ def _declaration(name, text):
 
     THE TWO SHIPPED CALLERS ARE GUARDED ONE LAYER UP, not by this function.
     `_rule` merges only rules whose selector is an exact top-level entry, and
-    hands back every OTHER rule that names the selector AND declares one of
-    the properties being checked in its `unevaluated` list;
+    walks the blocks `_rules` emits, putting any OTHER block whose selector
+    text names the selector and declares one of the properties being checked
+    into its `unevaluated` list;
     `test_the_set_creator_status_line_cannot_be_scrolled_out_of_reach` and
     `test_the_export_progress_block_cannot_be_scrolled_out_of_reach` both
     assert `unevaluated == []`. Adding the `.setc .setc__status` rule above to
@@ -589,8 +599,8 @@ def _important_declaration(name, text):
     compute, so it is refused from here too rather than resolved by the same
     last-wins rule that `!important` invalidates.
 
-    Its one caller is the reduced-motion block, where the flag is the point:
-    `animation-duration: 1ms` without it loses to any component that declares
+    The reduced-motion block is where the flag is the point:
+    `animation-duration: 1ms` without it loses to a component that declares
     its own duration, so the preference would be honoured by the tokens and
     ignored by everything that does not use them.
     """
@@ -987,8 +997,12 @@ def _mentions(selector, entry):
     return re.search(rf"{re.escape(selector)}(?![\w-])", entry) is not None
 
 
-#: Any declaration in a list, as (property, value). Only used to NAME what is
-#: wrong in a refusal - the lookups themselves stay anchored per name.
+#: Any declaration in a list, as (property, value). Read by
+#: `_important_properties`, which is what names the offending properties in
+#: `_rule`'s refusal and what
+#: `test_the_shipped_sheets_declare_nothing_important_the_guard_resolves`
+#: asserts on. The name lookups themselves do not come through here; they stay
+#: anchored per name.
 _ANY_DECLARATION = re.compile(
     rf"{_DECLARATION_BOUNDARY}(--[a-zA-Z0-9-]+|[a-zA-Z-]+)\s*:\s*{_DECLARATION_VALUE}"
 )
@@ -1019,9 +1033,11 @@ def _rule(body, selector, properties, where="this stylesheet"):
         `.setc__status { position: static; }` further down the sheet undid the
         first one invisibly. The cascade is not "the first rule wins".
 
-    So a rule counts when `selector` is one whole entry in its selector LIST,
-    is written at the TOP LEVEL of the sheet, and EVERY such rule is merged in
-    document order.
+    So this iterates the blocks `_rules` emits, in document order, and merges
+    a block into `applies` when `selector` is one whole comma-split entry of
+    its selector text AND its depth is 0. What `_rules` does not emit is not
+    iterated - evasion 2 in the boundary note above `stylesheets()` is a rule
+    that is not emitted under its own selector at all.
 
     THE TOP-LEVEL PART IS THE SEVENTH INSTANCE OF THE SAME DEFECT, found while
     looking for one. A rule inside an at-rule is conditional, and this file
@@ -1043,11 +1059,12 @@ def _rule(body, selector, properties, where="this stylesheet"):
     and the caller says the rule is gone, which is what a rule matching no
     viewport is.
 
-    `properties` is what the caller is about to assert on. Any OTHER rule that
-    names this selector and declares one of them is handed back rather than
-    ignored: whether it applies needs a selector engine and a document, which
-    this does not have, and passing over what it cannot evaluate is the defect
-    rather than the fix. Rules that name the selector and declare none of them
+    `properties` is what the caller is about to assert on. Any OTHER emitted
+    block whose selector text names this selector and declares one of them is
+    handed back rather than ignored: whether it applies needs a selector
+    engine and a document, which this does not have, and passing over what it
+    cannot evaluate is the defect rather than the fix. Blocks that name the
+    selector and declare none of them
     - `.exportv__progress[hidden] { display: none; }` - change no answer here
     and are not reported.
     """
