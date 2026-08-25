@@ -569,9 +569,9 @@ def test_colliding_seed_names_create_distinct_valid_playlists(
 ):
     """A successful seed must own a distinct file, while unrelated names stay put.
 
-    The smallest track id in a collision group retains the legacy filename;
-    every other member is disambiguated regardless of seed iteration order, so
-    unrelated exports do not churn names.
+    The LEXICOGRAPHICALLY SMALLEST TRACK ID STRING in a collision group retains
+    the legacy filename; every other member is disambiguated regardless of seed
+    iteration order, so unrelated exports do not churn names.
     """
     for track_id in ("f01", "f06"):
         fixture_library.meta_ix.loc[track_id, "artist"] = "Collision Artist"
@@ -588,6 +588,29 @@ def test_colliding_seed_names_create_distinct_valid_playlists(
     assert "Jeff Mills - The Bells.m3u" in written  # non-collider is unchanged
     assert all(body.startswith(b"#EXTM3U\n") for body in written.values())
     assert all(len(body.splitlines()) == 5 for body in written.values())
+
+
+def test_legacy_name_owner_is_lexicographically_smallest_track_id_string(
+    fixture_library,
+):
+    """String ordering, not numeric ordering, decides who keeps the plain name."""
+    from recommendations.playlist_exporter import (
+        _filename_collision_key,
+        _legacy_filename_owners,
+    )
+
+    collision_group = fixture_library.meta_ix.loc[["f01", "f06"]].copy()
+    collision_group.index = ["9", "10"]
+    collision_group.loc[:, "artist"] = "Collision Artist"
+    collision_group.loc[:, "title"] = "Same Title"
+    assert min(collision_group.index) == "10"
+    assert min(collision_group.index, key=int) == "9"
+
+    filename_key = _filename_collision_key(
+        playlist_filename("Collision Artist", "Same Title")
+    )
+
+    assert _legacy_filename_owners(collision_group)[filename_key] == "10"
 
 
 def test_blank_artist_keeps_the_legacy_leading_separator():

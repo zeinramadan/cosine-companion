@@ -1325,16 +1325,17 @@ the name exceeds 200 characters that extension sits beyond the cut. Two differen
 overwrite each other. `_unique_playlist_path` reserves each written name for the run, keyed on
 NFC + casefold so the reservation is at least as broad as APFS's own equivalence. Ownership does
 NOT depend on the export request or its arrival order: `_legacy_filename_owners` pre-passes the
-entire captured library snapshot and gives the legacy filename to the SMALLEST track id in each
-collision group. Every other member is given `[ID <track_id>]` before the extension; the id is
-sanitised and capped at 64 characters, and the marker is appended AFTER truncation so it cannot
-be cut off. Pre-existing files in the destination are ignored when allocating. With the same
-library membership and collision-forming metadata, full and subset re-exports therefore reuse
-the same names rather than accumulating suffixes.
+entire captured library snapshot and gives the legacy filename to the LEXICOGRAPHICALLY SMALLEST
+TRACK ID STRING in each collision group. Every other member is given `[ID <track_id>]` before the
+extension; the id is sanitised and capped at 64 characters, and the marker is appended AFTER
+truncation so it cannot be cut off. Pre-existing files in the destination are ignored when
+allocating. With the same library membership and collision-forming metadata, full and subset
+re-exports therefore reuse the same names rather than accumulating suffixes.
 
 Ownership can still move when that library state changes, and the exporter does not clean up old
-paths. In particular, deleting the smallest-id owner makes a surviving singleton take the plain
-name while its old `[ID <track_id>]` file remains stale in the destination; artist/title changes
+paths. In particular, deleting the owner of the LEXICOGRAPHICALLY SMALLEST TRACK ID STRING makes
+a surviving singleton take the plain name while its old `[ID <track_id>]` file remains stale in
+the destination; artist/title changes
 that form or dissolve collisions can likewise leave stale files. Measured on the real 1,532-track
 library: 1,529 distinct legacy names, 3 colliding pairs, 1,532 files written, 3 suffixed, and all
 1,532 filenames invariant under every seed ordering (base, reversed and shuffled produce a
