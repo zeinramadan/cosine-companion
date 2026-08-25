@@ -644,7 +644,7 @@ class CocoServer:
         ``hmac.compare_digest`` rather than a plain comparison: a string
         comparison short-circuits at the first differing byte, which hands a
         local attacker who can retry a prefix oracle. Pinned by
-        tests/web/test_server_auth.py::test_the_token_check_is_constant_time.
+        tests/web/test_server_auth.py::test_every_wrong_token_is_decided_by_compare_digest.
         """
         if not candidate:
             return False

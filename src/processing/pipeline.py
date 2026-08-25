@@ -100,11 +100,28 @@ def refresh_playlists(rb_xml, report, data_dir):
     (§2.2: pre-existing tests must not be edited to accommodate this work).
     Three tests in tests/services/test_indexing_service.py assert the COMPLETE,
     ORDERED event list of an indexing run - a first run, an up-to-date run and
-    a run where nothing could be embedded - and a fourth
-    (test_the_exact_output_of_the_cli_index_command) pins the CLI's stdout
-    verbatim. Any line added here changes all four. Those tests exist precisely
-    to catch a change to the indexing transcript, so satisfying them by editing
-    them would be defeating the guard rather than passing it.
+    a run where nothing could be embedded. (An earlier draft of this paragraph
+    cited a fourth, test_the_exact_output_of_the_cli_index_command, as pinning
+    the CLI's stdout
+    verbatim. No test of that name exists. The replacement claim - that no test
+    anywhere pins the CLI's stdout - was false too:
+    tests/services/test_indexing_service.py:893
+    test_pipeline_still_prints_when_no_callback_is_given calls
+    ``index_library(str(xml))``, which is what cosine_companion.py:50 calls,
+    captures stdout with ``capsys`` and asserts four things about it - three
+    ``in out`` substring checks and one ``out.endswith(...)``. What is
+    defensible is narrower, and it is stated as the search that supports it: a
+    grep of ``tests/`` for ``capsys``, ``capfd`` and ``redirect_stdout``, cross
+    referenced with the tests that call ``index_library``, finds exactly that
+    one test capturing this function's transcript, and it pins three substrings
+    and the final line rather than the whole of it. The other exact-equality
+    stdout assertions the grep turns up are on different entry points -
+    ``test_run_never_writes_to_stdout`` at :122 asserts the SERVICE path writes
+    nothing, and two in tests/test_xml_parser.py pin the parser's output. The
+    argument here does not need more than that anyway: it rests on the three
+    ordered-event tests named above, which pin a COMPLETE list.) Those tests
+    exist precisely to catch a change to the indexing transcript, so satisfying
+    them by editing them would be defeating the guard rather than passing it.
 
     So the reindex path keeps playlists CURRENT and says nothing about it,
     which is what the plan's own §5 sentence "so a normal reindex keeps

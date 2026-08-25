@@ -1799,6 +1799,15 @@ may skip with it.
 | Four-file row alignment and empty-library reload | `tests/web/test_api_library_delete.py::test_committed_generation_stays_row_aligned_and_reloads`, `…::test_deleting_the_last_track_commits_a_reloadable_empty_matrix` |
 | Pre-commit failures preserving the prior generation | `tests/services/test_library_session.py::test_a_failure_before_the_manifest_commit_preserves_the_old_generation`, `…::test_a_failed_manifest_replace_preserves_the_previous_generation` |
 | Export snapshot capture not straddling delete publication | `tests/services/test_library_session.py::test_snapshot_cannot_land_inside_the_delete_publication` |
+| The two pre-export refusals running in the catalogued order | `tests/web/test_frontend_behaviour.py::test_frontend_behaviour` (`export.test.mjs`) |
+| Determinate progress reading `current`/`total` off the job document | `…::test_frontend_behaviour` (`export.test.mjs`) |
+| Stop posting a cancel, and the copy that says partial results are kept | `…::test_frontend_behaviour` (`export.test.mjs`) |
+| A reload mid-export re-attaching through `GET /api/jobs` | `…::test_frontend_behaviour` (`export.test.mjs`) |
+| Combined mode having a completion body at all (§4 #10) | `…::test_frontend_behaviour` (`export.test.mjs`) |
+| The selector opening on a browse at limit 100 (§4 #9) | `…::test_frontend_behaviour` (`track_selector_dialog.test.mjs`) |
+| The Export destination no longer rendering a placeholder | `tests/web/test_frontend_conventions.py::test_the_export_destination_is_no_longer_a_placeholder` |
+| The message box keeping the newlines §2.6's bodies are written with | `tests/web/test_frontend_conventions.py::test_the_message_box_keeps_the_newlines_its_bodies_are_written_with` |
+| Every `mount*` `main.js` imports actually being called | `tests/web/test_frontend_conventions.py::test_every_mount_function_the_entry_module_imports_is_also_called` |
 
 ### 6.6 Set Creator controls reimplemented
 
@@ -2364,3 +2373,283 @@ sentence it sits in — that the window is unresponsive for the duration, becaus
 generation runs on the Tk main thread behind `self.update()` — is unchanged and
 still true; only the duration is different. This is why the web destination has
 no progress stream and no cancellation: there is nothing to report.
+
+### 6.8 Export controls reimplemented
+
+The Export destination in the web UI is §2.6's `Playlist Export` tab, with §2.11's
+`TrackSelectorDialog` behind `+ Add Tracks`. Every catalogued control, with the
+line it comes from and where it went. Anything from §2.6 or §2.11 that is *not*
+in this table is in §6.9 under **Deferred** — silent omission is the one thing
+this destination is not allowed to do.
+
+| Control | line | Where it went |
+|---|---|---|
+| Title `Export Recommendation Playlists` | :541 | The destination heading |
+| The description sentence | :542-543 | The paragraph beneath it |
+| Section `1. Select Tracks` | :545 | The first panel |
+| Radio `Selected tracks:`, value `manual`, the default | :549 | A real `<input type="radio">` |
+| `+ Add Tracks` | :550 | Opens the track selector (§2.11) |
+| `Clear All` | :551 | Empties the selection |
+| The selected-tracks list | :552 | A list of rows; see §6.9 for the per-row remove |
+| Radio `All tracks in collection`, value `all` | :553 | The second radio |
+| The three selection-info texts and their two tones | :558-562 | `selectionInfo`, pinned by `tests/web/test_frontend_behaviour.py::test_frontend_behaviour` (`export.test.mjs`) |
+| The label refreshing on radio, on selection change, and on becoming visible | :564-565 | One `renderSelection`, called from all three |
+| Rows sorted by `(artist.lower(), title.lower())` | :567 | `selectedRows`, over `sortLibraryTracks` |
+| Row text `{artist} – {title} [{key}] ({bpm} BPM)`, parts dropped, trimmed | :567-568 | `libraryRowText` — the §2.7 builder, one spelling for both |
+| A selected id absent from the library is skipped | :569 | `selectedRows` filters it out |
+| Section `2. Configure Playlists` | :571 | The second panel |
+| `Recommendations per track:`, 10–50, default `25` | :575 | A `<select>`; 25 is sent explicitly because the API's own default is 10 (`web/api.py:97`) |
+| `Export format:` `separate` (default) / `combined` | :576 | Two radios, mapped to the service's `per_seed` / `combined` |
+| Section `3. Output Location` | :578 | The third panel |
+| A freely editable output-directory field | :580 | The text field; its DEFAULT VALUE is deferred, see §6.9 |
+| `🎵 Generate Playlists` | :587 | The primary action |
+| The progress block, hidden until an export starts | :588-592 | `hidden` until the job is running, and hidden again when it ends |
+| A **determinate** bar | :590 | `role="progressbar"` with `aria-valuenow`, fed by the job's `current`/`total` |
+| Track ids: `all` → the whole collection; `manual` → the chosen ids | :594-598 | `all` omits `track_ids` and the endpoint resolves the library itself |
+| `No Tracks Selected` / `Please select tracks to export playlists for.` | :599 | First check, in order |
+| `No Output Directory` / `Please select an output directory.` | :601 | Second check, in order |
+| The `Confirm Export` question | :603-611 | `confirmMessage`, verbatim including its newlines |
+| The button disabled and the progress block shown | :613 | Every input is disabled for the duration |
+| Bar `current/total`, label `Generating playlists... ({current}/{total})` | :615-616 | From the job document |
+| Status `Current: {artist} - {title}` — a plain hyphen | :617 | The exporter's own string (`playlist_exporter.py:147`), carried through untouched |
+| The `Export Complete` dialog | :620-634 | `completionMessage`; see §6.9 for its one changed line |
+| The `Export Error` dialog | :636 | `errorMessage`, verbatim |
+| Dialog title `Select Tracks for Playlist Export` | :915 | The dialog heading |
+| `Search for tracks:` + entry, focused on open, live filter | :918 | The search field |
+| The Ctrl+Click / Shift+Click hint | :920 | Rendered verbatim; ⌘-Click does the same thing |
+| `Search Results:` + a multiple-selection list | :921-922 | The results listbox |
+| The three selection-count texts | :923 | `selectionCountText`; its initial COLOUR is a divergence, see §6.9 |
+| `Select All` / `Clear Selection` | :927 | Both act on every visible row |
+| `Add Selected Tracks` and `Cancel`, Cancel rightmost | :928 | `row-reverse`, so Cancel is appended first |
+| `limit=50` for a typed query | :931 | `api.search(query, 50)` |
+| Rows already selected prefixed `✓ ` | :934 | The tick is part of the row text, as it is in Tk |
+| No selection → `No Selection` / `Please select at least one track.` | :936 | A message box over the dialog |
+| The ids are **unioned** into the caller's set | :938 | The destination does the union; the dialog never writes to it |
+| `Cancel` and the close button discard | :939 | Both resolve `null` |
+
+### 6.9 Export: deferred, divergent, and found along the way
+
+**Deferred.** Everything catalogued under §2.6 or §2.11 that this destination
+does not reimplement.
+
+| Control | line | Note |
+|---|---|---|
+| The output field's DEFAULT VALUE, `~/Desktop/Cosine_Playlists` | :580 | It is `Path.home()` expanded, and no response this frontend can read carries a home directory: `GET /api/library` returns `track_count`, `is_empty`, `data_dir` and `xml_path` (`web/api.py:778-786`), and `data_dir` is the *library* directory, which under a frozen build is `~/Library/Application Support/Cosine Companion` and in development is the repository's `data/` (`config/paths.py:15-31`). Sending the literal `~` would have `Path(out_dir).mkdir` create a directory called `~` beside the server process. The field therefore starts empty, carries the shape as a placeholder, and remembers the last directory used. Closing this properly means putting the home directory on the wire, which is an API change and belongs in its own review |
+| `Browse...` and `filedialog.askdirectory` | :581 | A web page cannot open a native directory picker and cannot learn a filesystem path from `<input type="file">`. There is no equivalent to build |
+| Widget geometry, fonts and colours | :539-592, :915-928 | `Helvetica 14 bold`, `wraplength 850`, `width=60`, `height=6`, `height=20`, `length=400`, `bg="lightgreen"`, `600x550`. The web UI is built from the design tokens in `tokens.css`; the layout intent is carried, the measurements are not |
+| Tab text `Playlist Export` at notebook index 2 | :539 | The destination is a sidebar item called `Export`, fourth of five. The web shell has no notebook and §6.1 records the same for Explore |
+| `exportselection=False` on both listboxes | :552, :922 | An X11 selection-ownership flag. There is nothing to opt out of in a browser |
+| No scrollbar widget on the selected-tracks listbox | :552, §2.7 row 9 | The web list scrolls with a scrollbar. §2.7's table is a Tk fact about Tk widgets |
+| The dialog as a 600×550 resizable `Toplevel` | :915 | It is a panel in the page, not a window. The title is rendered as its heading |
+| Defect #14's stale `meta` | :596, §4 #14 | The Tkinter tab counts and exports from `meta`, which deletion leaves stale, so both agree with each other and with a collection that no longer exists. Neither half is reachable here: the count comes from `GET /api/library/tracks`, which reads `meta_ix` (`web/api.py:788-807`), and the export resolves ids server-side from a `meta_ix` snapshot (`web/api.py:1139-1185`). The label and the run still agree with each other; they now also agree with the library |
+| Defect #15's `after(0, …)` marshalling | :646-651, §4 #15 | A Tk threading hazard. The job runs in a worker thread inside the server process and the browser reads it over HTTP, so there is no main-thread queue to misuse |
+
+**Divergences.** Each is a change of behaviour on purpose.
+
+*Combined mode shows a completion dialog.* §4 #10: `ExportResult.as_legacy_stats`
+omits `playlists_created` in combined mode, `export_complete` reads
+`stats['playlists_created']` (`ui/playlist_export_tab.py:447`), and the
+resulting `KeyError` means a combined export that worked reports nothing at all.
+The service is unchanged and the defect's characterisation still holds against
+it — `tests/services/test_export_service.py::test_combined_stats_omit_playlists_created`
+still asserts the missing key and the `KeyError` it raises, and
+`tests/manual/smoke.py` check 28 still drives the Tkinter tab into it. What
+changed is that the API never armed the trap on the new surface:
+`_export_result_document` sends an explicit `null` rather than omitting the key
+(`web/api.py:345-354`), pinned by
+`tests/web/test_api_jobs.py::test_combined_mode_reports_playlists_created_as_an_explicit_null`.
+So this destination reads that null and renders the line from what the mode
+actually produced — one combined playlist, or none when there was nothing to
+write, which is the real distinction because `export_single_playlist` only
+writes when it collected ids (`recommendations/playlist_exporter.py:264-266`).
+
+*The per-seed completion dialog states no playlist count.* :620-634's first
+line is `Playlists created: {playlists_created}`, and that is a claim about the
+FILESYSTEM which nothing on this wire can support. `export_playlists_batch`
+increments `playlists_created` beside `successful` inside one `try`
+(`recommendations/playlist_exporter.py:171-173`) and every other path increments
+only `failed`, so in per-seed mode the two counters are equal by construction and
+the dialog was printing one measurement twice — the second copy under a
+filesystem label. What the counter actually counts is write calls that did not
+raise. Where each write LANDS is decided by `playlist_filename(artist, title)`,
+whose own docstring records that two seeds sanitising to one name "overwrite
+each other silently" (`recommendations/playlist_exporter.py:45-55`). So N writes
+leave N files only when the N names are distinct, and on the real collection
+they are not: two full-collection exports through the shipped endpoints reported
+`playlists_created = 1532` against 1529 `.m3u` files on disk, because
+`DJ Plant Texture - Miramare`, `DJ Plant Texture - Ripetitivo (Stretch Mix)` and
+`DJ Rolando - Knights of the Jaguar (Original Mix)` each appear twice in
+`meta.parquet`.
+
+This destination cannot see the directory — only the service touches it — so it
+stopped asserting a count of what is in one. `Successful:` keeps the number
+under the label that is true of it, seeds processed; `Location:` names the
+folder. The `Export Stopped` body loses `N playlist(s) were written` for the
+same reason, keeping the sentence about each file being COMPLETE, which is a
+property of how the loop breaks and not a count; its opening line already
+reports tracks processed. Zero survives in both, because no write call returning
+really does mean nothing was written. Combined mode KEEPS its count: one run
+writes one fixed filename, so 1 and 0 are knowable rather than guessed there,
+and that line is the divergence above.
+
+The underlying collision is NOT fixed here and is not this destination's to fix:
+`playlists_created` remains what the service reports, the API keeps sending it
+faithfully (`web/api.py:352`), and characterising the duplicate-name overwrite
+has its own investigation and its own PR. What changed is only that a screen
+stopped stating a number it had no way to check. Pinned three ways —
+`tests/web/js/export.test.mjs` probes each dialog with a counter no real run
+could produce and asserts it never reaches the user, asserts the per-seed
+accounting block makes no playlist claim at all (which catches a count
+fabricated from `successful` instead), and
+`tests/web/test_frontend_conventions.py::test_no_screen_renders_the_services_playlist_counter`
+fails for any new reader of the field in any module.
+
+*Combined mode has a moving bar.* §4 #11: the Tkinter tab passes no `progress=`
+in combined mode (`ui/playlist_export_tab.py:405-411`), so the bar sits at 0 %
+for the whole run even though `export_single_playlist` emits `(i, N, name)` on
+every seed (`recommendations/playlist_exporter.py:229-235`). This is not fixed
+by the destination: `_start_export` passes `progress=report` in both modes
+(`web/api.py:1057-1066`), so it arrives already fixed and the bar is determinate
+whichever format is chosen. Recorded here because a reader comparing the two
+front ends will otherwise think this destination did something the layer beneath
+it did.
+
+*The blank query opens on a browse, not on nothing.* :932 records that the
+selector opens EMPTY, because search implementation A (§3.4) returns `[]` for a
+blank query — §4 #9 — so the `# Initialize with all tracks` intent at
+`ui/track_selector_dialog.py:129-130` produces an empty list, and clearing the
+box empties it again. This browses `/api/tracks` at :931's limit of 100 instead.
+Same decision, same reason and the same endpoint as the Add Anchor dialog
+(§6.7), and the service is untouched.
+
+*The selection-count label is quiet when it is empty.* :923 records that the
+label opens reading `0 tracks selected` in BLUE and turns grey only once a
+selection event has fired — the emphatic colour on the emptiest state, because
+the grey is applied in `update_selection_count` and nothing calls it at
+construction (`ui/track_selector_dialog.py:164-172`). Here zero is quiet from
+the start and any non-zero count is accented, so the colour tracks the number
+rather than the event history.
+
+*A stopped export is a thing that can happen.* :640 records that there is no
+cancel control at all: nothing in the Tkinter UI signals the worker, and
+`ExportService` is given no `cancel` argument. This destination has a Stop
+button, and PR #25's decision about what it leaves behind is what the copy is
+built around. Partial results are KEPT — per-seed mode writes one complete
+`.m3u` per seed and breaks at the top of the loop before a write
+(`recommendations/playlist_exporter.py:132-134`), and combined mode writes once
+after the loop whether or not it was stopped
+(`recommendations/playlist_exporter.py:263-266`), so a stop yields a shorter
+playlist rather than none. Both facts are in the message, and the consequence is
+also stated beside the button BEFORE it is pressed, because a user deciding
+whether to stop needs it then and not afterwards. This is the opposite of what a
+cancelled index run does (§4 #4), which is precisely why it has to be said.
+
+*A stop that arrives too late says so.* `ExportResult.cancelled` is read off the
+cancel event rather than off whether the loop broke
+(`services/export_service.py:107-113`), so a stop delivered after the last seed
+produces a `cancelled` job with every playlist written — the export shape of §4
+#17. The message distinguishes the two rather than reporting both as
+"cancelled", which would send a user hunting for files that are all there.
+
+*The output field is blank and remembers.* The consequence of the deferred
+default above. The field starts on the last directory a successful start used,
+kept in the browser's own storage, so the path is typed once rather than every
+time. Reads and writes are both guarded: Safari in a private window raises on
+the accessor itself, and a forgotten path is an inconvenience where a
+destination that fails to mount is not.
+
+*The selected-track list has a per-row remove.* :552 records that the Tkinter
+listbox is read-only in effect — nothing is bound to its selection, so selecting
+a row has no consequence, and there is no per-row remove. `Clear All` (:551) is
+therefore the only undo, and one mis-added track costs the whole selection. Each
+row here carries a remove control. The row is not presented as selectable, which
+is the same argument `listbox.js` makes about `role="option"`: a control that
+looks like it can be chosen and does nothing is a promise the interface does not
+keep.
+
+*Enter and Space operate the selector's list.* §2.11 catalogues no keyboard
+binding for the results list, so this is an addition rather than a
+reimplementation of one, and it is the same addition the Add Anchor dialog
+records in §6.7.
+
+*A whitespace-only output directory is blank.* :601's check reads the raw
+variable (`ui/playlist_export_tab.py:365-371`), so a field holding only spaces
+passes it, and `_path_field` then refuses the request as a 400 from four layers
+away (`web/api.py:483-498`). The field is trimmed before the check, so blank is
+blank and the catalogued warning is what answers.
+
+*One job at a time is a message, not a dead button.* `JobRegistry.start` refuses
+a second job with `JobInProgress` and the endpoint turns that into a 409 naming
+the run that holds the lock (`web/api.py:1129-1137`). The destination shows that
+message and then goes and finds the running job through `GET /api/jobs`, so the
+refusal ends with the screen showing the export that caused it.
+
+**Found along the way.**
+
+*The registry is what makes a reload survivable, and the frontend has to ask.*
+`JobRegistry` outlives the request that created it and remembers
+`MAX_REMEMBERED_JOBS` finished jobs (`web/jobs.py:116-120`), so a ⌘R part way
+through a run does not stop the export — but the page loses the
+id it was handed, which is the whole reason `GET /api/jobs` exists
+(`web/api.py:966-975`). `mountExport` asks for it as it mounts, whatever
+destination is showing, and re-attaches to a running export. A job that reached a
+terminal state before the page existed gets the outcome panel and no dialog: the
+modal belongs to the page that was watching when the run ended, and one raised on
+load would be a surprise. Pinned by `export.test.mjs`, whose re-attach case
+starts no export at all.
+
+*The completion dialog is not enough on its own.* It is a modal, and a modal is
+only seen by the page that is there when it opens. The destination therefore also
+keeps a persistent account of the most recent export — state, counts, location
+and what a stop left behind — which is what a reloaded page has instead of the
+dialog it missed.
+
+*Polling, and why there is no stream.* Settled in PR #25 and not revisited here:
+a streaming response cannot go through `server.py`'s `_send`, which takes
+complete bytes and sets a `Content-Length` from them, so SSE would mean a second
+emission path reimplementing HEAD elision and framing for one endpoint. A poll
+of `GET /api/jobs/{id}` was measured at 0.46 ms, and the destination polls twice
+a second while a job is running and stops when it ends.
+
+*The 6.8 minutes at :640 is no longer the number.* Measured on this branch
+against the real 1,532-track library, through the shipped `POST
+/api/jobs/export` and `GET /api/jobs/{id}`: a full-collection export at 25
+recommendations per track takes **11.9 s** — 7.8 ms a seed, 1,532 playlists and
+38,300 recommendations. :640's figure predates the transition-vector work, in
+exactly the way §6.7 records for the 2.76 s set-generation figure at :511-512,
+which is now 0.064 s. The sentences :640 sits in are otherwise unchanged and
+still true: there is still no cancel control in the Tkinter tab, and closing the
+window there still kills a daemon thread part way through a write.
+
+Nothing about this destination's design turns on which number it is. Twelve
+seconds is still long enough that a frozen window would be wrong, still long
+enough that a user can want it stopped, and still long enough for a reload to
+land in the middle of it — and the ceiling is not fixed: 50 recommendations per
+track over a larger library scales from here. What it does settle is the poll
+budget. At half a second the counter moves about two dozen times over a run,
+which is a bar that moves rather than a slideshow, and 24 polls at the measured
+0.46 ms is 11 ms of server time for the whole export.
+
+*The progress block had to be pinned to the bottom of the scrollport.* Found in
+the browser, not in a test. The window opens at 1280×840 (`web/host.py:34-36`)
+and the three numbered sections plus the action button fill it, so in the normal
+flow the progress block and the Stop button rendered BELOW the fold at the exact
+moment an export started — measured in headless Chrome at 1280×980, a taller
+window than the app opens with, where the block began at y=985 against a
+viewport ending at 980. The one control a user might urgently want was off
+screen and the bar reporting the run they had just begun was invisible unless
+they scrolled. It is `position: sticky` with a bottom offset now, which is the
+same treatment §6.7 records for the Set Creator status line and for the same
+reason inventory :244 and :1293 give about the Tk status bar being packed
+`side="bottom"`. Pinned by
+`tests/web/test_frontend_conventions.py::test_the_export_progress_block_cannot_be_scrolled_out_of_reach`.
+
+*Three of this PR's own tests could not fail, and mutation is what found them.*
+The tick-prefix assertion built its expected string out of the constant it was
+testing, so removing the space from `ALREADY_SELECTED_PREFIX` changed both sides
+and the assertion held; the cancelled-export message asserted that files were
+kept but not that each one is complete, so replacing that sentence with its
+opposite passed; and the check that `main.js` calls every `mount*` it imports
+searched the raw source, so a commented-out call satisfied it. All three are now
+red under the mutation that exposed them, and the literals are asserted as
+literals.

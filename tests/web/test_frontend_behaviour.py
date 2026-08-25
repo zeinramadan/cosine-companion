@@ -154,3 +154,20 @@ def test_the_harness_exemption_names_files_that_exist():
 
     assert HARNESS_SUITES <= present, f"stale exemptions: {sorted(HARNESS_SUITES - present)}"
     assert len(HARNESS_SUITES) < len(present), "every suite is exempt, so the rule is vacuous"
+
+
+def test_the_export_suites_are_discoverable():
+    """The same guard as its two predecessors, for the two suites this PR adds.
+
+    A function of its own rather than two more lines in the block above, for
+    the reason ``test_the_set_creator_suites_are_discoverable`` gives: that set
+    is one contiguous sorted block, and a destination PR inserting into it is a
+    conflict in a file it is not really changing. A test of its own is a hunk of
+    its own.
+    """
+    names = {path.name for path in _suites()}
+
+    assert names >= {
+        "export.test.mjs",
+        "track_selector_dialog.test.mjs",
+    }, f"an Export behavioural suite disappeared: {sorted(names)}"

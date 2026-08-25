@@ -82,7 +82,7 @@ button {
   height: 100vh;
 }
 
-.app[data-drawer="open"] {
+.app[data-drawer=open] {
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr) var(--drawer-width);
 }
 
@@ -153,7 +153,7 @@ button {
   color: var(--ink-primary);
 }
 
-.nav__item[aria-current="page"] {
+.nav__item[aria-current=page] {
   background: var(--surface-3);
   color: var(--ink-primary);
   font-weight: var(--weight-medium);
@@ -374,11 +374,11 @@ button {
   color: var(--ink-tertiary);
 }
 
-.settings__status[data-state="success"] {
+.settings__status[data-state=success] {
   color: var(--accent-2);
 }
 
-.settings__status[data-state="error"] {
+.settings__status[data-state=error] {
   color: var(--danger);
 }
 
@@ -461,6 +461,18 @@ button {
   line-height: var(--leading-normal);
 }
 
+/* The off-screen textarea `clipboard.js` falls back to when the async
+   clipboard API is refused. It is never seen; it only has to be focusable and
+   out of the flow. Here rather than inline in the script so that this rule is
+   in the sheet the source-text checks read - see
+   test_no_script_puts_css_on_the_page_outside_the_stylesheet, which searches
+   stripped JavaScript for five literal words line by line and establishes
+   nothing about what a script does. */
+.clipboard-scratch {
+  position: fixed;
+  opacity: 0;
+}
+
 /* ---- anchor list ---------------------------------------------------------
    Inventory :471 - `{position}. {artist} – {title}`, ascending. Selectable,
    because `Remove` (:458) acts on the selection. */
@@ -490,7 +502,7 @@ button {
   background: var(--surface-3);
 }
 
-.anchors__row[aria-selected="true"] {
+.anchors__row[aria-selected=true] {
   background: var(--surface-4);
   border-color: var(--accent);
 }
@@ -512,7 +524,7 @@ button {
    fills the slot with an ordinary pick, so the row above the set would
    otherwise claim a position the set does not give it. The note carries the
    meaning on its own - colour is the second signal, not the only one. */
-.anchors__row[data-dropped="true"] {
+.anchors__row[data-dropped=true] {
   border-color: var(--danger);
 }
 
@@ -546,7 +558,7 @@ button {
 
 /* An anchor is the track the set was built AROUND, so it is the row that reads
    as fixed. The 🔒 says so too; this is a second signal, not the only one. */
-.setlist__row[data-anchor="true"] {
+.setlist__row[data-anchor=true] {
   background: var(--surface-3);
   border-color: var(--border-strong);
 }
@@ -577,6 +589,310 @@ button {
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* ---- Export destination -------------------------------------------------
+   Inventory §2.6. Three numbered sections in the Tkinter tab's order, then the
+   action, then the progress block, then the outcome panel. */
+
+.exportv {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  max-width: var(--content-max);
+}
+
+.exportv__intro {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.exportv__title {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.02em;
+}
+
+.exportv__description {
+  max-width: 60ch;
+  color: var(--ink-secondary);
+}
+
+.exportv__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-sm);
+}
+
+.exportv__heading {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  color: var(--ink-primary);
+}
+
+.exportv__mode,
+.exportv__formats {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.radio {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--ink-secondary);
+  font-size: var(--text-sm);
+}
+
+.radio__input:disabled + .radio__label {
+  color: var(--ink-tertiary);
+}
+
+/* The selected-track list. Inventory :552 gives it `height=6`; six rows is the
+   intent and a max-height in rem is how that reads in a browser. */
+.exportv__selected {
+  display: flex;
+  flex-direction: column;
+  max-height: 12rem;
+  overflow-y: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+}
+
+.exportv__selected-empty {
+  padding: var(--space-3);
+  color: var(--ink-tertiary);
+  font-size: var(--text-sm);
+}
+
+.exportv__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--ink-secondary);
+}
+
+.exportv__row + .exportv__row {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.exportv__row-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.exportv__row-remove {
+  flex: none;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--ink-tertiary);
+  font-size: var(--text-sm);
+  line-height: 1.8;
+}
+
+.exportv__row-remove:hover {
+  background: var(--surface-3);
+  color: var(--ink-primary);
+}
+
+/* Inventory :558-562. Two tones, and the text carries a glyph as well - a tick
+   or a warning sign - so the state is never colour alone. */
+.exportv__info {
+  font-size: var(--text-sm);
+}
+
+.exportv__info[data-tone=ok] {
+  color: var(--accent);
+}
+
+.exportv__info[data-tone=warn] {
+  color: var(--danger);
+}
+
+.exportv__hint {
+  color: var(--ink-tertiary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+.exportv__actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* ---- the progress block -------------------------------------------------
+   Inventory :588-592: hidden until an export starts, and DETERMINATE. The job
+   reports `i` and `N`, so there is no honest reason for an indeterminate bar -
+   §2.13's re-index window showed one while holding exactly that pair. (:640's
+   6.8 minutes is stale; a full run measures 11.9 s on this branch. See §6.9.) */
+
+/* STUCK TO THE BOTTOM OF THE SCROLLPORT, for the reason inventory :244 and
+   :1293 give about the Tk status bar - it is packed `side="bottom"` "so a short
+   window cannot hide it", and that is a property of the control rather than a
+   detail of Tk's geometry manager. The Set Creator's status line already
+   carries the same treatment for the same reason.
+
+   It matters more here than there. The window ships at 1280x840
+   (`web/host.py:34-36`) and the three numbered sections plus the action button
+   already fill it, so left in the normal flow the progress block and the Stop
+   button appeared BELOW the fold at the exact moment an export started: the
+   one control a user might urgently want was off screen, and the bar reporting
+   a run they had just begun was invisible unless they scrolled. Measured in
+   headless Chrome at 1280x980 - the block began at y=985 with the viewport
+   ending at 980 - which is a taller window than the app opens with.
+
+   Sticky rather than fixed, so it sits inside the destination's own column
+   instead of over the sidebar, and opaque, so rows pass under it rather than
+   through it. */
+.exportv__progress {
+  position: sticky;
+  bottom: calc(var(--space-6) * -1);
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-lg);
+}
+
+.exportv__progress[hidden] {
+  display: none;
+}
+
+.progress__label {
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+}
+
+.progress__track {
+  height: 0.5rem;
+  border-radius: var(--radius-pill);
+  background: var(--surface-4);
+  overflow: hidden;
+}
+
+.progress__fill {
+  width: var(--progress, 0%);
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--gradient-score);
+  transition: width var(--motion-base) var(--ease-out);
+}
+
+.progress__status,
+.progress__timing {
+  color: var(--ink-tertiary);
+  font-size: var(--text-sm);
+}
+
+.progress__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-top: var(--space-2);
+}
+
+/* What a stop leaves on disk, said BEFORE the button is pressed. Partial
+   results are KEPT, which is the opposite of what a cancelled index run does,
+   and a user who stops has to know which of the two this is. */
+.progress__note {
+  color: var(--ink-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+/* The account a reloaded page has instead of the dialog it missed. */
+.exportv__outcome {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+}
+
+.exportv__outcome[hidden] {
+  display: none;
+}
+
+.exportv__outcome-body {
+  color: var(--ink-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  white-space: pre-line;
+}
+
+/* ---- the track selector dialog (§2.11) ---------------------------------- */
+
+.track-selector__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: min(34rem, 80vw);
+}
+
+.track-selector__title {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+}
+
+.track-selector__hint {
+  color: var(--ink-tertiary);
+  font-size: var(--text-sm);
+}
+
+.track-selector__count {
+  font-size: var(--text-sm);
+}
+
+.track-selector__count[data-state=empty] {
+  color: var(--ink-tertiary);
+}
+
+.track-selector__count[data-state=chosen] {
+  color: var(--accent);
+}
+
+.track-selector__quick {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.track-selector__actions {
+  display: flex;
+  flex-direction: row-reverse;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+/* Inventory :922 - `height=20` against the anchor dialog's 15. */
+.picker--tall {
+  max-height: 22rem;
+}
+
+/* A row already in the export selection, prefixed `✓ ` (:934). The tick is the
+   signal; this only quiets what has already been chosen. */
+.picker__option[data-already=true] {
+  color: var(--ink-tertiary);
 }
 
 /* ---- form fields shared by the destination and the anchor dialog -------- */
@@ -700,6 +1016,13 @@ button {
   color: var(--ink-secondary);
   font-size: var(--text-md);
   line-height: var(--leading-normal);
+  /* The catalogued bodies are multi-line - inventory :603-611 and :620-634 are
+     specified with their newlines, and `Export Complete` is seven lines of
+     accounting. Collapsed by the default `normal` they run together into one
+     paragraph, which is not the message that was catalogued. `pre-line` keeps
+     the newlines and still collapses runs of spaces, so the single-line
+     messages beside them are unaffected. */
+  white-space: pre-line;
 }
 
 .message-box__actions {
@@ -762,7 +1085,7 @@ button {
   background: var(--surface-2);
 }
 
-.picker__option[aria-selected="true"] {
+.picker__option[aria-selected=true] {
   background: var(--surface-4);
   border-color: var(--accent);
 }
@@ -799,12 +1122,12 @@ button {
   white-space: nowrap;
 }
 
-.pill[data-mode="major"] {
+.pill[data-mode=major] {
   background: var(--camelot-bg-major);
   color: var(--camelot-fg-major);
 }
 
-.pill[data-unknown="true"] {
+.pill[data-unknown=true] {
   border-color: var(--border-subtle);
   background: var(--surface-3);
   color: var(--ink-tertiary);
@@ -831,7 +1154,10 @@ button {
 
 .score__fill {
   position: absolute;
+  /* `--score` is set per element by format.js; the width lives here, like
+     .progress__fill's. */
   inset: 0 auto 0 0;
+  width: var(--score, 0%);
   border-radius: var(--radius-pill);
   background: var(--gradient-score);
   transition: width var(--motion-base) var(--ease-out);
@@ -1043,7 +1369,7 @@ button {
   transition: background var(--motion-fast) var(--ease-out);
 }
 
-.palette__option[aria-selected="true"] {
+.palette__option[aria-selected=true] {
   background: var(--surface-4);
 }
 
@@ -1364,11 +1690,11 @@ button {
   font-size: var(--text-sm);
 }
 
-.library__status[data-state="success"] {
+.library__status[data-state=success] {
   color: var(--accent-2);
 }
 
-.library__status[data-state="error"] {
+.library__status[data-state=error] {
   color: var(--danger);
 }
 
@@ -1403,7 +1729,7 @@ button {
   color: var(--ink-primary);
 }
 
-.library-row__option[aria-selected="true"] {
+.library-row__option[aria-selected=true] {
   background: var(--surface-4);
   color: var(--ink-primary);
 }
@@ -1532,7 +1858,7 @@ button {
   color: var(--ink-primary);
 }
 
-.segmented__option[aria-pressed="true"] {
+.segmented__option[aria-pressed=true] {
   background: var(--surface-4);
   color: var(--ink-primary);
   font-weight: var(--weight-medium);
