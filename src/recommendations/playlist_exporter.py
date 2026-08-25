@@ -96,20 +96,28 @@ def _unique_playlist_path(
     return output_path / candidate
 
 
-def _legacy_filename_owners(
-    track_ids: List[str],
-    meta_ix: pd.DataFrame,
-) -> Dict[str, str]:
-    """Choose the smallest track id for every legacy filename collision key."""
-    owners: Dict[str, str] = {}
-    for track_id in track_ids:
-        if track_id not in meta_ix.index:
-            continue
+def _legacy_filename_owners(meta_ix: pd.DataFrame) -> Dict[str, str]:
+    """Choose each legacy name's owner across the captured library snapshot.
 
-        track = meta_ix.loc[track_id]
+    Read the two metadata columns in bulk: a per-row ``.loc`` scan is a costly
+    pandas hot path, and ownership must consider the library rather than only
+    the selected export request.
+    """
+    artists = (
+        meta_ix['artist'].to_numpy(copy=False)
+        if 'artist' in meta_ix.columns
+        else ['Unknown Artist'] * len(meta_ix.index)
+    )
+    titles = (
+        meta_ix['title'].to_numpy(copy=False)
+        if 'title' in meta_ix.columns
+        else ['Unknown Title'] * len(meta_ix.index)
+    )
+    owners: Dict[str, str] = {}
+    for track_id, artist, title in zip(meta_ix.index, artists, titles):
         filename = playlist_filename(
-            track.get('artist', 'Unknown Artist'),
-            track.get('title', 'Unknown Title'),
+            artist,
+            title,
         )
         filename_key = _filename_collision_key(filename)
         stable_track_id = str(track_id)
@@ -194,7 +202,7 @@ def export_recommendations_as_playlists(
         'total_recommendations': 0
     }
     written_filename_keys: Set[str] = set()
-    legacy_filename_owners = _legacy_filename_owners(track_ids, meta_ix)
+    legacy_filename_owners = _legacy_filename_owners(meta_ix)
 
     for i, track_id in enumerate(track_ids, 1):
         if cancel_check is not None and cancel_check():

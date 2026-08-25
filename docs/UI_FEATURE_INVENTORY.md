@@ -1324,16 +1324,23 @@ sanitiser drops `.`, so the only dot in the name is the extension the function a
 the name exceeds 200 characters that extension sits beyond the cut. Two different seeds that sanitise to the same name no longer
 overwrite each other. `_unique_playlist_path` reserves each written name for the run, keyed on
 NFC + casefold so the reservation is at least as broad as APFS's own equivalence. Ownership does
-NOT depend on arrival order: `_legacy_filename_owners` pre-passes the seed list and gives the
-legacy filename to the SMALLEST track id in each collision group, and every other member is given
-`[ID <track_id>]` before the extension, with the marker appended AFTER truncation so it can never
-be cut off. Pre-existing files in the destination are ignored when allocating, so re-exporting
-into the same folder reuses names rather than accumulating suffixes. Measured on the real
-1,532-track library: 1,529 distinct legacy names, 3 colliding pairs, 1,532 files written, 3
-suffixed, and all 1,532 filenames invariant under every seed ordering (base, reversed and
-shuffled produce a symmetric difference of zero). The 1,526/1,532 figure recorded before the
-pre-pass described the order-dependent build and no longer applies. `playlists_created` is
-set from the count of distinct written paths, so it means files.
+NOT depend on the export request or its arrival order: `_legacy_filename_owners` pre-passes the
+entire captured library snapshot and gives the legacy filename to the SMALLEST track id in each
+collision group. Every other member is given `[ID <track_id>]` before the extension; the id is
+sanitised and capped at 64 characters, and the marker is appended AFTER truncation so it cannot
+be cut off. Pre-existing files in the destination are ignored when allocating. With the same
+library membership and collision-forming metadata, full and subset re-exports therefore reuse
+the same names rather than accumulating suffixes.
+
+Ownership can still move when that library state changes, and the exporter does not clean up old
+paths. In particular, deleting the smallest-id owner makes a surviving singleton take the plain
+name while its old `[ID <track_id>]` file remains stale in the destination; artist/title changes
+that form or dissolve collisions can likewise leave stale files. Measured on the real 1,532-track
+library: 1,529 distinct legacy names, 3 colliding pairs, 1,532 files written, 3 suffixed, and all
+1,532 filenames invariant under every seed ordering (base, reversed and shuffled produce a
+symmetric difference of zero). The 1,526/1,532 figure recorded before the pre-pass described the
+order-dependent build and no longer applies. `playlists_created` is set from the count of
+distinct written paths, so it means files.
 
 ### 3.7 Settings file
 

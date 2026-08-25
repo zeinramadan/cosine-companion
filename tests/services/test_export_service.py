@@ -617,6 +617,27 @@ def test_reexport_reuses_the_same_disambiguated_names(
     assert first.playlists_created == second.playlists_created == 2
 
 
+def test_subset_reexport_keeps_library_anchored_collision_names(
+    fixture_library, service, tmp_path
+):
+    """Selecting one collider must not let it overwrite the library's owner."""
+    for track_id in ("f01", "f06"):
+        fixture_library.meta_ix.loc[track_id, "artist"] = "Collision Artist"
+        fixture_library.meta_ix.loc[track_id, "title"] = "Same Title"
+
+    out = tmp_path / "out"
+    service.export_per_seed(["f01", "f06"], str(out), 2)
+    before = tree(out)
+    plain_name = "Collision Artist - Same Title.m3u"
+    suffixed_name = "Collision Artist - Same Title [ID f06].m3u"
+    assert before[plain_name] != before[suffixed_name]  # distinct seed contents
+
+    result = service.export_per_seed(["f06"], str(out), 2)
+
+    assert tree(out) == before
+    assert result.playlists_created == 1
+
+
 def test_collision_names_are_independent_of_seed_iteration_order(
     fixture_library, service, tmp_path
 ):
