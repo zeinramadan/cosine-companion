@@ -8,8 +8,7 @@ hard-coded hex", "respect prefers-reduced-motion", "real focus rings", "4.5:1
 contrast" are each easy to claim, easy to skip, and readable in the source.
 
 HOW TO READ A GREEN RUN OF THIS FILE.
-Nothing here runs a browser, resolves a cascade or lays anything out. So a
-green run is EVIDENCE that the source says what these patterns look for. It is
+Nothing here runs a browser, resolves a cascade or lays anything out. It is
 not proof of what the page does. Where a check's approximation is known to
 part company with the browser, the note above `stylesheets()` records it - and
 that note declares its list of holes NON-EXHAUSTIVE, which is meant literally:
@@ -101,10 +100,8 @@ Four rounds on this file have now established the same thing four
     string, and what this class exists to stop happening a third time.
 
     What each refusal can name differs, and is worth knowing before relying on
-    one: `_rule` is handed a `where` and names it, with the
-    rule's selector text, but has no line. `_declaration`, `_custom_properties`
-    and `_important_declaration` are handed neither and name the property and
-    its value only.
+    one: `_rule` is handed a `where` and names it, with the rule's selector
+    text, but has no line.
 
     It subclasses AssertionError so pytest reports it as a failing check
     rather than an error in the tests, which is what it is: the stylesheet
@@ -1057,10 +1054,7 @@ def _rule(body, selector, properties, where="this stylesheet"):
     and the caller says the rule is gone, which is what a rule matching no
     viewport is.
 
-    `properties` is what the caller is about to assert on. Blocks that name the
-    selector and declare none of them - `.exportv__progress[hidden] { display:
-    none; }` - change no answer here
-    and are not reported.
+    `properties` is what the caller is about to assert on.
     """
     applies, unevaluated = [], []
     for selector_text, declarations, depth in _rules(body):
