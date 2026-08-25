@@ -1455,7 +1455,13 @@ PERMITTED_IMPORTS = ("ast", "colorsys", "re", "pathlib", "pytest")
 
 
 def _reads(tree):
-    """Every read of a source file in `tree`, as (stripped, raw).
+    """The source reads this scan FINDS in `tree`, as (stripped, raw).
+
+    Not every read in `tree`: what it reports is a `Name` or an `Attribute`
+    whose spelling is in `READ_PRIMITIVES` or `INDIRECTION_NAMES`, plus any
+    dunder attribute, each outside a registered reader. A read spelled as none
+    of those is not in the result - evasion 4 in the boundary note above
+    `stylesheets()` is one, constructed and run.
 
     STRUCTURAL, and INVERTED - it looks for read primitives rather than for
     call shapes. `READ_PRIMITIVES` says why that swap is the whole point.
@@ -1937,8 +1943,12 @@ def test_a_longer_name_that_contains_a_real_one_declares_something_else(name, sh
     A lookup that finds its name ANYWHERE in the text is answered by any
     longer name that happens to contain it - so a token can be renamed out of
     existence, or shadowed by a decoy, with every check that reads it green.
-    Every consumer in this file resolves names through `_declaration` and
-    `_custom_properties`, so this pins all of them at once.
+
+    The NAME lookups here go through `_declaration` and `_custom_properties`,
+    which is why this pins the boundary once instead of once per call site.
+    The looser matches this file also makes - the substring greps and absence
+    patterns listed in the boundary note above `stylesheets()` - do not come
+    through either function and are not pinned by this.
     """
     assert _declaration(name, sheet) is None, (
         f"{name} was read out of {sheet!r}, which declares no such property"
@@ -3831,13 +3841,25 @@ def test_the_comment_stripper_still_strips_something():
 
 def test_no_component_ever_writes_html_as_a_string():
     """Playlist names are user data from an external file, and they are exactly
-    the strings that would carry an injection. Every component builds nodes and
-    sets textContent; one innerHTML anywhere defeats that for all of them.
+    the strings that would carry an injection, so the components build nodes
+    and set textContent instead.
 
-    Checked across every script rather than only the drawer, because the
-    property is "this frontend does not do that", not "this file does not".
-    Comments are stripped first, so the drawer is allowed to SAY it does not
-    write innerHTML in the same file that must not write it.
+    WHAT THIS SEARCHES FOR: `HTML_SINK.findall(js(script))` for each file
+    `scripts()` returns - four literal names in a word-boundary alternation,
+    `innerHTML`, `outerHTML`, `insertAdjacentHTML` and `document.write`, in
+    stripped source. A LIST, not a class of behaviour, and the same limit as
+    evasion 5 applies to it: `node['inner' + 'HTML'] = name` spells none of
+    the four. A sink that is not on the list is not looked for at all, and
+    three that are not on it are `DOMParser.parseFromString`,
+    `Element.setHTML` and the fragment builder on `Range`. Adding one to the
+    list is the change; reading a green run as "no component writes HTML as a
+    string" is not supported.
+
+    Run over every file `scripts()` returns rather than only the drawer,
+    because the property being aimed at is "this frontend does not do that",
+    not "this file does not". Comments are stripped first, so the drawer is
+    allowed to SAY it does not write innerHTML in the same file that must not
+    write it.
     """
     offenders = {}
     for script in scripts():
@@ -3956,9 +3978,12 @@ def test_no_screen_renders_the_services_playlist_counter():
 
     The behavioural tests probe the two dialogs with a counter no real run
     could produce and assert it never reaches the user. This is the structural
-    half of the same claim, and it is the stronger one: it fails for ANY new
-    reader of the field, in any component, before anyone has to think of a
-    string to assert against. Comments are stripped first - the reasoning above
+    half of the same claim, and it catches a case they cannot: a new reader of
+    the field in a component nobody thought to write an assertion against.
+    What it actually does is `"playlists_created" in js(script)` for each file
+    `scripts()` returns - a SUBSTRING presence check on stripped source, so a
+    reader that never spells the field, `stats["playlists_" + "created"]`,
+    is not found. Comments are stripped first - the reasoning above
     is written out in `export.js`, and prose about a field must not be what
     satisfies a check that the field is unused. Once, by `js()`: this stripped
     `^\s*//` a second time on its own, which was inert (deleting it left this
