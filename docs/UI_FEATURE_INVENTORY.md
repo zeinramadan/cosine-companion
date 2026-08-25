@@ -1321,8 +1321,51 @@ boundary is strictly greater than 200, so a name of exactly 200 characters is le
 
 A **doubled `.m3u` is impossible**, contrary to what this document previously claimed: the
 sanitiser drops `.`, so the only dot in the name is the extension the function appends, and when
-the name exceeds 200 characters that extension sits beyond the cut. Two different seeds that
-sanitise to the same name overwrite each other silently.
+the name exceeds 200 characters that extension sits beyond the cut. Two different seeds that sanitise to the same name no longer
+overwrite each other. `_unique_playlist_path` reserves each written name for the run, keyed on
+NFC + casefold so the reservation is at least as broad as APFS's own equivalence. Ownership does
+NOT depend on the export request or its arrival order: `_legacy_filename_plan` pre-passes the
+entire captured library snapshot and gives the legacy filename to the LEXICOGRAPHICALLY SMALLEST
+TRACK ID STRING in each collision group. Every other member is given `[ID <track_id>]` before the
+extension; the id is sanitised and capped at 64 characters, and the marker is appended AFTER
+truncation so it cannot be cut off. Pre-existing files in the destination are ignored when
+allocating. With the same library membership and collision-forming metadata, full and subset
+re-exports therefore reuse the same names rather than accumulating suffixes.
+
+Two different long path-fallback IDs can share the same sanitised 64-character prefix. The
+written-name reservation loop prevents a clash within one run: the first gets `[ID <prefix>]` and
+later matches retry as `[ID <prefix>-2]`, `-3`, and so on. Marker ownership in that exceptional
+group is request-order dependent, however, and a later subset run does not reserve the other
+track's pre-existing destination file, so it can overwrite that file. There are zero
+path-fallback IDs in the current real library, so this is documented rather than given more
+allocation machinery.
+
+That pre-pass is also the single source of each seed's artist, title, legacy filename and
+collision key: the export loop consumes the recorded tuple instead of applying a second copy of
+the missing-column defaults. Consequently its bare owner-map lookup cannot be given a collision
+key that the ownership pass did not create.
+
+Residual behaviour when the captured library state changes is not destination reconciliation:
+the exporter neither reads nor removes old paths. Deleting a non-owner therefore orphans its old
+`[ID <track_id>]` file. Deleting the owner moves the plain name to the next lexicographic member;
+re-exporting that survivor overwrites the deleted owner's plain file and leaves the survivor's
+old suffixed file stale. Artist/title edits that move a track into or out of a collision, and
+reindexing that changes track IDs, can likewise move ownership and leave old names stale.
+
+There is one materially different residual: an addition, reindex or artist/title edit that FORMS
+a collision whose new member is lexicographically smaller than the live incumbent. A subset
+re-export of only that new member silently overwrites the incumbent's plain-name playlist without
+creating the incumbent's newly required suffixed copy. This is the only state-change case in which
+a LIVE track loses its playlist; a full re-export would recreate the incumbent under its suffixed
+name. It is inherited from the round-2 implementation, not introduced by the library-anchored
+round-3 pre-pass. Adding a lexicographically larger member does not displace the incumbent: that
+member receives a suffixed name when exported.
+
+Measured on the real 1,532-track library: 1,529 distinct legacy names, 3 colliding pairs, 1,532
+files written, 3 suffixed, and all 1,532 filenames invariant under every seed ordering (base,
+reversed and shuffled produce a symmetric difference of zero). The 1,526/1,532 figure recorded
+before the pre-pass described the order-dependent build and no longer applies.
+`playlists_created` is set from the count of distinct written paths, so it means files.
 
 ### 3.7 Settings file
 
