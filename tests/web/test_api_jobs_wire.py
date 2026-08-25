@@ -23,14 +23,13 @@ from web.server import API_ALLOWED_METHODS, CocoServer
 
 WAIT = 5.0
 
-#: Every job route this PR ships. The auth cases below are parameterised over
-#: this so a route added later without a token check is a failure rather than
-#: an omission. ``POST /api/jobs/reindex`` is deliberately absent - it was cut
-#: on review; see ``web.api``'s DEFERRED note.
+#: Every job route. The auth cases below are parameterised over this so a route
+#: added later without a token check is a failure rather than an omission.
 JOB_ROUTES = [
     ("GET", "/api/jobs"),
     ("GET", "/api/jobs/anything"),
     ("POST", "/api/jobs/export"),
+    ("POST", "/api/jobs/reindex"),
     ("POST", "/api/jobs/anything/cancel"),
 ]
 
@@ -110,6 +109,25 @@ def test_a_job_route_without_a_token_is_401(job_client, method, path):
 
     assert response.status == 401
     assert response.error_code == "unauthorized"
+
+
+@pytest.mark.parametrize("verb", ["GET", "POST", "HEAD", "TRACE", "FROBNICATE"])
+def test_every_verb_on_reindex_uses_healths_single_unauthenticated_choke_point(
+    job_client, verb
+):
+    """No handler or verb-specific door can run before the shared token check."""
+    reindex = job_client.request(verb, "/api/jobs/reindex")
+    health = job_client.request(verb, "/api/health")
+
+    assert reindex.status == health.status == 401
+    assert reindex.headers["Content-Type"] == health.headers["Content-Type"]
+    assert reindex.headers["Content-Length"] == health.headers["Content-Length"]
+    assert reindex.body == health.body
+    assert "json" in reindex.content_type
+    if verb == "HEAD":
+        assert reindex.body == b""
+    else:
+        assert reindex.error_code == health.error_code == "unauthorized"
 
 
 @pytest.mark.parametrize("method, path", JOB_ROUTES)
