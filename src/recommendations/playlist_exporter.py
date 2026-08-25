@@ -44,7 +44,7 @@ def sanitise_filename_part(value: str) -> str:
 
 
 def playlist_filename(artist: str, title: str) -> str:
-    """Return the legacy per-seed filename: ``{artist} - {title}.m3u``."""
+    """Return the legacy filename: ``{safe_artist} - {safe_title}.m3u``."""
     filename = f"{sanitise_filename_part(artist)} - {sanitise_filename_part(title)}.m3u"
 
     # Limit filename length
