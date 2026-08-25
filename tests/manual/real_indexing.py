@@ -3,8 +3,9 @@
 
 Mocked tests cannot prove the Tk wiring, so this drives the actual window with
 the actual Essentia embedder over a handful of real tracks, then repeats it and
-cancels partway. Everything is written to a throwaway data directory; data/ and
-/Users/zein/dj-cosine are only ever READ.
+cancels partway. ReindexWindow's required data_dir binds every index and
+playlist write to a fresh throwaway directory. The checkout's data and model
+files, including /Users/zein/dj-cosine, are only ever read.
 """
 import shutil, sys, tempfile, time
 from pathlib import Path
@@ -15,13 +16,7 @@ REPO = Path(os.environ.get("COCO_REPO", Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(REPO / "src"))
 
 TMP = Path(tempfile.mkdtemp(prefix="coco-realindex-"))
-DATA = TMP / "data"; DATA.mkdir()
-
-import core.loader as L, core.persistence as P, core.deleted_tracks as D
-L.META_PQ = DATA / "meta.parquet"; L.EMB_PQ = DATA / "embeddings.parquet"
-P.META_PQ = DATA / "meta.parquet"; P.EMB_PQ = DATA / "embeddings.parquet"
-P.IDX_NPY = DATA / "index.npy";    P.IDS_JSON = DATA / "ids.json"
-D.DELETED_TRACKS_JSON = DATA / "deleted_tracks.json"
+SCRATCH_DATA = TMP / "data"; SCRATCH_DATA.mkdir()
 
 # The .pb model is gitignored, so it only exists in the primary checkout.
 # READ ONLY - nothing is written there.
@@ -71,7 +66,7 @@ def expect(cond, label):
 # ---------------------------------------------------------------- run 1
 print("\n=== RUN 1: full pass, no cancellation ===")
 t0 = time.time()
-win = rw.ReindexWindow(root, str(xml), force_full=False)
+win = rw.ReindexWindow(root, str(xml), force_full=False, data_dir=SCRATCH_DATA)
 
 def poll1():
     if not win.indexing_thread.is_alive() and win.message_queue.empty():
@@ -107,18 +102,18 @@ expect(str(win.status_label.cget("fg")) == "green", "status colour green")
 buttons = [w.cget("text") for w in win.button_frame.winfo_children()]
 expect(buttons == ["Done"], f"Cancel replaced by Done (got {buttons})")
 expect(not win.cancel_requested, "cancel flag clear")
-expect((DATA / "meta.parquet").exists(), "meta.parquet written")
-expect(len(pd.read_parquet(DATA / "meta.parquet")) == N, "all tracks persisted")
+expect((SCRATCH_DATA / "meta.parquet").exists(), "meta.parquet written")
+expect(len(pd.read_parquet(SCRATCH_DATA / "meta.parquet")) == N, "all tracks persisted")
 expect(sys.stdout is not None and hasattr(sys.stdout, "isatty"), "sys.stdout never swapped")
 win.destroy()
 
 # ---------------------------------------------------------------- run 2
 print("\n=== RUN 2: cancel partway ===")
-shutil.rmtree(DATA); DATA.mkdir()
+shutil.rmtree(SCRATCH_DATA); SCRATCH_DATA.mkdir()
 M = max(N, 6)
 xml2 = write_xml(TMP / "small2.xml", usable.head(M))
 t0 = time.time()
-win2 = rw.ReindexWindow(root, str(xml2), force_full=False)
+win2 = rw.ReindexWindow(root, str(xml2), force_full=False, data_dir=SCRATCH_DATA)
 cancelled_at = {}
 
 def poll2():
@@ -165,7 +160,7 @@ expect(win2.status_label.cget("text") == "⚠️ Indexing cancelled", "orange ca
 expect(str(win2.status_label.cget("fg")) == "orange", "status colour orange")
 buttons2 = [w.cget("text") for w in win2.button_frame.winfo_children()]
 expect(buttons2 == ["Close"], f"Cancel replaced by Close (got {buttons2})")
-expect(not (DATA / "meta.parquet").exists(),
+expect(not (SCRATCH_DATA / "meta.parquet").exists(),
        "cancelled run persisted NOTHING (work discarded, defect #4)")
 win2.destroy()
 root.destroy()

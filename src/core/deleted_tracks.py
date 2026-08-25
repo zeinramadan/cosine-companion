@@ -136,7 +136,9 @@ def remove_from_deleted_tracks(track_ids: Set[str]) -> None:
     save_deleted_tracks_with_info(existing_deleted)
 
 
-def filter_deleted_tracks(df, track_id_column: str = 'track_id', progress=None):
+def filter_deleted_tracks(
+    df, track_id_column: str = 'track_id', progress=None, path=None
+):
     """
     Filter out tracks that have been manually deleted by the user.
     
@@ -144,11 +146,12 @@ def filter_deleted_tracks(df, track_id_column: str = 'track_id', progress=None):
         df: DataFrame with track data
         track_id_column: Name of the column containing track IDs
         progress: Optional callable(phase, current, total, message)
+        path: Explicit deleted-tracks file for the library being indexed
 
     Returns:
         Filtered DataFrame without deleted tracks
     """
-    deleted_ids = load_deleted_tracks(progress=progress)
+    deleted_ids = load_deleted_tracks(progress=progress, path=path)
     
     if not deleted_ids:
         return df

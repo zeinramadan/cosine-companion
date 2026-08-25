@@ -5,9 +5,11 @@ cannot: Tkinter wiring, a real Essentia indexing pass, and a measurement over
 the whole real library.
 
 `web_jobs_real_export.py` reads `data/` and writes only into a temp directory.
-`smoke.py` and `real_indexing.py` drive the app against a **throwaway copy** of
-`data/`; the real data directory is only ever read, and `smoke.py` verifies that
-by fingerprinting every file's size and mtime before and after the run.
+`smoke.py` drives the app against a **throwaway copy** of `data/` and verifies
+the real directory by fingerprinting every file's size and mtime before and
+after the run. `real_indexing.py` reads real track metadata and audio, but its
+required `ReindexWindow.data_dir` binds every index and playlist write to a new
+scratch directory. The real data directory is only ever read.
 `ranking_equivalence.py` only reads.
 
 ## `smoke.py` — workflow coverage

@@ -381,7 +381,9 @@ You only need to do this once. After that, you can add new tracks incrementally.
             # produced.
             self.message_queue.put(('log', event.message))
 
-        service = IndexingService(SettingsStore(DATA / "settings.json"))
+        service = IndexingService(
+            SettingsStore(DATA / "settings.json"), data_dir=DATA
+        )
 
         try:
             # Run indexing with structured progress instead of a process-global

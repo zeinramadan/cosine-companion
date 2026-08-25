@@ -525,16 +525,12 @@ def test_a_completed_indexing_write_uses_the_same_generation_commit(
     assert (tmp_library / "library_index.json").is_file()
     deletion_generation = read_index_generation(tmp_library)
 
-    monkeypatch.setattr(loader, "META_PQ", tmp_library / "meta.parquet")
-    existing_meta, existing_embeddings = loader.load_existing_data()
+    existing_meta, existing_embeddings = loader.load_existing_data(tmp_library)
     assert len(existing_meta) == len(existing_embeddings) == 3
 
-    monkeypatch.setattr(persistence, "META_PQ", tmp_library / "meta.parquet")
-    monkeypatch.setattr(persistence, "EMB_PQ", tmp_library / "embeddings.parquet")
-    monkeypatch.setattr(persistence, "IDX_NPY", tmp_library / "index.npy")
-    monkeypatch.setattr(persistence, "IDS_JSON", tmp_library / "ids.json")
     replacement = LibrarySession.load(tmp_library).snapshot()
     persistence.save_index_data(
+        tmp_library,
         replacement.meta,
         replacement.emb_ix.reset_index(),
         replacement.vectors,
@@ -643,10 +639,6 @@ from core.loader import load_all
 data_dir = Path(sys.argv[1])
 port = int(sys.argv[2])
 meta, _meta_ix, emb_ix, _index, vectors, ids = load_all(data_dir)
-persistence.META_PQ = data_dir / "meta.parquet"
-persistence.EMB_PQ = data_dir / "embeddings.parquet"
-persistence.IDX_NPY = data_dir / "index.npy"
-persistence.IDS_JSON = data_dir / "ids.json"
 real_lock = index_store._index_lock
 
 @contextlib.contextmanager
@@ -660,7 +652,7 @@ def paused_lock(lock_data_dir, exclusive):
         yield
 
 index_store._index_lock = paused_lock
-persistence.save_index_data(meta, emb_ix.reset_index(), vectors, ids)
+persistence.save_index_data(data_dir, meta, emb_ix.reset_index(), vectors, ids)
 """
     child_environment = os.environ.copy()
     child_environment["PYTHONPATH"] = os.pathsep.join(
@@ -769,3 +761,64 @@ def test_reload_uses_the_same_data_dir(tmp_library):
     session.reload()
 
     assert session.data_dir == tmp_library
+
+
+def test_index_refresh_publishes_before_a_waiting_delete(tmp_library):
+    """The mutation lock closes commit-to-reload's stale-deletion interval."""
+    session = LibrarySession.load(tmp_library)
+    committed = threading.Event()
+    release_refresh = threading.Event()
+    delete_started = threading.Event()
+    delete_finished = threading.Event()
+    failures = []
+
+    expanded_rows = [
+        ("t1", "Artist A", "Title One", "8A", 128.0, [1.0, 0.0, 0.0, 0.0]),
+        ("t2", "Artist B", "Title Two", "9A", 130.0, [0.0, 1.0, 0.0, 0.0]),
+        ("t3", "Artist C", "Title Three", "8B", 124.0, [0.0, 0.0, 1.0, 0.0]),
+        ("t4", "Artist D", "Title Four", "5A", 126.0, [0.0, 0.0, 0.0, 1.0]),
+        ("t5", "Artist E", "Title Five", "6A", 127.0, [0.5, 0.5, 0.5, 0.5]),
+    ]
+
+    def index_then_refresh():
+        try:
+            with session.refresh_after_indexing():
+                _write_library(tmp_library, expanded_rows)
+                committed.set()
+                if not release_refresh.wait(timeout=5):
+                    raise TimeoutError("test did not release indexing refresh")
+        except BaseException as error:  # surfaced in the parent below
+            failures.append(error)
+
+    def delete():
+        try:
+            delete_started.set()
+            session.delete_tracks(["t1"])
+        except BaseException as error:  # surfaced in the parent below
+            failures.append(error)
+        finally:
+            delete_finished.set()
+
+    indexing_thread = threading.Thread(target=index_then_refresh)
+    deletion_thread = threading.Thread(target=delete)
+    try:
+        indexing_thread.start()
+        assert committed.wait(timeout=5), "indexing did not reach its commit"
+        deletion_thread.start()
+        assert delete_started.wait(timeout=5), "deletion thread did not start"
+        assert not delete_finished.wait(timeout=0.1), (
+            "delete crossed the indexing commit-to-refresh interval"
+        )
+        release_refresh.set()
+        indexing_thread.join(timeout=5)
+        deletion_thread.join(timeout=5)
+    finally:
+        release_refresh.set()
+        indexing_thread.join(timeout=5)
+        deletion_thread.join(timeout=5)
+
+    assert not indexing_thread.is_alive()
+    assert not deletion_thread.is_alive()
+    assert failures == []
+    reloaded = LibrarySession.load(tmp_library)
+    assert reloaded.ids == ["t2", "t3", "t4", "t5"]

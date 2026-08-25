@@ -4,16 +4,22 @@
 import queue
 import threading
 import tkinter as tk
+from pathlib import Path
 from tkinter import messagebox, ttk
 
 
 class ReindexWindow(tk.Toplevel):
     """Window for reindexing the library."""
     
-    def __init__(self, parent, xml_path, force_full=False):
+    def __init__(self, parent, xml_path, force_full=False, *, data_dir):
         super().__init__(parent)
         self.xml_path = xml_path
         self.force_full = force_full
+        # The owner of the window must name the index directory.  In
+        # particular, a bare Tk parent is not evidence that the configured
+        # application library is the intended write target.
+        self.data_dir = Path(data_dir)
+        self.library = getattr(parent, "library", None)
         self.indexing_complete = False
         self.parent_app = parent
         self.message_queue = queue.Queue()
@@ -153,7 +159,6 @@ class ReindexWindow(tk.Toplevel):
     
     def run_indexing(self):
         """Run the indexing process (in background thread)."""
-        from config import DATA
         from services import IndexingService, SettingsStore
 
         def on_progress(event):
@@ -163,7 +168,11 @@ class ReindexWindow(tk.Toplevel):
             # construction.
             self.message_queue.put(('log', event.message))
 
-        service = IndexingService(SettingsStore(DATA / "settings.json"))
+        service = IndexingService(
+            SettingsStore(self.data_dir / "settings.json"),
+            data_dir=self.data_dir,
+            library=self.library,
+        )
 
         try:
             # Run indexing with structured progress instead of a process-global

@@ -125,25 +125,18 @@ def write_xml_with_playlists(path, tracks):
 def indexing(tmp_path, monkeypatch):
     """An isolated data directory, an export WITH playlists, a mocked embedder.
 
-    The monkeypatched attributes are the ones ``test_indexing_service.py``
-    patches, for the same reason: these tests must never read or write the
-    maintainer's real library, and ``refresh_playlists`` derives its data
-    directory from ``persistence.META_PQ`` precisely so that patching it is
-    enough.
+    The service is explicitly bound to ``data`` so these tests never read or
+    write the maintainer's real library.
     """
     data = tmp_path / "data"
     data.mkdir()
     audio = tmp_path / "audio"
     audio.mkdir()
 
-    monkeypatch.setattr(loader_module, "META_PQ", data / "meta.parquet")
-    monkeypatch.setattr(loader_module, "EMB_PQ", data / "embeddings.parquet")
-    monkeypatch.setattr(persistence_module, "META_PQ", data / "meta.parquet")
-    monkeypatch.setattr(persistence_module, "EMB_PQ", data / "embeddings.parquet")
-    monkeypatch.setattr(persistence_module, "IDX_NPY", data / "index.npy")
-    monkeypatch.setattr(persistence_module, "IDS_JSON", data / "ids.json")
     monkeypatch.setattr(
-        deleted_tracks_module, "DELETED_TRACKS_JSON", data / "deleted.json"
+        deleted_tracks_module,
+        "DELETED_TRACKS_JSON",
+        data / "deleted_tracks.json",
     )
     monkeypatch.setattr(pipeline_module, "DiscogsEffnetEmbedder", FakeEmbedder)
     monkeypatch.setattr(
@@ -157,7 +150,9 @@ def indexing(tmp_path, monkeypatch):
         tracks.append((track_id, f"Title {index}", f"Artist {index}", audio_file))
     xml = write_xml_with_playlists(tmp_path / "library.xml", tracks)
 
-    service = IndexingService(SettingsStore(data / "settings.json"))
+    service = IndexingService(
+        SettingsStore(data / "settings.json"), data_dir=data
+    )
     return service, xml, data, audio
 
 

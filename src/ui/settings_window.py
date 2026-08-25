@@ -418,7 +418,12 @@ class SettingsWindow(tk.Toplevel):
         
         # Close settings and show reindex window
         self.destroy()
-        ReindexWindow(self.master, xml_path, force_full=False)
+        ReindexWindow(
+            self.master,
+            xml_path,
+            force_full=False,
+            data_dir=self.master.library.data_dir,
+        )
     
     def full_reindex(self):
         """Trigger full library re-index."""
@@ -456,4 +461,9 @@ class SettingsWindow(tk.Toplevel):
         
         # Close settings and show reindex window
         self.destroy()
-        ReindexWindow(self.master, xml_path, force_full=True)
+        ReindexWindow(
+            self.master,
+            xml_path,
+            force_full=True,
+            data_dir=self.master.library.data_dir,
+        )

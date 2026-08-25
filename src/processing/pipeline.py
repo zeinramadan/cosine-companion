@@ -4,10 +4,11 @@
 import os
 import sys
 import time
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
-from config import DATA
 from core.loader import load_existing_data, find_new_tracks
 from core.persistence import merge_embeddings, save_index_data
 from core.duplicates import remove_simple_duplicates
@@ -81,7 +82,7 @@ def _load_embedder():
     return DiscogsEffnetEmbedder
 
 
-def refresh_playlists(rb_xml, report):
+def refresh_playlists(rb_xml, report, data_dir):
     """Re-import the playlist tables from ``rb_xml`` beside the index files.
 
     Called at every terminal outcome of ``index_library`` so a normal reindex
@@ -112,24 +113,16 @@ def refresh_playlists(rb_xml, report):
     in full - and the standalone command is also what the staleness banner
     names. A failure IS reported: silence is the success case only.
 
-    THE DATA DIRECTORY IS DERIVED, NOT ASSUMED
-    ------------------------------------------
-    From ``core.persistence.META_PQ``, which is where ``save_index_data`` just
-    wrote ``meta.parquet``. In production that is ``config.DATA``. In the
-    indexing tests it is a ``tmp_path``, because those tests isolate themselves
-    by monkeypatching that module attribute rather than ``config.DATA`` - so
-    reading ``config.DATA`` here would have the test suite parse a fixture XML
-    and write three files into the maintainer's real library.
+    ``data_dir`` is the same explicit directory the index read and write paths
+    receive. Playlist refresh must not derive a second target from a module
+    global after the index generation has committed somewhere else.
     """
-    # Both imported lazily, for the same reason the embedder is: nothing that
-    # merely imports this module should pull the service layer in behind it.
-    from pathlib import Path as _Path
-
-    from core import persistence
+    # Imported lazily, for the same reason the embedder is: nothing that merely
+    # imports this module should pull the service layer in behind it.
     from services.playlist_import import import_playlists
 
     try:
-        return import_playlists(rb_xml, data_dir=_Path(persistence.META_PQ).parent)
+        return import_playlists(rb_xml, data_dir=Path(data_dir))
     except Exception as error:  # noqa: BLE001 - see below
         # Never fails the run. In the success path the four index files are
         # already written by the time this is reached, and a malformed
@@ -156,8 +149,15 @@ def make_reporter(progress=None):
     return report
 
 
-def index_library(rb_xml: str, force_full: bool = False, sample_size: int | None = None,
-                  cancel_check=None, progress=None):
+def index_library(
+    rb_xml: str,
+    *,
+    data_dir,
+    force_full: bool = False,
+    sample_size: int | None = None,
+    cancel_check=None,
+    progress=None,
+):
     """
     Incremental indexing pipeline: parse XML, generate embeddings for new tracks, build index.
     
@@ -166,6 +166,8 @@ def index_library(rb_xml: str, force_full: bool = False, sample_size: int | None
     
     Args:
         rb_xml: Path to Rekordbox XML export file
+        data_dir: Directory whose existing index is read and whose replacement
+            generation is committed
         force_full: If True, ignore existing data and reprocess all tracks
         sample_size: If provided, limit processing to this many new tracks (for testing)
         cancel_check: Optional callable that returns True if cancellation is requested
@@ -178,6 +180,7 @@ def index_library(rb_xml: str, force_full: bool = False, sample_size: int | None
         (new tracks existed but none could be embedded). Only the first carries
         ``total_tracks_indexed`` / ``new_tracks_added``.
     """
+    data_dir = Path(data_dir)
     report = make_reporter(progress)
     printing = progress is None
 
@@ -190,7 +193,9 @@ def index_library(rb_xml: str, force_full: bool = False, sample_size: int | None
         report("start", "🔄 Force full reindex requested - ignoring existing data")
         existing_meta, existing_emb = None, None
     else:
-        existing_meta, existing_emb = load_existing_data(progress=progress)
+        existing_meta, existing_emb = load_existing_data(
+            data_dir, progress=progress
+        )
     
     # Read current XML
     report("read_xml", "📖 Reading Rekordbox XML...")
@@ -214,7 +219,11 @@ def index_library(rb_xml: str, force_full: bool = False, sample_size: int | None
     
     # Filter out tracks that user has manually deleted
     report("deleted", "🔍 Checking for previously deleted tracks...")
-    current_meta = filter_deleted_tracks(current_meta, progress=progress)
+    current_meta = filter_deleted_tracks(
+        current_meta,
+        progress=progress,
+        path=data_dir / "deleted_tracks.json",
+    )
     
     # Find new tracks to process
     new_tracks = find_new_tracks(current_meta, existing_meta, progress=progress)
@@ -225,7 +234,7 @@ def index_library(rb_xml: str, force_full: bool = False, sample_size: int | None
         new_tracks = new_tracks.head(sample_size)
     
     if len(new_tracks) == 0:
-        refresh_playlists(rb_xml, report)
+        refresh_playlists(rb_xml, report, data_dir)
         report("complete", "✅ No new tracks to process! Your index is up to date.")
         return {"status": STATUS_UP_TO_DATE, "new_tracks_found": 0}
     
@@ -276,7 +285,7 @@ def index_library(rb_xml: str, force_full: bool = False, sample_size: int | None
             sys.stdout.flush()
     
     if not new_vectors:
-        refresh_playlists(rb_xml, report)
+        refresh_playlists(rb_xml, report, data_dir)
         report("complete", "❌ No new embeddings generated. Check audio paths/codecs.")
         return {"status": STATUS_NO_EMBEDDINGS, "new_tracks_found": total}
     
@@ -301,51 +310,49 @@ def index_library(rb_xml: str, force_full: bool = False, sample_size: int | None
         existing_emb, new_emb_df, new_track_ids, new_vectors_array
     )
     
-    # Merge metadata properly - keep existing metadata + add new metadata
-    # This ensures we don't lose metadata for tracks that might not be in current XML
+    # Build metadata in the exact row order used by embeddings/ids/index. Keep
+    # existing tracks that are absent from the current XML, but never persist a
+    # current-XML row whose audio failed to produce an embedding.
     if existing_meta is not None:
-        # Update existing metadata with current XML data (for tracks that are in the XML)
-        # Keep all existing tracks, update with new values where available
         report("merge", "🔄 Merging metadata...")
-        
-        # Create a dict from current_meta for fast lookup
-        current_meta_dict = {row['track_id']: row for _, row in current_meta.iterrows()}
-        
-        # Build combined metadata by merging existing and new
-        combined_meta_rows = []
-        seen_ids = set()
-        
-        # First, add/update all tracks from current XML
-        for tid in combined_track_ids:
-            if tid in current_meta_dict:
-                combined_meta_rows.append(current_meta_dict[tid])
-                seen_ids.add(tid)
-        
-        # Then add any tracks from existing_meta that weren't in current XML
-        # (these are tracks that were previously indexed but removed from Rekordbox)
-        for _, row in existing_meta.iterrows():
-            tid = row['track_id']
-            if tid in combined_track_ids and tid not in seen_ids:
-                combined_meta_rows.append(row.to_dict())
-                seen_ids.add(tid)
-        
-        combined_meta = pd.DataFrame(combined_meta_rows)
-    else:
-        combined_meta = current_meta
+
+    current_meta_by_id = {
+        row["track_id"]: row.to_dict() for _, row in current_meta.iterrows()
+    }
+    existing_meta_by_id = (
+        {}
+        if existing_meta is None
+        else {
+            row["track_id"]: row.to_dict() for _, row in existing_meta.iterrows()
+        }
+    )
+    combined_meta_rows = []
+    for track_id in combined_track_ids:
+        row = current_meta_by_id.get(track_id, existing_meta_by_id.get(track_id))
+        if row is None:
+            raise ValueError(f"No metadata found for indexed track {track_id!r}")
+        combined_meta_rows.append(row)
+    combined_meta = pd.DataFrame(combined_meta_rows)
     
     # Save all data
-    save_index_data(combined_meta, combined_emb, combined_vectors, combined_track_ids)
+    save_index_data(
+        data_dir,
+        combined_meta,
+        combined_emb,
+        combined_vectors,
+        combined_track_ids,
+    )
 
     # AFTER the index is saved, not before: the summary counts unresolvable
     # entries against meta.parquet, and counting them against the pre-reindex
     # file would report a shortfall this very run just fixed.
-    refresh_playlists(rb_xml, report)
+    refresh_playlists(rb_xml, report, data_dir)
     
     report("complete", "=" * 50)
     report("complete", f"✅ Indexing complete!")
     report("complete", f"   • Total tracks indexed: {len(combined_track_ids)}")
     report("complete", f"   • New tracks added: {len(new_track_ids)}")
-    report("complete", f"   • Data saved to: {DATA}/")
+    report("complete", f"   • Data saved to: {data_dir}/")
     if printing:
         print()  # the queue writer always dropped this blank line
     report("complete", "🚀 Ready to use! Run 'python cosine_companion.py ui' to start the application.")

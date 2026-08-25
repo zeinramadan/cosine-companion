@@ -54,6 +54,7 @@ CI job (which installs only numpy/pandas/pyarrow/pytest) and PR 3's web server.
 """
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Optional
 
 # Mirrored from processing.pipeline so that importing this module stays free of
@@ -152,9 +153,24 @@ ProgressCallback = Callable[[ProgressEvent], None]
 class IndexingService:
     """Runs the indexing pipeline and reports progress as structured events."""
 
-    def __init__(self, settings):
-        """Bind to a SettingsStore, which holds the configured XML path."""
+    def __init__(self, settings, data_dir, library=None):
+        """Bind the pipeline and optional live session to one data directory.
+
+        ``library`` is optional for callers such as first-run onboarding, where
+        no snapshot exists yet. When supplied, it owns refresh publication and
+        mutation serialisation through ``refresh_after_indexing``.
+        """
         self.settings = settings
+        self.data_dir = Path(data_dir)
+        self.library = library
+        if library is not None:
+            service_dir = self.data_dir.resolve()
+            library_dir = Path(library.data_dir).resolve()
+            if service_dir != library_dir:
+                raise ValueError(
+                    "IndexingService data_dir must match LibrarySession.data_dir "
+                    f"({service_dir} != {library_dir})"
+                )
 
     def run(
         self,
@@ -184,13 +200,24 @@ class IndexingService:
                 progress(ProgressEvent(phase=phase, current=current,
                                        total=total, message=message))
 
-        summary = index_library(
-            xml_path,
-            force_full=force_full,
-            sample_size=sample_size,
-            cancel_check=(cancel.is_set if cancel is not None else None),
-            progress=callback,
-        )
+        def run_pipeline():
+            return index_library(
+                xml_path,
+                data_dir=self.data_dir,
+                force_full=force_full,
+                sample_size=sample_size,
+                cancel_check=(cancel.is_set if cancel is not None else None),
+                progress=callback,
+            )
+
+        if self.library is None:
+            summary = run_pipeline()
+        else:
+            # The session owns both its snapshot and deletion. It therefore
+            # owns the one interval that must be indivisible to mutations:
+            # pipeline commit through publishing the freshly loaded snapshot.
+            with self.library.refresh_after_indexing():
+                summary = run_pipeline()
 
         return IndexResult(
             status=summary["status"],

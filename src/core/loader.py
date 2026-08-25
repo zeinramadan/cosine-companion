@@ -40,11 +40,14 @@ def _report(progress, phase, message):
         progress(phase, 0, 0, message)
 
 
-def load_existing_data(progress=None) -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
+def load_existing_data(
+    data_dir: Path, progress=None
+) -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
     """
     Load existing metadata and embeddings if they exist.
 
     Args:
+        data_dir: Directory that owns the index being extended
         progress: Optional callable(phase, current, total, message). When given,
             messages are reported through it instead of being printed.
 
@@ -53,7 +56,7 @@ def load_existing_data(progress=None) -> Tuple[Optional[pd.DataFrame], Optional[
     """
     try:
         meta_bytes, emb_bytes, _index_bytes, _ids_bytes = verified_index_payloads(
-            Path(META_PQ).parent
+            Path(data_dir)
         )
         existing_meta = pd.read_parquet(io.BytesIO(meta_bytes))
         existing_emb = pd.read_parquet(io.BytesIO(emb_bytes))

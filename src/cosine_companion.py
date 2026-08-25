@@ -46,8 +46,11 @@ def index(
     sample: int = typer.Option(None, "--sample", "-s", help="Limit number of new tracks to process (debug)")
 ):
     """Index your library: parse XML and embed audio (incremental by default)."""
+    from config import DATA
     from processing.pipeline import index_library
-    index_library(xml, force_full=force, sample_size=sample)
+    index_library(
+        xml, data_dir=DATA, force_full=force, sample_size=sample
+    )
 
 
 @cli.command()
