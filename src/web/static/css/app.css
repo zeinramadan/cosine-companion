@@ -463,9 +463,11 @@ button {
 
 /* The off-screen textarea `clipboard.js` falls back to when the async
    clipboard API is refused. It is never seen; it only has to be focusable and
-   out of the flow. Here rather than inline in the script so that no script
-   writes geometry at all - see
-   test_no_script_puts_css_on_the_page_outside_the_stylesheet. */
+   out of the flow. Here rather than inline in the script so that this rule is
+   in the sheet the source-text checks read - see
+   test_no_script_puts_css_on_the_page_outside_the_stylesheet, which searches
+   stripped JavaScript for five literal words line by line and establishes
+   nothing about what a script does. */
 .clipboard-scratch {
   position: fixed;
   opacity: 0;
