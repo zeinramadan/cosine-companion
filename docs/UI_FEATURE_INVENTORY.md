@@ -1337,16 +1337,27 @@ collision key: the export loop consumes the recorded tuple instead of applying a
 the missing-column defaults. Consequently its bare owner-map lookup cannot be given a collision
 key that the ownership pass did not create.
 
-Ownership can still move when that library state changes, and the exporter does not clean up old
-paths. In particular, deleting the owner of the LEXICOGRAPHICALLY SMALLEST TRACK ID STRING makes
-a surviving singleton take the plain name while its old `[ID <track_id>]` file remains stale in
-the destination; artist/title changes
-that form or dissolve collisions can likewise leave stale files. Measured on the real 1,532-track
-library: 1,529 distinct legacy names, 3 colliding pairs, 1,532 files written, 3 suffixed, and all
-1,532 filenames invariant under every seed ordering (base, reversed and shuffled produce a
-symmetric difference of zero). The 1,526/1,532 figure recorded before the pre-pass described the
-order-dependent build and no longer applies. `playlists_created` is set from the count of
-distinct written paths, so it means files.
+Residual behaviour when the captured library state changes is not destination reconciliation:
+the exporter neither reads nor removes old paths. Deleting a non-owner therefore orphans its old
+`[ID <track_id>]` file. Deleting the owner moves the plain name to the next lexicographic member;
+re-exporting that survivor overwrites the deleted owner's plain file and leaves the survivor's
+old suffixed file stale. Artist/title edits that move a track into or out of a collision, and
+reindexing that changes track IDs, can likewise move ownership and leave old names stale.
+
+There is one materially different residual: an addition, reindex or artist/title edit that FORMS
+a collision whose new member is lexicographically smaller than the live incumbent. A subset
+re-export of only that new member silently overwrites the incumbent's plain-name playlist without
+creating the incumbent's newly required suffixed copy. This is the only state-change case in which
+a LIVE track loses its playlist; a full re-export would recreate the incumbent under its suffixed
+name. It is inherited from the round-2 implementation, not introduced by the library-anchored
+round-3 pre-pass. Adding a lexicographically larger member does not displace the incumbent: that
+member receives a suffixed name when exported.
+
+Measured on the real 1,532-track library: 1,529 distinct legacy names, 3 colliding pairs, 1,532
+files written, 3 suffixed, and all 1,532 filenames invariant under every seed ordering (base,
+reversed and shuffled produce a symmetric difference of zero). The 1,526/1,532 figure recorded
+before the pre-pass described the order-dependent build and no longer applies.
+`playlists_created` is set from the count of distinct written paths, so it means files.
 
 ### 3.7 Settings file
 
