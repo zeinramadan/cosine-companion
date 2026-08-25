@@ -109,8 +109,9 @@ _QUOTE = re.compile(r"""["']""")
 #: CSS WHITESPACE IS FIVE CHARACTERS: space, tab, line feed, form feed and
 #: carriage return. Python's `\s` is a much larger set on a `str` - it also
 #: matches U+000B, U+001C-U+001F, U+0085, U+00A0, U+3000 and every other
-#: Unicode space - and every anchored lookup in this file is built out of
-#: `\s*`. So
+#: Unicode space - and the declaration-boundary patterns here are built out of
+#: `\s*`: `_DECLARATION_BOUNDARY`, the `\s*:\s*` in `_declarations_of`,
+#: `_CUSTOM_DECLARATION`, `_ANY_DECLARATION` and `_MIXED_CASE_PROPERTY`. So
 #:
 #:     .exportv__progress {<U+00A0>position: sticky; ... }
 #:
@@ -190,10 +191,14 @@ MODELLED_AT_RULES = ("media", "keyframes")
 _ESCAPE = re.compile(r"\\")
 
 #: A property NAME in CSS is ASCII case-insensitive: `POSITION: static` and
-#: `position: static` are the same declaration to a browser, and every lookup
-#: in this file is case-sensitive. So a later `.exportv__progress { POSITION:
-#: static; }` beat the checked rule while `_declaration("position", ...)` never
-#: saw it - found alongside the escape above, and green.
+#: `position: static` are the same declaration to a browser, and the NAME
+#: lookups here are case-sensitive - `_declarations_of` interpolates
+#: `re.escape(name)` into a pattern compiled with no flags, and so do
+#: `_CUSTOM_DECLARATION` and `_ANY_DECLARATION`. (The one `re.I` in this file
+#: is `_IMPORTANT`, which matches the FLAG, not a name.) So a later
+#: `.exportv__progress { POSITION: static; }` beat the checked rule while
+#: `_declaration("position", ...)` never saw it - found alongside the escape
+#: above, and green.
 #:
 #: Case-folding is NOT the fix, and this is the one place where "just handle
 #: it" is actively wrong rather than merely risky: a CUSTOM property name is
@@ -204,8 +209,15 @@ _ESCAPE = re.compile(r"\\")
 #: modelling and more room to be wrong.
 #:
 #: So a property name that is not already lowercase is refused. It costs
-#: nothing: all 69 distinct property names in these sheets are lowercase, and
-#: nobody writes `POSITION:` by accident.
+#: nothing, and the measurement is stated with its method because the number
+#: this line carried before ("69") was the count at nesting depth 0 while the
+#: refusal scans the sheet at every depth. Counted as the distinct non-custom
+#: names `_ANY_DECLARATION` finds in the blocks `_rules` emits for app.css and
+#: tokens.css: 74 at any depth, of which 69 are in top-level rules. All 74 are
+#: lowercase. `css()` runs `_splittable` on
+#: every sheet it reads, so a mixed-case name appearing in either one raises
+#: `_CannotModel` out of the first `css(APP_CSS)` or `css(TOKENS_CSS)` that
+#: touches it. Nobody writes `POSITION:` by accident.
 #: The `(?!--)` is the case-sensitivity of custom properties, from the other
 #: side: `--Motion-Fast` is a DIFFERENT property from `--motion-fast`, not a
 #: mis-spelling of it, so refusing it would be a false red. A vendor prefix
@@ -452,8 +464,12 @@ def html(path):
 #:
 #: The decoys cannot be enumerated - `--x--motion-fast`, `--another--motion-fast`
 #: and so on are unbounded, and a list of them is what the last two rounds
-#: patched. The BOUNDARY is finite. So the boundary is what is checked, once,
-#: here, and every consumer goes through it.
+#: patched. The BOUNDARY is finite. So it is written once, here, and the four
+#: name patterns interpolate it rather than re-spelling it: `_declarations_of`,
+#: `_CUSTOM_DECLARATION`, `_ANY_DECLARATION` and - with its own copy of the
+#: same alternation - `_MIXED_CASE_PROPERTY`. The looser matches this file also
+#: makes are not name lookups and do not come through here; they are listed in
+#: the boundary note above `stylesheets()`.
 #:
 #: Both ends are anchored: the boundary before the name, and the `:` that has
 #: to follow it, which is what stops `--motion` matching `--motion-fast`.
@@ -622,7 +638,15 @@ def _custom_properties(text):
 
     The same anchoring as `_declaration`, from the other side: the dict is
     keyed by the WHOLE name, so `--not--text-xs` is its own key and can never
-    answer for `--text-xs`. Later declarations win, which is the cascade.
+    answer for `--text-xs`. The LAST declaration in the text wins, and that is
+    not the cascade - it is the same gap `_declaration` sets out. This walks
+    the whole string it is handed, so a `--motion-fast` inside the
+    reduced-motion block and a `--motion-fast` at `:root` land in one dict and
+    the later TEXT position decides, while in a browser the applicable rule
+    does. The validity half of that gap bites less here, because a custom
+    property's value is a token stream accepted at parse time and resolved
+    where it is used - but what this returns is still "the last declaration of
+    the name in this text", not "the value the element gets".
 
     And the same two refusals, for the same reason: "later wins" is not the
     cascade when an earlier declaration is flagged, and a sheet with a string
@@ -927,9 +951,9 @@ def assert_sticks_to_the_bottom(rule_name, declarations):
     `!important` - are REJECTED, not passed: erring loud costs a maintainer one
     obvious failure, and erring quiet is what let `calc(5)` through.
     """
-    # Anchored, like every other name lookup in this file: `background-position`
-    # CONTAINS `position`, and a rule declaring `background-position: sticky`
-    # is not positioned at all.
+    # Anchored, through `_declares` to `_declaration` and its boundary:
+    # `background-position` CONTAINS `position`, and a rule declaring
+    # `background-position: sticky` is not positioned at all.
     assert _declares("position", r"^sticky\b", declarations), (
         f"{rule_name} is back in the normal flow: {declarations}"
     )
@@ -1246,7 +1270,8 @@ STICKY_PROPERTIES = ("position", "bottom", "background")
 #   * a rule NESTED inside an at-rule, which is conditional, and whose
 #     condition this file cannot evaluate;
 #   * a BACKSLASH - an identifier escape makes one class two strings;
-#   * a MIXED-CASE property name - CSS folds it and every lookup here does not;
+#   * a MIXED-CASE property name - CSS folds it and `_declarations_of` does
+#     not;
 #   * any CHARACTER outside `\t\n\f\r` and printable ASCII - Python's `\s`
 #     is a bigger set than CSS whitespace, and a homoglyph is not a comparison
 #     this file can win;
