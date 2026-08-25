@@ -1059,14 +1059,14 @@ def _rule(body, selector, properties, where="this stylesheet"):
             flagged = _important_properties(declarations)
             if flagged:
                 raise _CannotModel(
-                    f"{where}: `{' '.join(selector_text.split())}` declares "
-                    f"{', '.join(flagged)} `!important`. Every rule here is merged "
-                    f"in document order and read last-wins, and an `!important` "
-                    f"declaration beats a later ordinary one - an EARLIER "
-                    f"`{selector} {{ position: static !important; }}` leaves the "
-                    f"block in normal flow with this file reporting it stuck. "
-                    f"Modelling that means the cascade; this file has no selector "
-                    f"engine and no document, so it refuses instead."
+                    f"{where}: the rule `{' '.join(selector_text.split())}` "
+                    f"names `{selector}` and `_important_properties` found "
+                    f"{', '.join(flagged)} carrying `!important` in its "
+                    f"declarations. `_declaration` resolves a name by taking the "
+                    f"last declaration of it, which is not how `!important` is "
+                    f"ranked, so this file will not read past it. Drop the flag, "
+                    f"or read the name with `_important_declaration`, which "
+                    f"requires it."
                 )
         if selector in entries and depth == 0:
             applies.append(" ".join(declarations.split()))
@@ -3431,11 +3431,13 @@ def test_no_script_puts_css_on_the_page_outside_the_stylesheet():
                 break
 
     assert offences == [], (
-        "a script puts CSS on the page outside app.css:\n  "
+        "`_STYLE_MENTION` matched one of the five names in "
+        "INLINE_STYLE_PRIMITIVES on these lines of stripped script source, and "
+        "`_CUSTOM_PROPERTY_WRITE` did not match the same line:\n  "
         + "\n  ".join(offences)
-        + "\nThe sticky guards read app.css, and anything here beats every rule "
-          "in it. Put the declaration in the sheet and set a custom property if "
-          "a value has to be computed."
+        + "\nPut the declaration in app.css, or write a custom property with "
+          "`style.setProperty('--name', ...)`, which `_CUSTOM_PROPERTY_WRITE` "
+          "exempts."
     )
 
 
