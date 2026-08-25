@@ -147,8 +147,25 @@ def _spy_on_both_loops(monkeypatch):
     ``["per_seed"]``. That gap is covered separately, by
     test_neither_export_mode_writes_anything_itself (no bytes reach disk when
     the loops are stubbed out) and
-    test_export_service_imports_only_the_two_loops_from_the_export_layer (the
-    service cannot reach the ranking policy or the M3U writer at all).
+    test_export_service_imports_only_the_two_loops_from_the_export_layer.
+
+    THE SECOND ONE IS AN AST CHECK, AND WHAT IT CHECKS IS ITS IMPORT NODES.
+    This used to say it proved the service "cannot reach the ranking policy or
+    the M3U writer at all". It does not. It walks services/export_service.py,
+    collects ``ast.ImportFrom`` nodes whose module begins ``recommendations``,
+    ``core`` or ``processing`` and ``ast.Import`` nodes whose name does, and
+    compares that map against one literal dict. Reaching a module without
+    writing one of those two node types leaves the map identical - both of
+    these do, and both were run::
+
+        __import__("recommendations.ranking", fromlist=("ranked_recommendations",))
+        export_single_playlist.__globals__["create_m3u_playlist"]
+
+    The first returns the module with ``ranked_recommendations`` on it; the
+    second finds ``create_m3u_playlist`` in the exporter's globals, because
+    that is where the exporter imports it. So read that test as "the STATIC
+    import surface is exactly these two names", which is what it asserts, and
+    not as a statement about what the service can reach at run time.
     """
     import services.export_service as module
 
@@ -235,19 +252,36 @@ def test_neither_export_mode_writes_anything_itself(service, tmp_path, monkeypat
 
 
 def test_export_service_imports_only_the_two_loops_from_the_export_layer():
-    """The static half of the anti-inlining check, and the sound one.
+    """The static half of the anti-inlining check.
 
-    An inlined loop has to get its pieces from somewhere. The only sources are
-    ``recommendations.ranking`` (the single ranking policy, defect #12) and
-    ``recommendations.playlist_exporter`` (the loops and the M3U writer). So
-    pin the whole import surface: services/export_service.py may import EXACTLY
-    the two loop functions from ``recommendations.*``, and nothing else - not
-    ``ranked_recommendations``, not ``create_m3u_playlist``, not
-    ``sanitise_filename_part``, not ``NumpyCosIndex``.
+    An inlined loop has to get its pieces from somewhere, and the obvious way
+    to get them is an import: ``recommendations.ranking`` (the single ranking
+    policy, defect #12) or ``recommendations.playlist_exporter`` (the loops and
+    the M3U writer). So pin the STATIC import surface: services/export_service.py
+    may import EXACTLY the two loop functions from ``recommendations.*``, and
+    nothing else - not ``ranked_recommendations``, not ``create_m3u_playlist``,
+    not ``sanitise_filename_part``, not ``NumpyCosIndex``.
 
     A monkeypatch cannot do this job: the service would use a ``from X import
     y`` binding in its own namespace, which patching X does not intercept. The
     import surface can only be checked statically.
+
+    WHAT THIS LITERALLY ASSERTS - written out because the docstring of
+    ``_spy_on_both_loops`` used to read it as "the service cannot reach the
+    ranking policy or the M3U writer at all". It parses this module's source,
+    collects
+    ``ast.ImportFrom`` nodes whose ``module`` begins ``recommendations``,
+    ``core`` or ``processing`` and ``ast.Import`` nodes whose ``alias.name``
+    does, and compares the resulting dict against one literal. It is a claim
+    about those two node types and nothing else. A reach written as neither
+    node type leaves the dict identical, and two were run to check::
+
+        __import__("recommendations.ranking", fromlist=("ranked_recommendations",))
+        export_single_playlist.__globals__["create_m3u_playlist"]
+
+    Both hand back the real function. Neither is an import node. The value of
+    this test is that it makes an inlined copy expensive to write, not that it
+    makes one impossible.
     """
     import ast
     from pathlib import Path
