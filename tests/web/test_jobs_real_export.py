@@ -313,8 +313,8 @@ def test_a_failed_write_leaves_a_partial_playlist_behind(
 
     snapshot = run_to_completion(job)
 
-    # Every count the screen receives is zero or a failure. There is nothing in
-    # this record that could tell a dialog a file exists.
+    # `successful` and `playlists_created` are zero and `failed` is 1. There is
+    # no field in this record that could tell a dialog a file exists.
     assert snapshot.state == CANCELLED
     assert dict(snapshot.result) == {
         "successful": 0,

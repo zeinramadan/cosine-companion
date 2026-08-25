@@ -99,8 +99,9 @@ def refresh_playlists(rb_xml, report):
     (§2.2: pre-existing tests must not be edited to accommodate this work).
     Three tests in tests/services/test_indexing_service.py assert the COMPLETE,
     ORDERED event list of an indexing run - a first run, an up-to-date run and
-    a run where nothing could be embedded. Any line added here changes all
-    three. (An earlier draft of this paragraph cited a fourth,
+    a run where nothing could be embedded. This function is called on all
+    three paths - :245, :296 and :359 - so any line added here that REPORTS an
+    event changes all three lists. A line that reports nothing does not. (An earlier draft of this paragraph cited a fourth,
     test_the_exact_output_of_the_cli_index_command, as pinning the CLI's stdout
     verbatim. No test of that name exists. The replacement claim - that no test
     anywhere pins the CLI's stdout - was false too:
