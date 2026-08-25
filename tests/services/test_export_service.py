@@ -147,8 +147,8 @@ def _spy_on_both_loops(monkeypatch):
     ``["per_seed"]``. That gap is covered separately, by
     test_neither_export_mode_writes_anything_itself (no bytes reach disk when
     the loops are stubbed out) and
-    test_neither_export_mode_ranks_or_writes_playlists_itself (the service never
-    calls the ranking policy or the M3U writer directly).
+    test_export_service_imports_only_the_two_loops_from_the_export_layer (the
+    service cannot reach the ranking policy or the M3U writer at all).
     """
     import services.export_service as module
 

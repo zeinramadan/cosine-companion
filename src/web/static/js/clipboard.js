@@ -29,9 +29,10 @@ export async function copyToClipboard(text) {
   scratch.value = text;
   scratch.setAttribute('readonly', '');
   /* Off-screen through a class rather than an inline style. The stylesheet is
-     the only place this application's geometry is written, which is what makes
-     the source-text checks over app.css complete rather than approximate - see
-     test_no_script_writes_the_geometry_the_stylesheet_is_checked_for. */
+     the only place this application's geometry is written, which is what the
+     source-text checks over app.css read - see
+     test_no_script_puts_css_on_the_page_outside_the_stylesheet, and the
+     boundary note in that file for what those checks do and do not establish. */
   scratch.className = 'clipboard-scratch';
   document.body.append(scratch);
   scratch.select();

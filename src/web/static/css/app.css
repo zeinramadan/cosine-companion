@@ -465,7 +465,7 @@ button {
    clipboard API is refused. It is never seen; it only has to be focusable and
    out of the flow. Here rather than inline in the script so that no script
    writes geometry at all - see
-   test_no_script_writes_the_geometry_the_stylesheet_is_checked_for. */
+   test_no_script_puts_css_on_the_page_outside_the_stylesheet. */
 .clipboard-scratch {
   position: fixed;
   opacity: 0;

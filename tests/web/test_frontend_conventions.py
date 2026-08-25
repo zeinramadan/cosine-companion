@@ -1059,11 +1059,12 @@ STICKY_PROPERTIES = ("position", "bottom", "background")
 #   * `body.split('data-destination="export"')[1].split("</button>")[0]` takes
 #     a region between two substrings rather than parsing the markup.
 #   * The refusals are over CSS SOURCE TEXT, so what they establish is what the
-#     stylesheet says. `test_no_script_writes_the_geometry_the_stylesheet_is_
-#     checked_for` is what makes the stylesheet the only thing that needs
-#     saying it, and the two sticky tests still cannot lay anything out - where
-#     those blocks actually land was measured by hand in a real browser and is
-#     recorded in the PR description.
+#     stylesheet says.
+#     `test_no_script_puts_css_on_the_page_outside_the_stylesheet` is what
+#     makes the stylesheet the only thing that needs saying it, and the two
+#     sticky tests still cannot lay anything out - where those blocks actually
+#     land was measured by hand in a real browser and is recorded in the PR
+#     description.
 #   * A stylesheet in `src/web/static/css/` that no `<link>` in index.html
 #     loads is still read by the sheet-wide checks. That direction is safe
 #     (more is checked, not less) and `test_nothing_is_loaded_from_another_
