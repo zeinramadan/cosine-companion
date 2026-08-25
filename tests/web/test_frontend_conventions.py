@@ -3284,9 +3284,26 @@ INLINE_STYLE_ROUTES = [
 @pytest.mark.parametrize(
     "what,line", INLINE_STYLE_ROUTES, ids=[name for name, _ in INLINE_STYLE_ROUTES]
 )
-def test_every_route_to_the_cascade_is_reported(what, line):
+def test_every_route_in_this_list_is_reported(what, line):
     """A rule nobody has seen fail is a rule nobody has seen work, and this
-    one has been wrong once already."""
+    one has been wrong once already.
+
+    RENAMED FROM `test_every_route_to_the_cascade_is_reported`, which claimed
+    an exhaustiveness this has never had. It reads a hand-written list of
+    eleven lines and checks each is matched; a route absent from the list is
+    not a route it says anything about, and
+
+        progress['st' + 'yle']['position'] = 'static';
+
+    is one - it reaches `.style` without spelling `style`, it went into the
+    real Export component, and all 272 tests here stayed green. That is
+    evasion 5 in the boundary note above `stylesheets()`.
+
+    The list is still worth having, and the shape of the honest claim is: the
+    eleven spellings below are reported and the first was the only one the
+    shape-matching version caught. It is a floor under `_STYLE_MENTION`, not a
+    census of the language.
+    """
     assert _STYLE_MENTION.search(line), f"{what} is not reported"
     assert not (
         _STYLE_MENTION.search(line).group(1) == "style"
