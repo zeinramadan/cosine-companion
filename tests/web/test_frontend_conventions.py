@@ -236,8 +236,15 @@ def _splittable(text, where=None):
     The fix is NOT to split correctly. A correct splitter needs the string
     grammar, the escape grammar and the url() token, and every previous round
     that answered an evasion by handling it better left the next spelling
-    open. Refusing is complete in one line: if the region contains a quote at
-    all, this file does not know where its declarations begin, and says so.
+    open. The refusal is one line: if the region contains a quote at all, this
+    file does not know where its declarations begin, and says so.
+
+    IT IS NOT COMPLETE, which is what this used to claim. The url() token in
+    that list is unquoted and unmodelled, so
+    `background-image: url(data:x;position:sticky;bottom:0;);` does exactly
+    what the string above does, with no quote for this to catch - evasion 1 in
+    the boundary note above `stylesheets()`. Refusing a quote closes the
+    spelling it names, not the class.
 
     What it costs, said plainly: `content: "→"` and `font-family: "Inter"` are
     legitimate CSS that these stylesheets may no longer contain. That is the
@@ -1004,20 +1011,109 @@ def _rule(body, selector, properties, where="this stylesheet"):
 STICKY_PROPERTIES = ("position", "bottom", "background")
 
 
-# WHAT THIS FILE REFUSES, and what it still matches loosely. Every CSS name and
-# every CSS selector goes through `_declaration`, `_custom_properties` or
-# `_rule`; every read of a source file through `css()`, `js()`, `html()` or
-# `source()`; and every read PRIMITIVE in this file's own text through
-# `_reads`.
+# WHAT A GREEN RUN OF THIS FILE MEANS. Every CSS name and every CSS selector
+# goes through `_declaration`, `_custom_properties` or `_rule`; every read of a
+# source file through `css()`, `js()`, `html()` or `source()`; and every read
+# PRIMITIVE in this file's own text through `_reads`.
+#
+# THE BOUNDARY, AND IT IS MEASURED RATHER THAN ARGUED. Rounds 3, 4, 5 and 6
+# each closed this class of hole and each was followed by a new spelling of it.
+# Round 7 is this paragraph instead of a seventh regex, because a guard that
+# overstates itself is how the previous four happened.
+#
+# What this file establishes are properties of ITS OWN REGEX-DERIVED
+# REPRESENTATION of the source, and nothing beyond them:
+#
+#   * literal listed Python read names, and literal `import` AST nodes;
+#   * literal five-word mentions in stripped JavaScript;
+#   * exact textual top-level CSS selectors, and semicolon-split declaration
+#     fragments.
+#
+# It does NOT establish: browser CSS tokenization or cascade, native CSS
+# nesting, whether a stylesheet is loaded by index.html at all, complete
+# JavaScript comment removal, all CSSOM writes, or all Python filesystem reads.
+#
+# SIX THINGS THAT WALK STRAIGHT THROUGH IT, each CONSTRUCTED AND RUN rather
+# than imagined, each leaving all 272 tests in this file green. They are
+# deliberately NOT closed: closing the previous six is what produced these, and
+# the statement above is the answer instead of a seventh round.
+#
+#   1. AN UNQUOTED `url()` TOKEN IS NOT MODELLED. `_splittable` refuses a
+#      QUOTE, which catches `content: "x; position: sticky; ..."` - but a url
+#      token needs no quotes:
+#
+#          .exportv__progress {
+#            background-image: url(data:x;position:sticky;bottom:0;);
+#          }
+#
+#      A `;` inside that token is not a declaration boundary to a browser and
+#      is one to every lookup here, so `_declaration` reads `position: sticky`
+#      and `bottom: 0` out of a rule that declares NEITHER and
+#      `assert_sticks_to_the_bottom` passes. Chrome 151 computes `position:
+#      static; bottom: auto` - the block returns to normal flow and the Stop
+#      button scrolls out of reach, which is the exact defect the rule exists
+#      to prevent.
+#
+#   2. NATIVE CSS NESTING IS NOT MODELLED, and it falsifies what this comment
+#      used to claim about `!important`:
+#
+#          .exportv__progress { & { position: static !important; } }
+#
+#      `_rules` reports the inner block with the selector `&`, which does not
+#      MENTION `.exportv__progress`, so `_rule` never reaches
+#      `_important_properties`; the outer wrapper matches no `_rules` pattern
+#      at all and disappears. Chrome computes `static`. The `!important`
+#      refusal is real but NARROWER than "anywhere in a name being resolved":
+#      it applies to a rule whose selector LIST names the selector as text.
+#
+#   3. `JS_COMMENT` DOES NOT REMOVE EVERY JAVASCRIPT COMMENT. Its
+#      `(?<![:\w])//` keeps `https://` out of the match and also declines a
+#      `//` that follows a WORD character - which JavaScript starts a comment
+#      on regardless:
+#
+#          hue: position// (position - 1) * 30
+#          ,
+#
+#      The module parses and loads, and `js()` hands its consumers BOTH the
+#      commented-out formula the browser never runs AND whatever the live code
+#      says. Put into `format.js` beside a live `hue: 0`, every substring
+#      grep below still finds the formula in text that is a comment.
+#
+#   4. THE INVERTED READ SCAN IS BOUNDED BY ITS OWN TWO LISTS. It reports a
+#      listed primitive and an `import` node; an ALREADY-PERMITTED namespace
+#      that hands back a module is neither:
+#
+#          pytest.importorskip("io").FileIO(path).readall()
+#
+#      `pytest` is in `PERMITTED_IMPORTS`, there is no `import` AST node, and
+#      `importorskip`, `FileIO` and `readall` are in no list here. That line
+#      really does read the file raw; `_reads` returns nothing for it.
+#
+#   5. THE INLINE-CSS SCAN IS A WORD SEARCH, so a name that is never SPELLED
+#      is never found:
+#
+#          progress['st' + 'yle']['position'] = 'static';
+#
+#      added to the real Export component leaves all 272 green. The primitives
+#      are five WORDS, not five concepts, and a computed property name reaches
+#      the same object without writing any of them.
+#
+#   6. NOTHING CHECKS THAT index.html LOADS app.css. Deleting the one line
+#      `<link rel="stylesheet" href="/css/app.css">` leaves the WHOLE suite
+#      green - 1398 passed, both sticky guards included. So every claim the CSS
+#      checks make can be a claim about a stylesheet the browser never fetches.
 #
 # REFUSED rather than modelled, each because reading it wrongly is silent and
 # refusing it is not, and each pinned by a table of its own:
 #
-#   * `!important` anywhere in a name being resolved (`_declaration`,
-#     `_custom_properties`, `_rule`) - precedence needs the cascade;
-#     `_important_declaration` reads the reduced-motion block, where the flag
-#     is the point, and refuses an UNFLAGGED declaration in turn;
-#   * a QUOTE anywhere in a sheet - a string can hold `;`, `{` or `}`;
+#   * `!important` in a declaration this file RESOLVES - `_declaration` and
+#     `_custom_properties` refuse it in the text they are handed, and `_rule`
+#     refuses it in a rule whose selector list NAMES the selector as text.
+#     Precedence needs the cascade. `_important_declaration` reads the
+#     reduced-motion block, where the flag is the point, and refuses an
+#     UNFLAGGED declaration in turn. Evasion 2 is the syntax it does not reach;
+#   * a QUOTE anywhere in a sheet - a string can hold `;`, `{` or `}`. Evasion
+#     1 is the unquoted token that does the same thing;
 #   * an AT-RULE outside `@media` and `@keyframes` - `@import` hides a whole
 #     stylesheet and `@layer` reorders the cascade;
 #   * a rule NESTED inside an at-rule, which is conditional, and whose
@@ -1030,7 +1126,7 @@ STICKY_PROPERTIES = ("position", "bottom", "background")
 #   * a COMMENT DELIMITER surviving the stripper - an unterminated comment ends
 #     the sheet for the browser and ends nothing for `COMMENT`;
 #   * a READ PRIMITIVE outside a registered module-level reader, and any import
-#     outside `PERMITTED_IMPORTS`.
+#     outside `PERMITTED_IMPORTS`. Evasion 4 is the reach it does not cover.
 #
 # What is still matched loosely, written down here rather than discovered in a
 # later round:
@@ -1055,20 +1151,25 @@ STICKY_PROPERTIES = ("position", "bottom", "background")
 #   * The `.js` greps - `"track.playlists" in body`, `"folder_path"`,
 #     `"(position - 1) * 30"`, `getElementById(LAYER_ID)` - are substring
 #     presence checks on stripped source. Each says so at its site and names
-#     the behavioural test that establishes what the module DOES.
+#     the behavioural test that establishes what the module DOES. Evasion 3 is
+#     the "stripped" part failing.
 #   * `body.split('data-destination="export"')[1].split("</button>")[0]` takes
 #     a region between two substrings rather than parsing the markup.
 #   * The refusals are over CSS SOURCE TEXT, so what they establish is what the
 #     stylesheet says.
 #     `test_no_script_puts_css_on_the_page_outside_the_stylesheet` is what
-#     makes the stylesheet the only thing that needs saying it, and the two
-#     sticky tests still cannot lay anything out - where those blocks actually
-#     land was measured by hand in a real browser and is recorded in the PR
-#     description.
+#     keeps the geometry in the stylesheet, bounded by evasion 5 - it reports
+#     the five words, not every write - and the two sticky tests still cannot
+#     lay anything out. Where those blocks actually land was measured by hand
+#     in a real browser and is recorded in the PR description.
 #   * A stylesheet in `src/web/static/css/` that no `<link>` in index.html
-#     loads is still read by the sheet-wide checks. That direction is safe
-#     (more is checked, not less) and `test_nothing_is_loaded_from_another_
-#     origin` is what bounds where they come from.
+#     loads is still read by the sheet-wide checks, and NOTHING HERE NOTICES
+#     THE MISSING `<link>` - evasion 6. That is not "more is checked, not
+#     less", which is what this said before it was measured: it is a guard
+#     describing a stylesheet the browser may never load.
+#     `test_nothing_is_loaded_from_another_origin` bounds where the links that
+#     ARE in the markup point; it says nothing about whether the sheets that
+#     are checked are linked at all.
 
 
 def stylesheets():
@@ -3046,11 +3147,21 @@ def test_the_set_creator_status_line_cannot_be_scrolled_out_of_reach():
     assert _declares("background", r"^var\(\s*--surface", declarations), declarations
 
 
-#: THE PRIMITIVES, not the write shapes. A script reaches the cascade through
-#: one of these words and there is no way round them: `style` covers the
-#: `style` property, the `style` ATTRIBUTE and a `<style>` element; `cssText`
-#: is the bulk write; `insertRule`/`deleteRule`/`adoptedStyleSheets` are the
-#: CSSOM.
+#: THE PRIMITIVES, not the write shapes. `style` covers the `style` property,
+#: the `style` ATTRIBUTE and a `<style>` element; `cssText` is the bulk write;
+#: `insertRule`/`deleteRule`/`adoptedStyleSheets` are the CSSOM.
+#:
+#: THIS USED TO SAY "there is no way round them". IT IS FALSE, and it was
+#: falsified by running one:
+#:
+#:     progress['st' + 'yle']['position'] = 'static';
+#:
+#: put into the real Export component, all 272 tests green. These are five
+#: WORDS, matched by `_STYLE_MENTION` in stripped source, and a computed
+#: property name reaches the same object without spelling any of them. What
+#: the check below establishes is that no script MENTIONS one of the five
+#: outside a custom-property write. That is narrower than "no script reaches
+#: the cascade", and the boundary note above carries it with the other five.
 #:
 #: WRITTEN THIS WAY BECAUSE THE FIRST VERSION OF THIS CHECK WAS THE DEFECT
 #: THIS WHOLE ROUND IS ABOUT. It matched `.style.<name> =`,
@@ -3089,10 +3200,16 @@ def test_no_script_puts_css_on_the_page_outside_the_stylesheet():
     notice: an inline style is not CSS source text and the sticky guards read
     CSS source text.
 
-    So no script reaches the cascade at all, except by setting a custom
-    property that app.css consumes. FLAT, and refusing the five words rather
+    So no script MENTIONS one of the five words above, except by setting a
+    custom property that app.css consumes. FLAT, and refusing words rather
     than a list of write shapes, because the shapes are unbounded and the
     first version of this check proved it by missing eight of nine.
+
+    WHAT THAT IS NOT is "no script reaches the cascade", which is what this
+    docstring used to say. `progress['st' + 'yle']['position'] = 'static';`
+    reaches it and mentions nothing - see evasion 5 in the boundary note above
+    `stylesheets()`. The word list is a floor under the shapes, not a proof
+    about the language.
 
     What it costs, stated: `clipboard.js` styled its off-screen scratch
     textarea inline and now uses a `.clipboard-scratch` class; `format.js`
