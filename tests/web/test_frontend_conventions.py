@@ -7,9 +7,7 @@ several of the constraints are not visual at all: "tokens first", "no
 hard-coded hex", "respect prefers-reduced-motion", "real focus rings", "4.5:1
 contrast" are each easy to claim, easy to skip, and readable in the source.
 
-HOW TO READ A GREEN RUN OF THIS FILE. What these assertions run over is an
-APPROXIMATION of the source, derived from it by regex - stripped text, matched
-patterns, brace-counted regions - together with an AST of this file itself.
+HOW TO READ A GREEN RUN OF THIS FILE.
 Nothing here runs a browser, resolves a cascade or lays anything out. So a
 green run is EVIDENCE that the source says what these patterns look for. It is
 not proof of what the page does. Where a check's approximation is known to
@@ -103,8 +101,7 @@ Four rounds on this file have now established the same thing four
     string, and what this class exists to stop happening a third time.
 
     What each refusal can name differs, and is worth knowing before relying on
-    one: the six raised from `_splittable` are handed a `where` and compute a
-    line, and name both. `_rule` is handed a `where` and names it, with the
+    one: `_rule` is handed a `where` and names it, with the
     rule's selector text, but has no line. `_declaration`, `_custom_properties`
     and `_important_declaration` are handed neither and name the property and
     its value only.
@@ -550,10 +547,7 @@ def _declaration(name, text):
     `_type_of` does not see.
 
     THE TWO SHIPPED CALLERS ARE GUARDED ONE LAYER UP, not by this function.
-    `_rule` merges only blocks whose selector is an exact top-level entry, and
-    puts any OTHER block `_rules` emits whose selector text names the selector
-    and declares one of the properties being checked into its `unevaluated`
-    list;
+    `_rule` merges only blocks whose selector is an exact top-level entry;
     `test_the_set_creator_status_line_cannot_be_scrolled_out_of_reach` and
     `test_the_export_progress_block_cannot_be_scrolled_out_of_reach` both
     assert `unevaluated == []`. Adding the `.setc .setc__status` rule above to
@@ -1038,11 +1032,10 @@ def _rule(body, selector, properties, where="this stylesheet"):
         `.setc__status { position: static; }` further down the sheet undid the
         first one invisibly. The cascade is not "the first rule wins".
 
-    So this iterates the blocks `_rules` emits, in document order, and merges
-    a block into `applies` when `selector` is one whole comma-split entry of
-    its selector text AND its depth is 0. What `_rules` does not emit is not
-    iterated - evasion 2 in the boundary note above `stylesheets()` is a rule
-    that is not emitted under its own selector at all.
+    So this iterates the blocks `_rules` emits, in document order. What
+    `_rules` does not emit is not iterated - evasion 2 in the boundary note
+    above `stylesheets()` is a rule that is not emitted under its own selector
+    at all.
 
     THE TOP-LEVEL PART IS THE SEVENTH INSTANCE OF THE SAME DEFECT, found while
     looking for one. A rule inside an at-rule is conditional, and this file
@@ -1064,11 +1057,7 @@ def _rule(body, selector, properties, where="this stylesheet"):
     and the caller says the rule is gone, which is what a rule matching no
     viewport is.
 
-    `properties` is what the caller is about to assert on. Any OTHER emitted
-    block whose selector text names this selector and declares one of them is
-    handed back rather than ignored: whether it applies needs a selector
-    engine and a document, which this does not have, and passing over what it
-    cannot evaluate is the defect rather than the fix. Blocks that name the
+    `properties` is what the caller is about to assert on. Blocks that name the
     selector and declare none of them - `.exportv__progress[hidden] { display:
     none; }` - change no answer here
     and are not reported.
@@ -1329,12 +1318,6 @@ STICKY_PROPERTIES = ("position", "bottom", "background")
 #     a region between two substrings rather than parsing the markup.
 #   * The refusals are over CSS SOURCE TEXT, so what they establish is what the
 #     stylesheet says.
-#     `test_no_script_puts_css_on_the_page_outside_the_stylesheet` reports the
-#     five words of `INLINE_STYLE_PRIMITIVES` in stripped script source, line
-#     by line; evasion 5 is a write to `.style` that spells none of them, and
-#     the two sticky tests still cannot lay anything out. Where those blocks
-#     actually land was measured by hand in a real browser and is recorded in
-#     the PR description.
 #   * A stylesheet in `src/web/static/css/` that no `<link>` in index.html
 #     loads is still read by the sheet-wide checks, and NOTHING HERE NOTICES
 #     THE MISSING `<link>` - evasion 6. That is not "more is checked, not
@@ -1379,10 +1362,7 @@ def own_source():
 #: defect below.
 #:
 #: This is a closed set of six functions at the top of one file, not an open
-#: set of spellings. A read primitive written in the body of a function whose
-#: name is not in this tuple is reported as an unclassified raw read - the
-#: "read(THIS_FILE) somewhere else" and "a new helper that reads raw" rows of
-#: `EVASIONS`. Only a MODULE-LEVEL `def` counts:
+#: set of spellings. Only a MODULE-LEVEL `def` counts:
 #: a `def css(path)`
 #: written inside a test body is not this file's stylesheet reader, it is a
 #: local function that happens to share its name, and treating it as one is
@@ -1512,9 +1492,7 @@ def _reads(tree):
     read in whatever context the lambda itself appears in.
 
     There is no exemption for this file's own source. `own_source` is a
-    REGISTERED READER, so its raw read has a name instead of a special case,
-    and `read(THIS_FILE)` written anywhere else is reported like any other
-    primitive - the "read(THIS_FILE) somewhere else" row of `EVASIONS`.
+    REGISTERED READER, so its raw read has a name instead of a special case.
     """
     readers = {
         node
@@ -1642,8 +1620,8 @@ def test_this_file_imports_nothing_that_can_reach_a_reader():
     the boundary note above `stylesheets()` reaches a raw read through it.
 
     The half that is easy to forget: an `import linecache` at the top of a test
-    function is three words, and it puts a read primitive in scope that nothing
-    else here would have to notice. `linecache.getlines` is in the primitive
+    function puts a read primitive in scope that nothing else here would have
+    to notice. `linecache.getlines` is in the primitive
     list as well - belt and braces, and because it is the one round 6 actually
     reported.
 
@@ -1693,8 +1671,7 @@ def test_the_import_check_reports_a_module_that_could_read_a_file():
         )
 
 
-#: Ways of reading a source file that a scan classifying CALL SHAPES could
-#: not see. A hand-written list, not a survey.
+#: A hand-written list, not a survey.
 #: `read(JS / "format.js")` is not hypothetical - it was live in
 #: this file when round 5 opened, and it is what let the Camelot hue be
 #: commented out with 129 Python and 168 JS tests green. The rest are the same
@@ -2978,7 +2955,7 @@ def test_there_is_a_visible_focus_ring(tokens):
     ``--focus-ring: none`` is a declaration, so a check that asks only whether
     the name is declared is satisfied by it - and what it declares draws
     nothing. So the VALUE is what is asserted: no `none`, a non-zero
-    `px`/`rem`/`em` somewhere in it, and a colour.
+    `px`/`rem`/`em` somewhere in it.
     """
     body = css(APP_CSS)
 
@@ -3492,8 +3469,6 @@ def test_no_script_puts_css_on_the_page_outside_the_stylesheet():
     )
 
 
-#: Eleven spellings of the same act. The first is the only one the
-#: shape-matching version of this check caught.
 INLINE_STYLE_ROUTES = [
     ("the obvious one", "el.style.position = 'static';"),
     ("bracket access", "el.style['position'] = 'static';"),
@@ -3528,9 +3503,8 @@ def test_every_route_in_this_list_is_reported(what, line):
     evasion 5 in the boundary note above `stylesheets()`.
 
     The list is still worth having, and the shape of the honest claim is: the
-    eleven spellings below are reported and the first was the only one the
-    shape-matching version caught. It is a floor under `_STYLE_MENTION`, not a
-    census of the language.
+    eleven spellings below are reported. It is a floor under `_STYLE_MENTION`,
+    not a census of the language.
     """
     assert _STYLE_MENTION.search(line), f"{what} is not reported"
     assert not (
