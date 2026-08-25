@@ -16,7 +16,7 @@ unchanged.
 import os
 import unicodedata
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Set
+from typing import List, Dict, Any, Optional, Set, Tuple
 import pandas as pd
 
 from core.index_builder import NumpyCosIndex
@@ -96,12 +96,16 @@ def _unique_playlist_path(
     return output_path / candidate
 
 
-def _legacy_filename_owners(meta_ix: pd.DataFrame) -> Dict[str, str]:
-    """Choose each legacy name's owner across the captured library snapshot.
+def _legacy_filename_plan(
+    meta_ix: pd.DataFrame,
+) -> Tuple[Dict[str, Tuple[Any, Any, str, str]], Dict[str, str]]:
+    """Build per-track names and choose their owners in the same snapshot scan.
 
     Read the two metadata columns in bulk: a per-row ``.loc`` scan is a costly
-    pandas hot path, and ownership must consider the library rather than only
-    the selected export request.
+    pandas hot path. Returning the artist, title, filename and collision key
+    from this same pass makes it impossible for the export loop to default the
+    metadata differently and then look up a key that ownership never created.
+    Ownership must consider the library rather than only the selected request.
     """
     artists = (
         meta_ix['artist'].to_numpy(copy=False)
@@ -113,18 +117,22 @@ def _legacy_filename_owners(meta_ix: pd.DataFrame) -> Dict[str, str]:
         if 'title' in meta_ix.columns
         else ['Unknown Title'] * len(meta_ix.index)
     )
+    track_names: Dict[str, Tuple[Any, Any, str, str]] = {}
     owners: Dict[str, str] = {}
     for track_id, artist, title in zip(meta_ix.index, artists, titles):
-        filename = playlist_filename(
-            artist,
-            title,
-        )
+        filename = playlist_filename(artist, title)
         filename_key = _filename_collision_key(filename)
         stable_track_id = str(track_id)
+        track_names[stable_track_id] = (artist, title, filename, filename_key)
         if filename_key not in owners or stable_track_id < owners[filename_key]:
             owners[filename_key] = stable_track_id
 
-    return owners
+    return track_names, owners
+
+
+def _legacy_filename_owners(meta_ix: pd.DataFrame) -> Dict[str, str]:
+    """Return only the owner map for callers that do not need the full plan."""
+    return _legacy_filename_plan(meta_ix)[1]
 
 
 def create_m3u_playlist(
@@ -202,7 +210,7 @@ def export_recommendations_as_playlists(
         'total_recommendations': 0
     }
     written_filename_keys: Set[str] = set()
-    legacy_filename_owners = _legacy_filename_owners(meta_ix)
+    legacy_filename_plan, legacy_filename_owners = _legacy_filename_plan(meta_ix)
 
     for i, track_id in enumerate(track_ids, 1):
         if cancel_check is not None and cancel_check():
@@ -212,9 +220,10 @@ def export_recommendations_as_playlists(
             stats['failed'] += 1
             continue
 
-        track = meta_ix.loc[track_id]
-        artist = track.get('artist', 'Unknown Artist')
-        title = track.get('title', 'Unknown Title')
+        stable_track_id = str(track_id)
+        artist, title, legacy_filename, legacy_filename_key = (
+            legacy_filename_plan[stable_track_id]
+        )
 
         # Update progress
         if progress_callback:
@@ -235,15 +244,13 @@ def export_recommendations_as_playlists(
             stats['failed'] += 1
             continue
 
-        legacy_filename = playlist_filename(artist, title)
-        legacy_filename_key = _filename_collision_key(legacy_filename)
         playlist_path = _unique_playlist_path(
             output_path,
             legacy_filename,
             track_id,
             written_filename_keys,
             keep_legacy_name=(
-                str(track_id) == legacy_filename_owners[legacy_filename_key]
+                stable_track_id == legacy_filename_owners[legacy_filename_key]
             ),
         )
 

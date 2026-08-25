@@ -1324,13 +1324,18 @@ sanitiser drops `.`, so the only dot in the name is the extension the function a
 the name exceeds 200 characters that extension sits beyond the cut. Two different seeds that sanitise to the same name no longer
 overwrite each other. `_unique_playlist_path` reserves each written name for the run, keyed on
 NFC + casefold so the reservation is at least as broad as APFS's own equivalence. Ownership does
-NOT depend on the export request or its arrival order: `_legacy_filename_owners` pre-passes the
+NOT depend on the export request or its arrival order: `_legacy_filename_plan` pre-passes the
 entire captured library snapshot and gives the legacy filename to the LEXICOGRAPHICALLY SMALLEST
 TRACK ID STRING in each collision group. Every other member is given `[ID <track_id>]` before the
 extension; the id is sanitised and capped at 64 characters, and the marker is appended AFTER
 truncation so it cannot be cut off. Pre-existing files in the destination are ignored when
 allocating. With the same library membership and collision-forming metadata, full and subset
 re-exports therefore reuse the same names rather than accumulating suffixes.
+
+That pre-pass is also the single source of each seed's artist, title, legacy filename and
+collision key: the export loop consumes the recorded tuple instead of applying a second copy of
+the missing-column defaults. Consequently its bare owner-map lookup cannot be given a collision
+key that the ownership pass did not create.
 
 Ownership can still move when that library state changes, and the exporter does not clean up old
 paths. In particular, deleting the owner of the LEXICOGRAPHICALLY SMALLEST TRACK ID STRING makes
