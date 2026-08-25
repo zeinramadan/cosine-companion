@@ -678,8 +678,8 @@ def test_collision_key_normalises_canonically_equivalent_unicode():
     )
 
 
-def test_long_collision_suffix_retains_the_complete_track_id():
-    """The discriminator is appended after cutting room for it."""
+def test_long_collision_suffix_preserves_204_character_ceiling():
+    """A short discriminator replaces the tail within the legacy ceiling."""
     from recommendations.playlist_exporter import _filename_with_track_id
 
     legacy_name = playlist_filename("A" * 200, "B" * 200)
