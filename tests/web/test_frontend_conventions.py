@@ -1082,10 +1082,19 @@ STICKY_PROPERTIES = ("position", "bottom", "background")
 # nesting, whether a stylesheet is loaded by index.html at all, complete
 # JavaScript comment removal, all CSSOM writes, or all Python filesystem reads.
 #
-# SIX THINGS THAT WALK STRAIGHT THROUGH IT, each CONSTRUCTED AND RUN rather
+# SEVEN THINGS THAT WALK STRAIGHT THROUGH IT, each CONSTRUCTED AND RUN rather
 # than imagined, each leaving all 272 tests in this file green. They are
-# deliberately NOT closed: closing the previous six is what produced these, and
-# the statement above is the answer instead of a seventh round.
+# deliberately NOT closed: closing the holes that came before them is what
+# produced these, and the statement above is the answer instead of a seventh
+# round.
+#
+# THIS LIST IS NON-EXHAUSTIVE. It is declared non-exhaustive here, in those
+# words, because twice now absence from it has been read as coverage. It is a
+# record of holes that were constructed and run, not a survey of the holes that
+# exist, and it is not maintained as exhaustive. A hole that is not on it is
+# UNLISTED, not closed, and the next one found is an addition to this list
+# rather than a defect in it. The same goes for the two lists that follow -
+# what is REFUSED, and what is matched LOOSELY.
 #
 #   1. AN UNQUOTED `url()` TOKEN IS NOT MODELLED. `_splittable` refuses a
 #      QUOTE, which catches `content: "x; position: sticky; ..."` - but a url
@@ -1151,6 +1160,26 @@ STICKY_PROPERTIES = ("position", "bottom", "background")
 #      `<link rel="stylesheet" href="/css/app.css">` leaves the WHOLE suite
 #      green - 1398 passed, both sticky guards included. So every claim the CSS
 #      checks make can be a claim about a stylesheet the browser never fetches.
+#
+#   7. PROPERTY RESETS, SHORTHANDS AND ALIASES ARE NOT MODELLED. The sticky
+#      lookups search for the LITERAL names in `STICKY_PROPERTIES` -
+#      `position`, `bottom`, `background` - each followed by `:`. A rule that
+#      changes those computed values while spelling none of the three names is
+#      merged into `applies` and moves no assertion:
+#
+#          .exportv__progress { all: initial; }
+#
+#      appended to app.css as a TOP-LEVEL rule: `_rule` merges it (exact
+#      selector, depth 0), `unevaluated` comes back `[]`, and the whole file is
+#      272 passed. `_declaration("position", ...)` still reads the shipped
+#      `sticky` and `_declaration("bottom", ...)` the shipped
+#      `calc(var(--space-6) * -1)`, because `all` is neither name. A browser
+#      resets position to `static`, bottom to `auto` and the background to
+#      transparent - the Stop button back below the fold and the rows scrolling
+#      through the text. `.exportv__progress { inset: auto; }` (bottom via the
+#      shorthand) and `.exportv__progress { background-color: transparent; }`
+#      (a longhand `background` does not match, because the next character is
+#      `-` and not `:`) were appended and run the same way: 272 passed each.
 #
 # REFUSED rather than modelled, each because reading it wrongly is silent and
 # refusing it is not, and each pinned by a table of its own:
