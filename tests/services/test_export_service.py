@@ -650,13 +650,22 @@ def test_collision_names_are_independent_of_seed_iteration_order(
         assert result.playlists_created == len(expected_names)
 
 
-def test_collision_key_is_case_insensitive():
-    """APFS-equivalent case variants must share one reservation key."""
+def test_collision_key_uses_full_case_folding():
+    """Unicode full case-folding pairs must share one reservation key.
+
+    These non-ASCII pairs distinguish full case folding from ``lower()``;
+    ASCII-only case variants cannot pin that filesystem-safety property.
+    """
     from recommendations.playlist_exporter import _filename_collision_key
 
     assert _filename_collision_key("Artist - Title.m3u") == (
         _filename_collision_key("artist - title.M3U")
     )
+    assert _filename_collision_key("Straße.m3u") == (
+        _filename_collision_key("Strasse.m3u")
+    )
+    assert _filename_collision_key("ﬁ.m3u") == _filename_collision_key("fi.m3u")
+    assert _filename_collision_key("K.m3u") == _filename_collision_key("k.m3u")
 
 
 def test_collision_key_normalises_canonically_equivalent_unicode():
