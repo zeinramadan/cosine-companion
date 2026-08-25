@@ -1571,8 +1571,8 @@ def _reads(tree):
 def test_no_source_file_is_read_without_its_comments_being_stripped():
     """The single rule the readers exist to enforce, checked on THIS file's AST.
 
-    Not a style point. Six separate regexes in here read tokens.css and app.css
-    raw, and every one of them was wrong about the browser:
+    Not a style point. These regexes in here read tokens.css and app.css raw,
+    and each was wrong about the browser:
 
       * a `--ink-secondary` that exists ONLY inside a comment counted as
         DEFINED, so the one token every component uses could be commented out
@@ -1588,18 +1588,19 @@ def test_no_source_file_is_read_without_its_comments_being_stripped():
       * a commented-out `:root {` block was read as the real one and reported a
         camelot leak that does not exist.
 
-    Two of those were reported and four were found by looking for the rest,
-    which is the reason this test exists at all rather than a sixth correction:
-    correcting the sites one at a time is what left four of them standing.
+    Two of those were reported and the rest were found by looking for more,
+    which is the reason this test exists at all rather than one more
+    correction: correcting the sites one at a time is what left the rest
+    standing.
 
-    AND THE SCAN ITSELF WAS THE SEVENTH. It recognised five variable names, so
+    AND THE SCAN ITSELF WAS ONE. It recognised five variable names, so
     it never saw `read(JS / "format.js")` two hundred lines below it -
     commenting out `hue: (position - 1) * 30,` and substituting `hue: 0,` left
     every Camelot pill at hue zero with 129 Python and 168 JS tests green.
     Enumerating the spellings of a path is the same losing game as enumerating
     the decoys a substring lookup accepts, so it is not played.
 
-    AND THE SCAN THAT REPLACED IT WAS THE EIGHTH, which is why it now runs the
+    AND THE SCAN THAT REPLACED IT WAS ANOTHER, which is why it now runs the
     other way round. Classifying CALL SHAPES is the same losing game one level
     up: `UNSTRIPPED = Path.read_text` is not a call, a nested `def css` wore a
     reader's name, and `linecache.getlines` was a shape nobody had listed. All
@@ -3389,9 +3390,9 @@ def test_the_set_creator_status_line_cannot_be_scrolled_out_of_reach():
 #: four shapes - and `el.style['position'] = 'static'`,
 #: `Object.assign(el.style, {position: 'static'})`, `const s = el.style; s.position = ...`,
 #: `setProperty('bot' + 'tom', ...)`, an injected `<style>` element,
-#: `adoptedStyleSheets` and `insertRule` all walked through it. Eight of nine
-#: spellings, in a check written to close a hole. The shapes are unbounded;
-#: the words are five.
+#: `adoptedStyleSheets` and `insertRule` all walked through it. Seven
+#: spellings walking through a check written to close a hole. The shapes are
+#: unbounded; the words are five.
 INLINE_STYLE_PRIMITIVES = ("style", "cssText", "insertRule", "deleteRule",
                            "adoptedStyleSheets")
 
@@ -3472,8 +3473,8 @@ def test_no_script_puts_css_on_the_page_outside_the_stylesheet():
     )
 
 
-#: Nine spellings of the same act. The first is the only one the shape-matching
-#: version of this check caught.
+#: Eleven spellings of the same act. The first is the only one the
+#: shape-matching version of this check caught.
 INLINE_STYLE_ROUTES = [
     ("the obvious one", "el.style.position = 'static';"),
     ("bracket access", "el.style['position'] = 'static';"),
@@ -3588,18 +3589,20 @@ def test_the_export_progress_block_cannot_be_scrolled_out_of_reach():
 # unpinned. Gutting the length-times-length rule, for instance, left the whole
 # file green until this table existed.
 #
-# THIS LIST IS NOW EXHAUSTIVE BY CONSTRUCTION rather than by inspection, and it
-# had to be: it was assembled a rule at a time, and twice a rule was found
-# missing after the list had been called complete - the length-times-length one,
-# then the closing-token one, which accepted `bottom: calc(1px,`. Guessing at
-# what is uncovered does not converge. So every raise, every branch and every
-# assert in `_tokenise`, `_Typer`, `_type_of` and `assert_sticks_to_the_bottom`
-# was disabled ONE AT A TIME and this file re-run against the mutant, which
-# turned up EIGHT more survivors past the one that was reported: the closing
+# HOW THIS LIST WAS ASSEMBLED, since calling it complete is what went wrong
+# twice: it was built a rule at a time, and twice a rule was found missing
+# AFTER the list had been called complete - the length-times-length one, then
+# the closing-token one, which accepted `bottom: calc(1px,`. Guessing at what
+# is uncovered does not converge, so guessing was replaced by a procedure: each
+# raise, branch and assert in `_tokenise`, `_Typer`, `_type_of` and
+# `assert_sticks_to_the_bottom` was disabled ONE AT A TIME and this file re-run
+# against the mutant. That turned up EIGHT survivors past the one that was
+# reported: the closing
 # token, the `var()` name check, the unclosed-`var(` check, the bareness of a
 # substituted value, the recursion limit, the `position: sticky` assert, the
-# missing-`bottom` assert, and the `(?:^|;)` anchor that stops `padding-bottom`
-# being read as `bottom`. Each is covered below or in a test underneath, and
+# missing-`bottom` assert, and the `_DECLARATION_BOUNDARY` anchor that stops
+# `padding-bottom` being read as `bottom`.
+# Each is covered below or in a test underneath, and
 # each was re-run to a red. ONE branch survives with no discriminating input at
 # all and is documented AS such at its site rather than papered over: the
 # `inside_maths` save/restore in `_Typer.unit`.
@@ -3786,8 +3789,9 @@ def test_a_rule_with_no_bottom_offset_is_not_read_off_a_neighbouring_property():
     """`padding-bottom` is not `bottom`, and a sticky block with only a padding
     is not stuck to anything.
 
-    Two separate holes met here. The `(?:^|;)` anchor is what stops the search
-    matching the tail of `padding-bottom`, and without it this declaration
+    Two separate holes met here. The `_DECLARATION_BOUNDARY` anchor is what
+    stops the search matching the tail of `padding-bottom`, and without it this
+    declaration
     resolved to a length and PASSED. And the missing-offset assert underneath
     it was unreachable from the table: the empty-string row does not reach it,
     because the whitespace in the pattern backtracks and the capture matches
