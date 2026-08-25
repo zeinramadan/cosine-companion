@@ -698,8 +698,9 @@ def test_collision_names_are_independent_of_seed_iteration_order(
 def test_collision_key_uses_full_case_folding():
     """Unicode full case-folding pairs must share one reservation key.
 
-    These non-ASCII pairs distinguish full case folding from ``lower()``;
-    ASCII-only case variants cannot pin that filesystem-safety property.
+    Each non-ASCII pair below distinguishes full case folding from ``lower()``;
+    the ASCII-only case variant confirms the ordinary case-insensitive path but
+    cannot pin that stronger filesystem-safety property by itself.
     """
     from recommendations.playlist_exporter import _filename_collision_key
 
@@ -710,7 +711,7 @@ def test_collision_key_uses_full_case_folding():
         _filename_collision_key("Strasse.m3u")
     )
     assert _filename_collision_key("ﬁ.m3u") == _filename_collision_key("fi.m3u")
-    assert _filename_collision_key("K.m3u") == _filename_collision_key("k.m3u")
+    assert _filename_collision_key("ﬂ.m3u") == _filename_collision_key("fl.m3u")
 
 
 def test_collision_key_normalises_canonically_equivalent_unicode():
