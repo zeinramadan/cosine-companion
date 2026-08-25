@@ -1120,9 +1120,28 @@ STICKY_PROPERTIES = ("position", "bottom", "background")
 #      `_rules` reports the inner block with the selector `&`, which does not
 #      MENTION `.exportv__progress`, so `_rule` never reaches
 #      `_important_properties`; the outer wrapper matches no `_rules` pattern
-#      at all and disappears. Chrome computes `static`. The `!important`
-#      refusal is real but NARROWER than "anywhere in a name being resolved":
-#      it applies to a rule whose selector LIST names the selector as text.
+#      at all and disappears. Chrome computes `static`.
+#
+#      NAMING THE TARGET IN THE OUTER SELECTOR DOES NOT HELP, and this is the
+#      correction to what the sentence here said last round - "a rule whose
+#      selector LIST names the selector as text", which sounds like it covers
+#      the case below and does not:
+#
+#          .exportv__progress { position: static !important; & { color: red; } }
+#
+#      The target is named, and the important declaration is written directly
+#      in that rule's own block rather than behind a nested selector. `_rules`
+#      still returns ONE entry for it - selector text `position: static
+#      !important; &`, body `color: red;`, depth 1 - because the outer `{` is
+#      followed by another `{` before any `}`, so the outer rule cannot match
+#      `([^{}]+)\{([^{}]*)\}` and its selector is consumed as part of the
+#      inner one's. Nothing carrying `.exportv__progress` reaches
+#      `_important_properties`. Appended to app.css: 272 passed.
+#
+#      SO THE REFUSAL'S ACTUAL SCOPE is rules that `_rules` SUCCESSFULLY
+#      EMITS, and whose EMITTED selector text names the target. A rule
+#      `_rules` does not emit under its own selector is outside it, however
+#      the source is written.
 #
 #   3. `JS_COMMENT` DOES NOT REMOVE EVERY JAVASCRIPT COMMENT. Its
 #      `(?<![:\w])//` keeps `https://` out of the match and also declines a
@@ -1186,10 +1205,12 @@ STICKY_PROPERTIES = ("position", "bottom", "background")
 #
 #   * `!important` in a declaration this file RESOLVES - `_declaration` and
 #     `_custom_properties` refuse it in the text they are handed, and `_rule`
-#     refuses it in a rule whose selector list NAMES the selector as text.
-#     Precedence needs the cascade. `_important_declaration` reads the
-#     reduced-motion block, where the flag is the point, and refuses an
-#     UNFLAGGED declaration in turn. Evasion 2 is the syntax it does not reach;
+#     refuses it in a rule that `_rules` EMITS and whose EMITTED selector text
+#     names the selector. Precedence needs the cascade. `_important_declaration`
+#     reads the reduced-motion block, where the flag is the point, and refuses
+#     an UNFLAGGED declaration in turn. Evasion 2 is the syntax it does not
+#     reach - including a rule that names the target and declares the flag in
+#     its own block, which `_rules` does not emit under that selector at all;
 #   * a QUOTE anywhere in a sheet - a string can hold `;`, `{` or `}`. Evasion
 #     1 is the unquoted token that does the same thing;
 #   * an AT-RULE outside `@media` and `@keyframes` - `@import` hides a whole
@@ -2344,8 +2365,15 @@ def test_the_shipped_sheets_declare_nothing_important_the_guard_resolves():
 
     They are only worth having if the real sheets pass them, and the one place
     these stylesheets DO use `!important` - the reduced-motion block - is read
-    through `_important_declaration`, which requires it. So: every rule the
-    sticky guard reads is unflagged, and the reduced-motion block is flagged.
+    through `_important_declaration`, which requires it.
+
+    STATED AS WHAT IS ASSERTED: `_important_properties` finds nothing in the
+    merged declaration text `_rule` returns for `.setc__status` and for
+    `.exportv__progress`, and finds exactly the four listed names in the
+    reduced-motion block of tokens.css. That is a claim about those two merged
+    strings and that one block - not about the sheet. A rule `_rules` does not
+    emit under one of those two selectors contributes nothing to either
+    string and is not read here; evasion 2 above is the shape that does it.
     """
     body = css(APP_CSS)
     for selector in (".setc__status", ".exportv__progress"):
