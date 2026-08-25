@@ -569,8 +569,9 @@ def test_colliding_seed_names_create_distinct_valid_playlists(
 ):
     """A successful seed must own a distinct file, while unrelated names stay put.
 
-    The first colliding seed retains the legacy filename. Only the later seed is
-    disambiguated, using its track id, so ordinary exports do not churn names.
+    The smallest track id in a collision group retains the legacy filename;
+    every other member is disambiguated regardless of seed iteration order, so
+    unrelated exports do not churn names.
     """
     for track_id in ("f01", "f06"):
         fixture_library.meta_ix.loc[track_id, "artist"] = "Collision Artist"
