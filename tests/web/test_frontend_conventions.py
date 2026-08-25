@@ -375,9 +375,16 @@ def source(path):
 def css(path):
     """A stylesheet as the BROWSER sees it: comments gone, once, here.
 
-    Every CSS read in this file goes through this, and
-    `test_no_source_file_is_read_without_its_comments_being_stripped` fails if
-    a new one does not. That is not tidiness. A commented-out declaration is
+    THE READER THE CSS CHECKS IN THIS FILE ARE WRITTEN TO CALL. What looks for
+    the ones that do not is
+    `test_no_source_file_is_read_without_its_comments_being_stripped`, which
+    runs `_reads` over THIS FILE's own AST and reports a listed `READ_PRIMITIVES`
+    name spelled - as a `Name` or an `Attribute` - outside a registered reader.
+    That is two literal node shapes, not a proof: the boundary note above
+    `stylesheets()` gives the scan's limits, and its evasion 4 is a real raw
+    read that the scan does not report. So read this as "the reader, plus a
+    scan for the spellings that skip it", not as "every read goes through
+    here". That is not tidiness. A commented-out declaration is
     not a declaration - the browser has no such custom property, no such font
     size and no such media block - and a regex reading one as live is a guard
     describing a stylesheet that does not exist. It was wrong in both
@@ -392,10 +399,11 @@ def css(path):
     survive, so there is one correction and it lives at the reader.
 
     AND THE SAME ARGUMENT, FOR STRINGS. A sheet containing a quote is refused
-    here rather than handed on to be split wrongly - see `_splittable`. This
-    is the reader, so no real stylesheet reaches a consumer without passing
-    it; the splitters check again for the synthetic sheets the tests build by
-    hand, which never come through here.
+    here rather than handed on to be split wrongly - see `_splittable`. A
+    sheet obtained THROUGH THIS FUNCTION has passed those refusals by the time
+    a consumer sees it; the splitters check again for the synthetic sheets the
+    tests build by hand, which are passed in as strings and do not come
+    through here.
     """
     assert path.suffix == ".css", f"{path.name} is not a stylesheet"
     return _splittable(source(path), path.name)
