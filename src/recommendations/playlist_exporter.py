@@ -65,6 +65,12 @@ def _filename_collision_key(filename: str) -> str:
 
 def _filename_with_track_id(filename: str, track_id: str, attempt: int) -> str:
     """Add a bounded discriminator while retaining the legacy length ceiling."""
+    # Different long path-fallback ids can share this capped marker. That does
+    # not clash within one run: _unique_playlist_path reserves the first and
+    # retries later matches as ``-2``, ``-3``, etc. Which id receives which
+    # retry is request-order dependent, because existing destination files are
+    # deliberately not reservations. The current real library has zero such
+    # path-fallback ids, so no additional allocation machinery is warranted.
     safe_track_id = sanitise_filename_part(str(track_id))[:64] or "unknown"
     marker = f" [ID {safe_track_id}]"
     if attempt > 1:

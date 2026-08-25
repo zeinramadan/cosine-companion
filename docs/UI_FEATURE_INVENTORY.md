@@ -1332,6 +1332,14 @@ truncation so it cannot be cut off. Pre-existing files in the destination are ig
 allocating. With the same library membership and collision-forming metadata, full and subset
 re-exports therefore reuse the same names rather than accumulating suffixes.
 
+Two different long path-fallback IDs can share the same sanitised 64-character prefix. The
+written-name reservation loop prevents a clash within one run: the first gets `[ID <prefix>]` and
+later matches retry as `[ID <prefix>-2]`, `-3`, and so on. Marker ownership in that exceptional
+group is request-order dependent, however, and a later subset run does not reserve the other
+track's pre-existing destination file, so it can overwrite that file. There are zero
+path-fallback IDs in the current real library, so this is documented rather than given more
+allocation machinery.
+
 That pre-pass is also the single source of each seed's artist, title, legacy filename and
 collision key: the export loop consumes the recorded tuple instead of applying a second copy of
 the missing-column defaults. Consequently its bare owner-map lookup cannot be given a collision
