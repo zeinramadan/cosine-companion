@@ -1121,10 +1121,11 @@ STICKY_PROPERTIES = ("position", "bottom", "background")
 # What this file establishes are properties of ITS OWN REGEX-DERIVED
 # REPRESENTATION of the source, and nothing beyond them:
 #
-#   * PYTHON READS: `_reads` walks THIS FILE's AST and reports two literal
-#     node shapes outside a registered reader - a `Name` or an `Attribute`
-#     spelling one of the listed `READ_PRIMITIVES` names, and a dunder
-#     attribute; `test_this_file_imports_nothing_that_can_reach_a_reader`
+#   * PYTHON READS: `_reads` walks THIS FILE's AST and, outside a registered
+#     reader, reports a `Name` spelling one of `READ_PRIMITIVES` or
+#     `INDIRECTION_NAMES`, an `Attribute` spelling one of `READ_PRIMITIVES`,
+#     and any dunder `Attribute`;
+#     `test_this_file_imports_nothing_that_can_reach_a_reader`
 #     reads `Import`/`ImportFrom` nodes against `PERMITTED_IMPORTS`. A read spelled
 #     as none of those is not reported - evasion 4 is one, in this file's own
 #     suite.
@@ -1323,10 +1324,11 @@ STICKY_PROPERTIES = ("position", "bottom", "background")
 #     a region between two substrings rather than parsing the markup.
 #   * The refusals are over CSS SOURCE TEXT, so what they establish is what the
 #     stylesheet says.
-#     `test_no_script_puts_css_on_the_page_outside_the_stylesheet` is what
-#     keeps the geometry in the stylesheet, bounded by evasion 5 - it reports
-#     the five words, not every write - and the two sticky tests still cannot
-#     lay anything out. Where those blocks actually land was measured by hand
+#     `test_no_script_puts_css_on_the_page_outside_the_stylesheet` reports the
+#     five words of `INLINE_STYLE_PRIMITIVES` in stripped script source, line
+#     by line; evasion 5 is a write to `.style` that spells none of them, and
+#     the two sticky tests still cannot lay anything out. Where those blocks
+#     actually land was measured by hand
 #     in a real browser and is recorded in the PR description.
 #   * A stylesheet in `src/web/static/css/` that no `<link>` in index.html
 #     loads is still read by the sheet-wide checks, and NOTHING HERE NOTICES
@@ -2001,9 +2003,11 @@ UNSPLITTABLE_SHEETS = [
 def test_a_stylesheet_with_a_string_in_it_is_refused_rather_than_split(what, sheet):
     """Every entry point, not just the one the evasion came in through.
 
-    `_splittable` is called from the reader and from all three splitters, so
-    this asserts on all four: a consumer that reached around one of them would
-    be the sixth place this file has been wrong about the same thing.
+    `_splittable` is called from `css`, `_declarations_of`,
+    `_custom_properties`, `_important_properties` and `_rules`. The five
+    entry points below reach it through those: a consumer that reached around
+    one of them would be the sixth place this file has been wrong about the
+    same thing.
     """
     for name, call in (
         ("_declaration", lambda: _declaration("position", sheet)),
@@ -2172,8 +2176,8 @@ def test_a_rule_spelled_differently_from_the_one_checked_is_refused(what, sheet)
 
 def test_the_shipped_sheets_are_spelled_the_way_this_file_reads_them():
     """The floor under both refusals, and the reason they are shippable at
-    all: these stylesheets contain no backslash and no uppercase property
-    name, so refusing costs nothing and catches everything."""
+    all: `_ESCAPE` and `_MIXED_CASE_PROPERTY` find nothing in either shipped
+    sheet, so refusing costs the maintainer nothing today."""
     assert stylesheets(), "no stylesheets found at all"
     for sheet in stylesheets():
         body = css(sheet)
@@ -2314,8 +2318,9 @@ def test_the_shipped_sheets_are_ascii_with_every_comment_closed():
 
     The `§`, `·`, `–` and emoji in these sheets' prose are all inside
     comments, which are stripped before any of this runs - so the refusal
-    costs the maintainer nothing and catches every character that would make a
-    text comparison lie.
+    costs the maintainer nothing today. What `_ALIEN_CHARACTER` matches is the
+    complement of tab, line feed, form feed, carriage return and printable
+    ASCII; a homoglyph drawn from printable ASCII is not in that set.
     """
     assert stylesheets(), "no stylesheets found at all"
     for sheet in stylesheets():
@@ -2809,7 +2814,14 @@ def _milliseconds(value):
 
 
 def _rules(text):
-    """(selector, declarations, depth) for every innermost block in ``text``.
+    r"""(selector, declarations, depth) for each `([^{}]+)\{([^{}]*)\}` match
+    in ``text``, left to right and non-overlapping.
+
+    `[^{}]+` cannot cross a brace, so what precedes an inner `{` is what
+    comes back as the selector: `_rules(".a { .b { x } }")` returns
+    `[(' .b ', ' x ', 1)]` and `.a` appears nowhere in the result - measured.
+    Evasion 2 in the boundary note above `stylesheets()` works a
+    shipped-shaped case of that through.
 
     Takes text that has ALREADY been through `css()`. Stripping again here
     would be a second place the rule lives, which is the shape of the bug this
@@ -2837,7 +2849,9 @@ def _rules(text):
 
 
 def _declared_durations():
-    """(milliseconds, declaration) for every duration in every stylesheet."""
+    """(milliseconds, declaration) for each `DURATION` match in each
+    semicolon-split fragment of each block `_rules` emits, for each sheet
+    `stylesheets()` returns."""
     found = []
     for sheet in stylesheets():
         for _selector, declarations, _depth in _rules(css(sheet)):
