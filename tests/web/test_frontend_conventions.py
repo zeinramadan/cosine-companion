@@ -1038,10 +1038,14 @@ def _rule(body, selector, properties, where="this stylesheet"):
 STICKY_PROPERTIES = ("position", "bottom", "background")
 
 
-# WHAT A GREEN RUN OF THIS FILE MEANS. Every CSS name and every CSS selector
-# goes through `_declaration`, `_custom_properties` or `_rule`; every read of a
-# source file through `css()`, `js()`, `html()` or `source()`; and every read
-# PRIMITIVE in this file's own text through `_reads`.
+# WHAT A GREEN RUN OF THIS FILE MEANS, WRITTEN AS WHAT EACH CHECK LITERALLY
+# LOOKS FOR AND IN WHAT LITERAL FORM. This paragraph used to open with a
+# universal - "every read of a source file goes through `css()`, `js()`,
+# `html()` or `source()`" - and evasion 4, twenty lines below, is a read that
+# does not. A sentence quantifying over reads, scripts, rules or tests has been
+# falsified by one constructed counterexample in every round this file has had.
+# This reads a regex-derived approximation of the source; it cannot carry a
+# universal, so it no longer states one.
 #
 # THE BOUNDARY, AND IT IS MEASURED RATHER THAN ARGUED. Rounds 3, 4, 5 and 6
 # each closed this class of hole and each was followed by a new spelling of it.
@@ -1051,9 +1055,27 @@ STICKY_PROPERTIES = ("position", "bottom", "background")
 # What this file establishes are properties of ITS OWN REGEX-DERIVED
 # REPRESENTATION of the source, and nothing beyond them:
 #
-#   * literal listed Python read names, and literal `import` AST nodes;
-#   * literal five-word mentions in stripped JavaScript;
-#   * exact textual top-level CSS selectors, and semicolon-split declaration
+#   * PYTHON READS: `_reads` walks THIS FILE's AST and reports two literal
+#     node shapes outside a registered reader - a `Name` or an `Attribute`
+#     spelling one of the listed `READ_PRIMITIVES` names, and a dunder
+#     attribute; `test_this_file_imports_nothing_that_can_reach_a_reader`
+#     reads `Import`/`ImportFrom` nodes against `PERMITTED_IMPORTS`. A read spelled
+#     as none of those is not reported - evasion 4 is one, in this file's own
+#     suite.
+#   * JAVASCRIPT: `_STYLE_MENTION` finds the five words of
+#     `INLINE_STYLE_PRIMITIVES` at word boundaries in `js()` output, line by
+#     line, with a per-LINE exemption for a custom-property write.
+#   * CSS SELECTORS: `_rule` compares `selector` as EXACT TEXT against the
+#     comma-split entries of each block `_rules` EMITS, and merges those at
+#     depth 0. What `_rules` does not emit is invisible here, and a rule whose
+#     block contains native nesting is not emitted under its own selector at
+#     all: `_rules(".exportv__progress { position: static !important; & { color:
+#     red; } }")` returns one entry, selector text `position: static
+#     !important; &`, depth 1 - `.exportv__progress` appears nowhere in the
+#     result. Measured.
+#   * CSS NAMES: `_declaration`, `_declarations_of`, `_custom_properties` and
+#     `_important_declaration` search `_splittable` text for the LITERAL name
+#     followed by `:` at a declaration boundary, over semicolon-split
 #     fragments.
 #
 # It does NOT establish: browser CSS tokenization or cascade, native CSS
