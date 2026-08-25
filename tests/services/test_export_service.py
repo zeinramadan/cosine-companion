@@ -689,6 +689,24 @@ def test_long_collision_suffix_preserves_204_character_ceiling():
     assert disambiguated.endswith(" [ID f06].m3u")
 
 
+def test_collision_suffix_caps_sanitised_track_id_at_64_characters():
+    """Long path-fallback ids use only 64 sanitised characters in the marker."""
+    from recommendations.playlist_exporter import (
+        _filename_with_track_id,
+        sanitise_filename_part,
+    )
+
+    legacy_name = playlist_filename("A" * 200, "B" * 200)
+    path_fallback_id = "/Volumes/" + "x" * 210 + ".mp3"
+    sanitised_id = sanitise_filename_part(path_fallback_id)
+    assert len(sanitised_id) > 194  # an uncapped marker exceeds the ceiling
+
+    disambiguated = _filename_with_track_id(legacy_name, path_fallback_id, 1)
+
+    assert disambiguated.endswith(f" [ID {sanitised_id[:64]}].m3u")
+    assert len(disambiguated) == 204
+
+
 def test_failed_write_does_not_reserve_its_filename(
     fixture_library, service, tmp_path, monkeypatch
 ):
