@@ -88,6 +88,12 @@ def check_dependencies():
         ("soundfile", "pip install soundfile"),
         ("essentia", "pip install essentia-tensorflow"),
         ("typer", "pip install typer"),
+        # The web UI's window. Imported as `webview`, installed as `pywebview`
+        # - checking the import name is the only one of the two that proves the
+        # build machine can actually collect it. Without it PyInstaller emits a
+        # warning and produces a bundle that dies the moment `ui-web` runs, so
+        # this belongs here, at the start, rather than in a user's crash report.
+        ("webview", "pip install pywebview"),
     ]
     ok = True
     for mod, hint in required:
