@@ -99,10 +99,6 @@ Four rounds on this file have now established the same thing four
     which is what happened with `!important` and with a semicolon inside a
     string, and what this class exists to stop happening a third time.
 
-    What each refusal can name differs, and is worth knowing before relying on
-    one: `_rule` is handed a `where` and names it, with the rule's selector
-    text, but has no line.
-
     It subclasses AssertionError so pytest reports it as a failing check
     rather than an error in the tests, which is what it is: the stylesheet
     does not meet a constraint this file imposes.
