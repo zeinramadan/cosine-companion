@@ -310,12 +310,9 @@ def _splittable(text, where=None):
     if remnant is not None:
         line = text.count("\n", 0, remnant.start()) + 1
         raise _CannotModel(
-            f"{where or 'this CSS'} still contains `{remnant.group()}` after its "
-            f"comments were stripped (line {line}), so the stripper and the "
-            f"browser disagree about where this sheet ends. An unterminated "
-            f"comment runs to the end of the file in CSS and matches nothing in "
-            f"`COMMENT`, which leaves every rule after it live here and absent "
-            f"there. Close the comment."
+            f"{where or 'this CSS'} still contains `{remnant.group()}` on line "
+            f"{line} after `COMMENT` was applied to it, so `COMMENT` did not "
+            f"match the comment this delimiter belongs to. Close the comment."
         )
 
     escape = _ESCAPE.search(text)
@@ -1845,14 +1842,15 @@ def test_the_script_reader_strips_both_comment_forms():
 
 
 def test_a_reader_is_chosen_by_what_the_file_is():
-    """The three suffix asserts, which nothing in the tree can reach.
+    """The three suffix asserts, called with the suffix each one refuses.
 
-    Every path this file reads ends in `.css`, `.js` or `.html`, so no call
-    exercises the wrong-reader case and all three asserts survived deletion
-    with the suite green. They are worth having - `css()` on a script strips
-    `/* */` and leaves every `//` comment standing, which is the reader being
-    wrong about the browser in the direction this whole file exists to stop -
-    so they are pinned here rather than left as decoration.
+    `css()`, `js()` and `html()` each open with an `assert path.suffix == ...`,
+    and this is what calls them with the wrong one. Before it existed all three
+    asserts survived deletion with the suite green. They are worth having -
+    `css()` on a script strips `/* */` and leaves a `//` comment standing,
+    which is the reader being wrong about the browser in the direction this
+    whole file exists to stop - so they are pinned here rather than left as
+    decoration.
     """
     with pytest.raises(AssertionError, match="not a stylesheet"):
         css(JS / "format.js")
@@ -2283,10 +2281,11 @@ UNTERMINATED_COMMENTS = [
     "what,sheet", UNTERMINATED_COMMENTS, ids=[name for name, _ in UNTERMINATED_COMMENTS]
 )
 def test_a_comment_the_stripper_could_not_close_is_refused(what, sheet):
-    """An unterminated comment runs to the end of the stylesheet in CSS and
-    matches nothing in `COMMENT`, so every rule after it is live here and
-    absent there - the exact inversion of the commented-out-declaration bug
-    this file's readers exist to fix."""
+    """Each sheet goes through `without_comments` and then `_rule`, which has
+    to raise `_CannotModel` naming a comment. `COMMENT` needs a `*/` to match
+    at all, so each of these leaves a delimiter behind for `_COMMENT_REMNANT`
+    to find. What the browser does with the three rows differs - the note above
+    `_COMMENT_REMNANT` works one of them through."""
     with pytest.raises(_CannotModel) as refusal:
         _rule(without_comments(sheet), ".exportv__progress", STICKY_PROPERTIES,
               where="app.css")
