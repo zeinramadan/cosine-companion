@@ -102,9 +102,12 @@ Four rounds on this file have now established the same thing four
     which is what happened with `!important` and with a semicolon inside a
     string, and what this class exists to stop happening a third time.
 
-    The refusals raised from `_splittable` name the file and the line as well;
-    the ones raised from `_declaration`, `_custom_properties` and
-    `_important_declaration` are handed no file or line to name and do not.
+    What each refusal can name differs, and is worth knowing before relying on
+    one: the six raised from `_splittable` are handed a `where` and compute a
+    line, and name both. `_rule` is handed a `where` and names it, with the
+    rule's selector text, but has no line. `_declaration`, `_custom_properties`
+    and `_important_declaration` are handed neither and name the property and
+    its value only.
 
     It subclasses AssertionError so pytest reports it as a failing check
     rather than an error in the tests, which is what it is: the stylesheet
@@ -320,8 +323,10 @@ def _splittable(text, where=None):
         line = text.count("\n", 0, remnant.start()) + 1
         raise _CannotModel(
             f"{where or 'this CSS'} still contains `{remnant.group()}` on line "
-            f"{line} after `COMMENT` was applied to it, so `COMMENT` did not "
-            f"match the comment this delimiter belongs to. Close the comment."
+            f"{line} after `COMMENT` was applied to it. `COMMENT` needs a `/*` "
+            f"and a `*/` to match, so a delimiter left over means one of the "
+            f"pair is missing. Close the comment, or delete the stray "
+            f"delimiter."
         )
 
     escape = _ESCAPE.search(text)
@@ -1368,14 +1373,16 @@ def own_source():
     return read(THIS_FILE)
 
 #: The readers that make a source file look the way a browser sees it, plus
-#: `read`, which is where `path.read_text` is spelled, plus `own_source`,
-#: which is how this file gets its own text to parse. Inside their definitions
-#: a raw read is what they ARE; anywhere else it is the defect below.
+#: `read`, whose body is `path.read_text(encoding="utf-8")`, plus
+#: `own_source`, which is how this file gets its own text to parse. Inside
+#: their definitions a raw read is what they ARE; anywhere else it is the
+#: defect below.
 #:
 #: This is a closed set of six functions at the top of one file, not an open
-#: set of spellings. A `read` written in the body of a function that is not
-#: named here is reported as an unclassified raw read - pinned by the "a new
-#: helper that reads raw" row of `EVASIONS`. Only a MODULE-LEVEL `def` counts:
+#: set of spellings. A read primitive written in the body of a function whose
+#: name is not in this tuple is reported as an unclassified raw read - the
+#: "read(THIS_FILE) somewhere else" and "a new helper that reads raw" rows of
+#: `EVASIONS`. Only a MODULE-LEVEL `def` counts:
 #: a `def css(path)`
 #: written inside a test body is not this file's stylesheet reader, it is a
 #: local function that happens to share its name, and treating it as one is
@@ -1606,9 +1613,9 @@ def test_no_source_file_is_read_without_its_comments_being_stripped():
     reader's name, and `linecache.getlines` was a shape nobody had listed. All
     three were green in round 6. `_reads` classifies the READ PRIMITIVE
     instead - as a Name or an Attribute, called or not, anywhere in the file.
-    What it reports is bounded by the two lists it consults; a read spelled as
-    neither is not reported, and evasion 4 in the boundary note above
-    `stylesheets()` is one.
+    What it reports is bounded by what it looks for; a read spelled as none of
+    those is not reported, and evasion 4 in the boundary note above
+    `stylesheets()` is one - `_reads` returns `([], [])` for it, measured.
     """
     stripped, raw = _reads(ast.parse(own_source()))
 
@@ -1694,8 +1701,9 @@ def test_the_import_check_reports_a_module_that_could_read_a_file():
 #: read spelled differently, which is the point: the spellings are unbounded,
 #: so the scan classifies the READ PRIMITIVE and never the path or the call.
 #:
-#: THE LAST FOUR ROWS ARE ROUND 6'S REPORT, and all four were green against
-#: the shape-classifying scan this replaces.
+#: THE FOUR ROWS UNDER THE "reported in round 6" COMMENT are that round's
+#: report, and all four were green against the shape-classifying scan this
+#: replaces. Rows were appended after them, so they are not the last four.
 EVASIONS = [
     ("a composed path", 'def test_x():\n    body = read(JS / "components" / "drawer.js")\n'),
     ("a path bound to a new name", 'FORMAT_JS = JS / "format.js"\n'
@@ -1791,8 +1799,8 @@ def test_the_self_scan_reports_a_read_however_it_is_spelled(what, snippet):
 
     `test_no_source_file_is_read_without_its_comments_being_stripped` asserts
     an EMPTY list, and an empty list is what a scan that has stopped matching
-    also produces. These are the inputs that tell the two apart. The last four
-    rows are round 6's report, and all four were green against the
+    also produces. These are the inputs that tell the two apart. The four rows
+    under the "reported in round 6" comment were green against the
     shape-classifying scan this replaces.
     """
     _stripped, raw = _reads(ast.parse(snippet))
@@ -2304,9 +2312,10 @@ UNTERMINATED_COMMENTS = [
 )
 def test_a_comment_the_stripper_could_not_close_is_refused(what, sheet):
     """Each sheet goes through `without_comments` and then `_rule`, which has
-    to raise `_CannotModel` naming a comment. `COMMENT` needs a `*/` to match
-    at all, so each of these leaves a delimiter behind for `_COMMENT_REMNANT`
-    to find. What the browser does with the three rows differs - the note above
+    to raise `_CannotModel` naming a comment. `COMMENT` needs a `/*` and a `*/`
+    to match, so each of these leaves a delimiter behind for
+    `_COMMENT_REMNANT` to find - the first two are missing the `*/`, the third
+    the `/*`. What the browser does with the three differs; the note above
     `_COMMENT_REMNANT` works one of them through."""
     with pytest.raises(_CannotModel) as refusal:
         _rule(without_comments(sheet), ".exportv__progress", STICKY_PROPERTIES,
@@ -3472,9 +3481,10 @@ def test_no_script_puts_css_on_the_page_outside_the_stylesheet():
                 break
 
     assert offences == [], (
-        "`_STYLE_MENTION` matched one of the five names in "
-        "INLINE_STYLE_PRIMITIVES on these lines of stripped script source, and "
-        "`_CUSTOM_PROPERTY_WRITE` did not match the same line:\n  "
+        "`_STYLE_MENTION` matched a name from INLINE_STYLE_PRIMITIVES on these "
+        "lines of stripped script source. A match is skipped only when the word "
+        "it matched is `style` AND `_CUSTOM_PROPERTY_WRITE` matches that same "
+        "line, which did not happen here:\n  "
         + "\n  ".join(offences)
         + "\nPut the declaration in app.css, or write a custom property with "
           "`style.setProperty('--name', ...)`, which `_CUSTOM_PROPERTY_WRITE` "
