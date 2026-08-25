@@ -3185,10 +3185,28 @@ def test_the_set_creator_status_line_cannot_be_scrolled_out_of_reach():
 #:
 #: put into the real Export component, all 272 tests green. These are five
 #: WORDS, matched by `_STYLE_MENTION` in stripped source, and a computed
-#: property name reaches the same object without spelling any of them. What
-#: the check below establishes is that no script MENTIONS one of the five
-#: outside a custom-property write. That is narrower than "no script reaches
-#: the cascade", and the boundary note above carries it with the other five.
+#: property name reaches the same object without spelling any of them.
+#:
+#: WHAT THE CHECK BELOW LITERALLY DOES, which is the only thing it can be
+#: relied on for: it reads each file under `JS` through `js()`, splits the
+#: result into LINES, and reports a line on which `_STYLE_MENTION` finds one
+#: of the five words at a word boundary - UNLESS the word found is `style` and
+#: `_CUSTOM_PROPERTY_WRITE` also matches SOMEWHERE ON THAT SAME LINE.
+#:
+#: THE EXEMPTION IS TESTED PER LINE, NOT PER MENTION, and that is a hole with
+#: a measured shape rather than a suspicion:
+#:
+#:     progress.style.position = 'static'; progress.style.setProperty('--progress', '0%');
+#:
+#: `_STYLE_MENTION` finds `style` twice on that line and
+#: `_CUSTOM_PROPERTY_WRITE.search(line)` is true, so BOTH mentions take the
+#: `continue` - including the plain write that beats the sheet. Measured on
+#: this line, not reasoned about: two mentions, one custom-property match, no
+#: offence recorded.
+#:
+#: So this is not a statement about what scripts do. It is a statement about
+#: which lines this loop appends to `offences`, and evasion 5 in the boundary
+#: note above `stylesheets()` carries the rest.
 #:
 #: WRITTEN THIS WAY BECAUSE THE FIRST VERSION OF THIS CHECK WAS THE DEFECT
 #: THIS WHOLE ROUND IS ABOUT. It matched `.style.<name> =`,
@@ -3227,16 +3245,29 @@ def test_no_script_puts_css_on_the_page_outside_the_stylesheet():
     notice: an inline style is not CSS source text and the sticky guards read
     CSS source text.
 
-    So no script MENTIONS one of the five words above, except by setting a
-    custom property that app.css consumes. FLAT, and refusing words rather
-    than a list of write shapes, because the shapes are unbounded and the
-    first version of this check proved it by missing eight of nine.
+    WHAT THIS SEARCHES FOR, IN WHAT LITERAL FORM. For each file `scripts()`
+    returns, it takes `js(script)`, splits it on newlines, and appends a line
+    to `offences` when `_STYLE_MENTION` - the five names of
+    `INLINE_STYLE_PRIMITIVES` in a word-boundary alternation - finds a match
+    on it; a match is skipped when its word is `style` and
+    `_CUSTOM_PROPERTY_WRITE` - a dotted `style.setProperty(` whose first
+    argument is a quoted name beginning with two hyphens - also matches
+    somewhere on THE SAME LINE. Both patterns are written out in full
+    immediately above. FLAT, and searching for words rather than for a list of
+    write shapes, because the shapes are unbounded and the first version of
+    this check proved it by missing eight of nine.
 
     WHAT THAT IS NOT is "no script reaches the cascade", which is what this
     docstring used to say. `progress['st' + 'yle']['position'] = 'static';`
     reaches it and mentions nothing - see evasion 5 in the boundary note above
-    `stylesheets()`. The word list is a floor under the shapes, not a proof
-    about the language.
+    `stylesheets()`. Nor is it "no script mentions the five words outside a
+    custom-property write": the exemption is decided per LINE, so the plain
+    write in
+
+        progress.style.position = 'static'; progress.style.setProperty('--progress', '0%');
+
+    is skipped along with the permitted one, measured. The word list is a
+    floor under the shapes, not a proof about the language.
 
     What it costs, stated: `clipboard.js` styled its off-screen scratch
     textarea inline and now uses a `.clipboard-scratch` class; `format.js`
