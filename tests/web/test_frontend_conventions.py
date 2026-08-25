@@ -2868,8 +2868,10 @@ def _declared_durations():
 
 
 def test_reduced_motion_is_respected_at_the_token_level():
-    """Overriding the duration TOKENS means every transition in the app obeys
-    the preference without any component opting in individually.
+    """The duration TOKENS are overridden inside the preference block, so a
+    component that reads them through `var()` gets the reduced value without
+    opting in individually. Whether a given component reads them is not
+    something this test looks at.
 
     The VALUES are asserted, not the presence of the property names. Checking
     only that the words appeared let the whole block be kept while the numbers
@@ -2887,9 +2889,10 @@ def test_reduced_motion_is_respected_at_the_token_level():
     reduced = _block_body(query, body)
     assert reduced is not None, "the prefers-reduced-motion block is never closed"
 
-    # The two TOKENS, which every component reads through `var()`. Ordinary
-    # declarations: nothing else declares them inside this block, so last-wins
-    # is the cascade and `_declaration` resolves them.
+    # The two TOKENS, read through `var()` wherever a component uses them.
+    # Ordinary declarations: `_declarations_of` returns a single value for each
+    # inside this block, so there is no last-wins choice to make and
+    # `_declaration` resolves them.
     #
     # ANCHORED. Unanchored, renaming these two to `--not--motion-fast` and
     # `--not--motion-base` satisfied this loop while leaving the real ones at
@@ -2963,9 +2966,10 @@ def test_no_transition_or_animation_is_longer_than_two_hundred_milliseconds():
 def test_there_is_a_visible_focus_ring(tokens):
     """The token has to BE a ring, not merely exist.
 
-    ``--focus-ring: none`` satisfies every name-presence check in this file
-    while removing the focus indicator from the whole application, which is the
-    exact outcome the check is here to prevent.
+    ``--focus-ring: none`` is a declaration, so a check that asks only whether
+    the name is declared is satisfied by it - and what it declares draws
+    nothing. So the VALUE is what is asserted: no `none`, a non-zero
+    `px`/`rem`/`em` somewhere in it, and a colour.
     """
     body = css(APP_CSS)
 
@@ -3032,10 +3036,10 @@ def _from_hsl(hue, saturation, lightness):
 
 @pytest.fixture(scope="module")
 def tokens():
-    """Every custom property tokens.css declares, keyed by its WHOLE name.
+    """`_custom_properties(css(TOKENS_CSS))`, keyed by the WHOLE name.
 
-    Through the same anchored reader as every other lookup here, so a token
-    can only ever be read off the declaration that carries its exact name -
+    Anchored at a declaration boundary, so a token is read off the declaration
+    that carries its exact name -
     and so a declaration that is not at the start of a line is not invisible.
     """
     return _custom_properties(css(TOKENS_CSS))
@@ -3126,7 +3130,11 @@ def test_harmonic_neighbours_are_adjacent_in_hue(tokens):
 
 def test_the_page_has_no_inline_styles():
     """An inline style is a colour or a spacing value outside the system, and
-    it beats every stylesheet rule that would have corrected it."""
+    it outranks any ordinary rule in the sheet that would have corrected it.
+
+    A grep for a `style="` attribute in stripped markup. Its JavaScript
+    counterpart is `test_no_script_puts_css_on_the_page_outside_the_stylesheet`,
+    which carries the limits of the word search it runs."""
     assert not re.search(r'\sstyle\s*=\s*"', html(INDEX_HTML))
 
 
@@ -3417,9 +3425,9 @@ def test_no_script_puts_css_on_the_page_outside_the_stylesheet():
 
         progress.style.position = 'static';
 
-    - beats every rule in the sheet, and no amount of care about the CSS would
-    notice: an inline style is not CSS source text and the sticky guards read
-    CSS source text.
+    - outranks any ordinary rule in the sheet, and no amount of care about the
+    CSS would notice: an inline style is not CSS source text and the sticky
+    guards read CSS source text.
 
     WHAT THIS SEARCHES FOR, IN WHAT LITERAL FORM. For each file `scripts()`
     returns, it takes `js(script)`, splits it on newlines, and appends a line
@@ -3431,7 +3439,8 @@ def test_no_script_puts_css_on_the_page_outside_the_stylesheet():
     somewhere on THE SAME LINE. Both patterns are written out in full
     immediately above. FLAT, and searching for words rather than for a list of
     write shapes, because the shapes are unbounded and the first version of
-    this check proved it by missing eight of nine.
+    this check missed seven spellings that are written out above
+    `INLINE_STYLE_PRIMITIVES`.
 
     WHAT THAT IS NOT is "no script reaches the cascade", which is what this
     docstring used to say. `progress['st' + 'yle']['position'] = 'static';`
@@ -3821,8 +3830,7 @@ def test_the_drawer_renders_playlists_from_the_field_it_is_given():
     update." - which was the honest thing to assert while `track.playlists`
     came back null and there was nothing to render. This PR is the next update:
     the field is populated, so the placeholder is gone and a test asserting its
-    presence would be asserting that the feature was not built. It is the ONLY
-    pre-existing test this PR changes.
+    presence would be asserting that the feature was not built.
 
     What replaces it keeps the two properties the original was protecting -
     the drawer invents nothing, and it does not reach for an endpoint that does
