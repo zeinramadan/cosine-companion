@@ -480,19 +480,39 @@ def _declaration(name, text):
     is the single exception and strips for itself, because it is handed a sheet
     as a STRING by callers that cannot be made to strip first.
 
-    THE LAST DECLARATION WINS HERE, and that is the cascade only AT EQUAL
-    SPECIFICITY. `re.search` returns the first, so a rule that declared
-    `bottom` twice, or two rules merged by `_rule`, was read off the
+    WHAT THIS RETURNS IS THE LAST TEXT MATCHING THE NAME-PLUS-COLON PATTERN,
+    which is narrower than the cascade in two separate ways.
+
+    FIRST, SPECIFICITY. `re.search` returned the FIRST match, so a rule that
+    declared `bottom` twice, or two rules merged by `_rule`, was read off the
     declaration the browser discards - taking the last fixes that. It does not
-    make this the cascade, and this docstring used to say it did. Within one
-    rule's block, and between two rules written with the SAME selector, last
-    really does win. Between rules of different specificity it does not:
+    make this the cascade, and this docstring used to say it did. Between
+    rules of different specificity, order is not what decides:
 
         .setc .setc__status { position: static; }   /* written first  */
         .setc__status       { position: sticky; }   /* written second */
 
     computes `static`, because 0-2-0 beats 0-1-0 whatever the order, and this
     function returns `sticky`.
+
+    SECOND, VALIDITY - and it applies even inside ONE block, where specificity
+    cannot differ. CSS drops a declaration whose value is not valid for its
+    property AT PARSE TIME, so the winner is the last VALID declaration, not
+    the last one written. This function takes the last one written:
+
+        _declaration("position", "position: sticky; position: nonsense;")
+
+    returns `'nonsense'`; a browser discards the second declaration and
+    computes `sticky`. Measured, not reasoned.
+
+    IT CANNOT TELL THE DIFFERENCE. Deciding validity needs a grammar per
+    property, and there is none here: the one validity test in this file is
+    `_type_of`, which types a LENGTH and is called on the `bottom` value by
+    `assert_sticks_to_the_bottom` and on `var()` chains by the token checks.
+    Every other name resolved through here is returned as written. So read
+    this as "the last declaration of the name in this text", and take the gap
+    between that and "the declaration that applies" as unmeasured for any name
+    `_type_of` does not see.
 
     THE TWO SHIPPED CALLERS ARE GUARDED ONE LAYER UP, not by this function.
     `_rule` merges only rules whose selector is an exact top-level entry, and
