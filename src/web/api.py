@@ -1170,9 +1170,7 @@ class CocoApi:
             # Never infer cancellation from the event being set. If the
             # pipeline observes it, ``run`` raises KeyboardInterrupt and the
             # registry publishes CANCELLED with no result: all embeddings
-            # computed so far were discarded. If the final checkpoint has
-            # passed, defect #17 means the run commits and returns normally;
-            # that is a real success with ``cancel_requested`` still true.
+            # computed so far were discarded.
             return WorkOutcome(
                 cancelled=False,
                 result=_index_result_document(result, force_full),
