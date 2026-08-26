@@ -122,9 +122,7 @@ a = Analysis(
         # 'pywebview' here would collect nothing.
         'webview',
         # The macOS backend. `webview.guilib.initialize` reaches it with an
-        # `import webview.platforms.cocoa` inside a function body. Naming the
-        # one that must survive makes WKWebView a stated requirement of the
-        # bundle rather than a side effect of how that function is written.
+        # `import webview.platforms.cocoa` inside a function body.
         'webview.platforms.cocoa',
         # Top-level deps to ensure inclusion
         'pandas',
