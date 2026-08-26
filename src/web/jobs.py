@@ -138,10 +138,7 @@ class WorkOutcome:
     ``cancelled=True`` and real counts; ``IndexingService`` raises
     ``KeyboardInterrupt`` from the pipeline's checkpoint and produces no result
     at all. ``Job._run`` accepts both and lands them in the same terminal
-    state. Both are reached through API routes: export returns its partial
-    accounting, while re-index cancellation reaches the ``KeyboardInterrupt``
-    branch and publishes no result because the partial embeddings were
-    discarded.
+    state.
     """
 
     cancelled: bool
