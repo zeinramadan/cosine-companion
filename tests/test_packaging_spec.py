@@ -94,9 +94,7 @@ def test_macos_minimum_matches_the_locked_binary_floor():
 def _hidden_imports():
     """Every module name the spec names outright in ``hiddenimports``.
 
-    The literal entries only. The ``+ collect_submodules(...)`` tails are
-    resolved against whatever the build machine has installed, so what they
-    contribute is a property of that machine and not of this recipe.
+    The literal entries only.
     """
     analysis = _call("Analysis")
     analysis_keywords = {
