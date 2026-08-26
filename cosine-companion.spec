@@ -87,6 +87,17 @@ a = Analysis(
         'ui.dialogs',
         'ui.settings_window',
         'ui.reindex_window',
+        # Web UI modules. `cosine_companion.py` reaches these through a
+        # function-body import inside a try/except (the `ui-web` command).
+        # Listed explicitly so the recipe is the record: whether modulegraph
+        # happens to follow that import site is not a thing this bundle should
+        # depend on.
+        'web',
+        'web.assets',
+        'web.host',
+        'web.api',
+        'web.server',
+        'web.jobs',
         # Utils modules
         'utils',
         'utils.icon',
@@ -105,6 +116,14 @@ a = Analysis(
         'PIL',
         'PIL.Image',
         'PIL.ImageTk',
+        # pywebview, which the web UI's window is. The DISTRIBUTION is
+        # `pywebview` (requirements.txt:27) but the IMPORT is `webview` - its
+        # top_level.txt says so - and a hiddenimports entry is an import name.
+        # 'pywebview' here would collect nothing.
+        'webview',
+        # The macOS backend. `webview.guilib.initialize` reaches it with an
+        # `import webview.platforms.cocoa` inside a function body.
+        'webview.platforms.cocoa',
         # Top-level deps to ensure inclusion
         'pandas',
         'numpy',

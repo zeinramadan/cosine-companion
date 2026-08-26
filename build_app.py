@@ -88,6 +88,10 @@ def check_dependencies():
         ("soundfile", "pip install soundfile"),
         ("essentia", "pip install essentia-tensorflow"),
         ("typer", "pip install typer"),
+        # The web UI's window. Imported as `webview`, installed as `pywebview`
+        # - checking the import name is the only one of the two that proves the
+        # build machine can actually collect it.
+        ("webview", "pip install pywebview"),
     ]
     ok = True
     for mod, hint in required:

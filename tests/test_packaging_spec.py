@@ -89,3 +89,62 @@ def test_macos_minimum_matches_the_locked_binary_floor():
     info_plist = ast.literal_eval(bundle_keywords["info_plist"])
 
     assert info_plist["LSMinimumSystemVersion"] == "15.2"
+
+
+def _hidden_imports():
+    """Every module name the spec names outright in ``hiddenimports``.
+
+    The literal entries only.
+    """
+    analysis = _call("Analysis")
+    analysis_keywords = {
+        keyword.arg: keyword.value for keyword in analysis.keywords
+    }
+    return {
+        item.value
+        for item in _unconditional_list_items(analysis_keywords["hiddenimports"])
+        if isinstance(item, ast.Constant) and isinstance(item.value, str)
+    }
+
+
+def test_the_frozen_package_declares_the_web_ui_it_has_to_import():
+    """``ui-web`` is reached by a function-body import inside a try/except.
+
+    ``webview`` is spelled as the IMPORT name on purpose: the distribution is
+    ``pywebview`` (requirements.txt), and a hiddenimports entry saying
+    ``pywebview`` collects nothing while looking exactly like coverage.
+    """
+    declared = _hidden_imports()
+
+    required = {
+        "webview",
+        "webview.platforms.cocoa",
+        "web",
+        "web.assets",
+        "web.host",
+        "web.api",
+        "web.server",
+        "web.jobs",
+    }
+    missing = required - declared
+    assert not missing, "the spec does not declare " + ", ".join(sorted(missing))
+
+    assert "pywebview" not in declared, (
+        "'pywebview' is the distribution name; the importable module is "
+        "'webview'. PyInstaller resolves hiddenimports as import names, so "
+        "this entry would collect nothing."
+    )
+
+
+def test_the_frozen_package_still_declares_the_tkinter_front_end():
+    """Tkinter is still what a no-argument frozen launch opens.
+
+    ``cosine_companion.py`` short-circuits to ``ui.run_ui`` before Typer when
+    frozen with no arguments, so shipping the web UI must not cost the default
+    one.
+    """
+    declared = _hidden_imports()
+
+    required = {"ui", "ui.app", "tkinter", "PIL.ImageTk"}
+    missing = required - declared
+    assert not missing, "the spec does not declare " + ", ".join(sorted(missing))
