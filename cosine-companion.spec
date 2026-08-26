@@ -88,11 +88,10 @@ a = Analysis(
         'ui.settings_window',
         'ui.reindex_window',
         # Web UI modules. `cosine_companion.py` reaches these through a
-        # function-body import inside a try/except (the `ui-web` command), and
-        # nothing else in the spec says the frozen app carries a second front
-        # end. Listed explicitly so the recipe is the record: whether
-        # modulegraph happens to follow that import site is not a thing this
-        # bundle should depend on.
+        # function-body import inside a try/except (the `ui-web` command).
+        # Listed explicitly so the recipe is the record: whether modulegraph
+        # happens to follow that import site is not a thing this bundle should
+        # depend on.
         'web',
         'web.assets',
         'web.host',
