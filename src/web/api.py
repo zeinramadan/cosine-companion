@@ -1134,8 +1134,7 @@ class CocoApi:
         ``IndexingService`` both activates its mismatch guard and publishes the
         committed generation through ``refresh_after_indexing`` before a
         waiting delete can proceed. Passing ``library=None`` would disable both
-        protections and reopen the two data-loss paths this endpoint was cut
-        for previously.
+        protections.
         """
         fields = _body_fields(body, REINDEX_BODY_FIELDS)
 
