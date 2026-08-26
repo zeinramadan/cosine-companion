@@ -143,8 +143,7 @@ def test_the_frozen_package_still_declares_the_tkinter_front_end():
 
     ``cosine_companion.py`` short-circuits to ``ui.run_ui`` before Typer when
     frozen with no arguments, so shipping the web UI must not cost the default
-    one. Nothing else in this file mentions ``ui`` or ``tkinter``, which is how
-    they could be dropped in a teardown PR without a single test going red.
+    one.
     """
     declared = _hidden_imports()
 
