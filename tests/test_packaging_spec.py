@@ -134,7 +134,7 @@ def test_the_frozen_package_declares_the_web_ui_it_has_to_import():
     assert "pywebview" not in declared, (
         "'pywebview' is the distribution name; the importable module is "
         "'webview'. PyInstaller resolves hiddenimports as import names, so "
-        "this entry would collect nothing and only warn."
+        "this entry would collect nothing."
     )
 
 

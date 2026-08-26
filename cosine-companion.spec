@@ -119,7 +119,7 @@ a = Analysis(
         # pywebview, which the web UI's window is. The DISTRIBUTION is
         # `pywebview` (requirements.txt:27) but the IMPORT is `webview` - its
         # top_level.txt says so - and a hiddenimports entry is an import name.
-        # 'pywebview' here would collect nothing and earn only a warning.
+        # 'pywebview' here would collect nothing.
         'webview',
         # The macOS backend. `webview.guilib.initialize` reaches it with an
         # `import webview.platforms.cocoa` inside a function body, alongside
