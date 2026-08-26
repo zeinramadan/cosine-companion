@@ -1160,8 +1160,7 @@ class CocoApi:
         def work(report, cancel):
             # ``IndexingService`` emits a ProgressEvent with a phase; the job
             # layer carries three fields, so the phase is dropped here rather
-            # than widening every job record for one producer. ``total`` is 0
-            # outside embedding, which a UI reads as indeterminate.
+            # than widening every job record for one producer.
             def on_event(event):
                 report(event.current, event.total, event.message)
 
