@@ -115,7 +115,7 @@ def test_the_frozen_package_declares_the_web_ui_it_has_to_import():
     PyInstaller's modulegraph does follow that edge today, so a build can be
     green while nothing in the recipe says the bundle carries a second front
     end - and the next refactor of that import site takes the web UI with it
-    silently. Naming them is what turns that into a build failure.
+    silently.
 
     ``webview`` is spelled as the IMPORT name on purpose: the distribution is
     ``pywebview`` (requirements.txt), and a hiddenimports entry saying
