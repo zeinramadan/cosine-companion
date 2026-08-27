@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 import pytest
 
@@ -126,8 +128,9 @@ def test_zero_vectors_are_not_divided_by_zero() -> None:
 
 def test_search_rejects_a_corrupt_index_with_rebuild_instructions() -> None:
     index = NumpyCosIndex(dim=3)
-    index.add("corrupt", np.array([1.0, 0.0, 0.0]))
-    index.matrix[0, 0] = np.nan
+    index.add("clean", np.array([1.0, 0.0, 0.0]))
+    index.add("corrupt", np.array([0.0, 1.0, 0.0]))
+    index.matrix[1, 0] = np.nan
 
     with pytest.raises(
         RuntimeError,
@@ -136,7 +139,27 @@ def test_search_rejects_a_corrupt_index_with_rebuild_instructions() -> None:
             r"non-finite scores\. Rebuild the library index in Settings"
         ),
     ):
-        index.search(np.array([1.0, 0.0, 0.0]), k=1)
+        index.search(np.array([1.0, 0.0, 0.0]), k=2)
+
+
+def test_search_emits_no_runtime_warnings_for_accelerate_trigger_shape() -> None:
+    index = NumpyCosIndex(dim=64)
+    zero = np.zeros(64, dtype=np.float32)
+    for position in range(64):
+        index.add(f"zero-{position}", zero)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        results = index.search(zero, k=64)
+
+    runtime_warnings = [
+        str(item.message)
+        for item in caught
+        if issubclass(item.category, RuntimeWarning)
+    ]
+    assert runtime_warnings == []
+    assert len(results) == 64
+    assert all(score == 0.0 for _, score in results)
 
 
 def test_self_match_scores_approximately_one() -> None:
