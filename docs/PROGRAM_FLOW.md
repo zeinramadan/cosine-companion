@@ -15,7 +15,7 @@ This document provides a comprehensive overview of how the Cosine Companion syst
 ├─────────────────────────────────────────────────────────────────┤
 │  CLI Entry Point: cosine_companion.py                               │
 │  ├── index command → processing.pipeline                        │
-│  └── ui command → ui.App                                        │
+│  └── ui command → web.host (ui.App fallback)                    │
 └─────────────────────────────────────────────────────────────────┘
          │                                    │
          ▼                                    ▼
@@ -62,8 +62,10 @@ if __name__ == "__main__":
 
 **Available Commands:**
 1. `python src/cosine_companion.py index <xml_file> [--force] [--sample N]`
-2. `python src/cosine_companion.py ui`
-3. `python src/cosine_companion.py clean-duplicates <xml_file>`
+2. `python src/cosine_companion.py ui [--debug] [--data-dir <directory>]`
+3. `python src/cosine_companion.py ui-web` (strict web-only compatibility alias)
+4. `python src/cosine_companion.py ui-tk` (classic interface directly)
+5. `python src/cosine_companion.py clean-duplicates <xml_file>`
 
 ---
 
@@ -244,28 +246,30 @@ data/
 
 ## 🎵 UI/APPLICATION FLOW (Detailed)
 
-When you run: `python cosine_companion.py ui`
+When you run: `python src/cosine_companion.py ui`
 
 ### Phase 1: Application Startup
 
 ```
 cosine_companion.py:ui()
 │
-└─ Calls: ui.run_ui()
-   │
-   └─ Creates: ui.app.App() instance
-      │
-      └─ App.__init__()
-         ├─ Load all data: core.loader.load_all()
-         ├─ Create UI widgets (tabbed interface)
-         │  ├─ Explore tab (ui.recommendations_tab)
-         │  ├─ Set Creator tab (ui.set_creator_tab)
-         │  ├─ Playlist Export tab (ui.playlist_export_tab)
-         │  └─ Library tab (ui.library_tab)
-         └─ Start mainloop()
+└─ Calls: _run_default_frontend()
+   ├─ web.host.run_web_ui()
+   │  ├─ Load a LibrarySession and assemble the JSON API
+   │  ├─ Bind a token-protected loopback server on an ephemeral port
+   │  └─ Create a pywebview window and start WKWebView
+   └─ On web startup failure: explain the cause, then ui.run_ui()
+      └─ Creates the retained ui.app.App() Tkinter interface
 ```
 
-### Phase 2: Data Loading Process
+The packaged `.app` no-argument/Finder path uses the same default launcher
+before Typer is imported. Missing or inconsistent library data opens the web
+empty state; it is not treated as a frontend startup failure.
+
+### Phase 2: Classic Fallback Data Loading Process
+
+The following is the retained Tkinter fallback path (`ui-tk` or an automatic
+fallback after web startup fails):
 
 ```mermaid
 graph TD

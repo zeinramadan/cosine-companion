@@ -20,7 +20,7 @@ lxml>=4.6.0
 # CLI interface
 typer>=0.4.0
 
-# Web UI (experimental `ui-web` command; Tkinter remains the default)
+# Web UI (the default `ui`; `ui-web` is strict and `ui-tk` remains available)
 # The ONLY new runtime dependency of the web backbone. Everything else the web
 # layer needs is in the standard library - the HTTP server is
 # http.server.ThreadingHTTPServer and the frontend has no build step.

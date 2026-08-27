@@ -137,11 +137,10 @@ def test_the_frozen_package_declares_the_web_ui_it_has_to_import():
 
 
 def test_the_frozen_package_still_declares_the_tkinter_front_end():
-    """Tkinter is still what a no-argument frozen launch opens.
+    """Tkinter remains the no-argument frozen launch's safety net.
 
-    ``cosine_companion.py`` short-circuits to ``ui.run_ui`` before Typer when
-    frozen with no arguments, so shipping the web UI must not cost the default
-    one.
+    ``cosine_companion.py`` falls back to ``ui.run_ui`` before Typer when a
+    frozen web launch fails, so flipping the default must not remove it.
     """
     declared = _hidden_imports()
 

@@ -92,24 +92,28 @@ This analyzes your audio files and builds a searchable index. Re-run when you ad
 python src/cosine_companion.py ui
 ```
 
-Or try the **experimental** web UI, which runs the same services in a
-pywebview window:
+This opens the web UI in a pywebview window. If the web window cannot start,
+Cosine Companion explains the problem and opens the retained classic Tkinter
+interface so the library remains reachable. To request either frontend
+explicitly:
 
 ```bash
+# Web only: fail instead of falling back to Tkinter
 python src/cosine_companion.py ui-web
+
+# Classic Tkinter fallback directly
+python src/cosine_companion.py ui-tk
 ```
 
-Tkinter remains the default and is what `ui` and the packaged `.app` launch.
-`ui-web` currently implements Explore, Library browsing/deletion, and the small
-Settings path editor; Set Creator and Export render a placeholder. See
-[the web UI](#the-experimental-web-ui).
+The packaged `.app` follows the same web-first behaviour when opened from
+Finder. See [the web UI](#the-web-ui).
 
 ### 4. Start Exploring
 
-1. Click **"Set Current Track"** and search for a track
+1. Press **⌘K** and search for a track
 2. View recommendations sorted by similarity score
-3. Double-click any recommendation to explore from that track
-4. Use the **Set Creator** tab to build complete DJ sets
+3. Click any recommendation to explore from that track
+4. Open **Set Creator** to build complete DJ sets
 
 ## Features
 
@@ -132,33 +136,41 @@ python src/cosine_companion.py index /path/to/rekordbox.xml
 # Force full re-index (rebuilds everything)
 python src/cosine_companion.py index /path/to/rekordbox.xml --force
 
-# Launch the graphical interface (Tkinter - the default)
+# Launch the default web interface (with automatic Tkinter fallback)
 python src/cosine_companion.py ui
 
-# Launch the experimental web UI (pywebview; Explore + Library + Settings)
+# Require the web UI (compatibility alias; no fallback)
 python src/cosine_companion.py ui-web
 
 # ...with devtools, and against a specific index directory
 python src/cosine_companion.py ui-web --debug --data-dir /path/to/data
 
+# Launch the classic Tkinter interface directly
+python src/cosine_companion.py ui-tk
+
 # Check for duplicate tracks
 python src/cosine_companion.py clean-duplicates /path/to/rekordbox.xml
 ```
 
-## The experimental web UI
+## The web UI
 
-`ui-web` opens a [pywebview](https://pywebview.flowrl.com/) window (WKWebView on
+`ui` opens a [pywebview](https://pywebview.flowrl.com/) window (WKWebView on
 macOS - the same engine as Safari) onto a small JSON API served over loopback.
-It exists because the Tkinter UI is hard to make look like a 2026 application;
-the engine underneath is identical.
+`ui-web` is the web-only compatibility alias. The engine underneath both
+frontends is identical.
 
-**Status.** Experimental. Explore works end to end - pick a seed with ⌘K, see
-ranked recommendations with Camelot keys and match scores, re-seed by clicking
-one, go back through history. Library browses, filters, seeds and atomically
-deletes tracks. Settings reads and writes the Rekordbox XML path; Set Creator
-and Export render a "coming in the next PR" placeholder.
-Tkinter is unchanged, is still the default, and is what the packaged `.app`
-launches.
+**Status.** This is the default interface. Explore, Library, Set Creator,
+Settings (including reindexing), and Export all work end to end. Tkinter remains
+available through `ui-tk` and as the automatic safety net when web startup
+fails.
+
+**Startup recovery.** A missing or inconsistent library is rendered as an
+empty state in the web UI so Settings can be used to reindex it. Failures in
+the web infrastructure itself — importing pywebview, finding the bundled
+frontend, binding the loopback server, or creating/starting WKWebView — cause
+the default launcher to explain the failure and open Tkinter. If Tkinter also
+fails, a native fatal dialog reports both errors. A normal web-window close is
+not a failure and does not open Tkinter.
 
 **How it is wired.**
 
@@ -213,8 +225,8 @@ cosine-companion/
 │   ├── processing/         # Audio analysis and XML parsing
 │   ├── recommendations/    # Recommendation engine and scoring
 │   ├── services/           # Headless session/service layer (no UI imports)
-│   ├── ui/                 # Tkinter GUI (the default)
-│   └── web/                # Experimental web UI: loopback API + no-build frontend
+│   ├── ui/                 # Retained classic Tkinter GUI and startup fallback
+│   └── web/                # Default web UI: loopback API + no-build frontend
 ├── tests/                  # pytest suite (run in CI on every PR)
 ├── benchmarks/             # Recommendation benchmark harness and results
 ├── models/                 # ML models (download required)
@@ -240,8 +252,8 @@ cosine-companion/
 - `numpy`, `pandas` - Exact similarity search and data processing
 - `lxml` - XML parsing
 - `typer` - CLI
-- `tkinter` - GUI (included with Python)
-- `pywebview` - experimental web UI only; `ui` does not need it
+- `tkinter` - retained classic GUI and startup fallback (included with Python)
+- `pywebview` - default desktop window
 
 ## Contributing
 

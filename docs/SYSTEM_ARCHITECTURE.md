@@ -55,7 +55,7 @@
 │                                                                         │
 │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐                 │
 │  │  CLI Entry  │    │  GUI Entry  │    │  Onboarding │                 │
-│  │   (Typer)   │    │  (Tkinter)  │    │   Wizard    │                 │
+│  │   (Typer)   │    │ (pywebview) │    │ Tk fallback │                 │
 │  └──────┬──────┘    └──────┬──────┘    └──────┬──────┘                 │
 │         │                  │                  │                         │
 │         └──────────────────┼──────────────────┘                         │
@@ -139,7 +139,7 @@ Set Anchor Tracks → Position Anchors → Fill Slots (Context-Aware) → Export
 | Category | Technology | Version | Purpose |
 |----------|------------|---------|---------|
 | **Language** | Python | 3.8+ | Primary development language |
-| **GUI Framework** | Tkinter | Built-in | Cross-platform desktop UI |
+| **GUI Frameworks** | pywebview + WKWebView; Tkinter | Current; built-in | Default web desktop UI; classic startup fallback |
 | **CLI Framework** | Typer | Latest | Command-line interface |
 | **Audio Analysis** | Essentia | 2.1b6+ | Audio embeddings via TensorFlow |
 | **Vector Search / Data Processing** | NumPy | Latest | Exact cosine search and numerical computations |
