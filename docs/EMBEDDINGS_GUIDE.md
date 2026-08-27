@@ -47,9 +47,10 @@ The system uses a three-stage pipeline to find similar tracks:
 |-----------|-------|
 | **Model** | Discogs-EffNet |
 | **File** | `discogs_multi_embeddings-effnet-bs64-1.pb` |
-| **Size** | ~300 MB |
+| **Size** | 16,367,182 bytes |
 | **Architecture** | EfficientNet (TensorFlow) |
-| **Source** | [Essentia Models](https://essentia.upf.edu/models/feature-extractors/discogs_multi_embeddings/) |
+| **Source** | [Essentia Discogs-EffNet models](https://essentia.upf.edu/models/feature-extractors/discogs-effnet/) |
+| **SHA-256** | `2c964064951217e1e345461cf88884086a21f4bca2ae0d48187ee75edc263cd7` |
 
 The model was trained on the Discogs music database and captures:
 - Genre/style characteristics
