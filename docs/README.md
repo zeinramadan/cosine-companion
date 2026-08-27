@@ -11,6 +11,7 @@ Technical documentation for developers and contributors.
 | [System Architecture](SYSTEM_ARCHITECTURE.md) | Complete system design, component overview, data flow diagrams |
 | [Embeddings Guide](EMBEDDINGS_GUIDE.md) | Audio embedding extraction, storage formats, similarity search |
 | [Program Flow](PROGRAM_FLOW.md) | Detailed execution flow, CLI commands, UI interactions |
+| [Historical UI Inventory](UI_FEATURE_INVENTORY.md) | Frozen acceptance record for the completed web rewrite; not current product documentation |
 
 ### Building & Distribution
 

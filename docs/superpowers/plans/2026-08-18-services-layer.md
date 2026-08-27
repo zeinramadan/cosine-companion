@@ -1,5 +1,10 @@
 # Services Layer Implementation Plan (PR 2)
 
+> **Historical plan.** This describes an intermediate rewrite stage while the
+> retired desktop frontend still existed. It is preserved as engineering
+> history; `README.md` and `docs/SYSTEM_ARCHITECTURE.md` describe the current
+> web-only product.
+
 > **For agentic workers:** Implement task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 > Each task ends with a green test run and a commit.
 

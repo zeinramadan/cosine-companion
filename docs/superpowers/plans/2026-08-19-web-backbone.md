@@ -1,5 +1,10 @@
 # Web Backbone — Local API + pywebview Shell (PR 3a) Implementation Plan
 
+> **Historical plan.** This records the first web-backbone stage, when the
+> retired desktop frontend was deliberately kept as the default. It is not
+> current implementation guidance; `README.md` and
+> `docs/SYSTEM_ARCHITECTURE.md` describe the completed web-only product.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development
 > (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use
 > checkbox (`- [ ]`) syntax for tracking.
