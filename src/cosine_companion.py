@@ -11,15 +11,6 @@ import os
 import sys
 
 
-WEB_FRONTEND = "web"
-TK_FRONTEND = "tk"
-
-# This is the entire default-frontend switch. Both the frozen no-argument path
-# and the generic `ui` command go through it; changing this one identifier back
-# to TK_FRONTEND restores the previous default without removing either UI.
-DEFAULT_FRONTEND = WEB_FRONTEND
-
-
 def _is_frozen_gui_launch():
     """Whether LaunchServices (or an equivalent no-arg launch) opened us."""
     return getattr(sys, 'frozen', False) and (
@@ -45,46 +36,41 @@ def _diagnostic(message):
         pass
 
 
-def _native_launch_dialog(title, message, *, error=False):
-    """Show a native dialog for a frozen launch that has no terminal."""
+def _native_launch_dialog(title, message):
+    """Show a platform-native error when a frozen app has no terminal."""
     try:
-        from tkinter import messagebox
+        if sys.platform == "darwin":
+            import subprocess
 
-        show = messagebox.showerror if error else messagebox.showwarning
-        show(title, message)
-    except Exception as dialog_error:  # noqa: BLE001 - use an OS-level fallback
-        # If Tk itself is the reason both frontends failed, its messagebox is
-        # unavailable too. macOS still provides Standard Additions through
-        # osascript, so the final explanation need not disappear with Tk.
-        if sys.platform == 'darwin':
-            try:
-                import subprocess
+            script = (
+                "on run argv\n"
+                "display alert (item 1 of argv) message (item 2 of argv) "
+                "as critical\n"
+                "end run"
+            )
+            subprocess.run(
+                ["/usr/bin/osascript", "-e", script, title, message],
+                check=True,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=30,
+            )
+            return
 
-                style = "critical" if error else "warning"
-                script = (
-                    "on run argv\n"
-                    "display alert (item 1 of argv) message (item 2 of argv) "
-                    f"as {style}\n"
-                    "end run"
-                )
-                subprocess.run(
-                    ["/usr/bin/osascript", "-e", script, title, message],
-                    check=True,
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    timeout=30,
-                )
-                return
-            except Exception as os_dialog_error:  # noqa: BLE001 - last resort
-                _diagnostic(
-                    "Could not show either native launch error dialog "
-                    f"({_failure_details(os_dialog_error)})"
-                )
-                return
+        if sys.platform == "win32":
+            import ctypes
 
+            # MB_OK | MB_ICONERROR. MessageBoxW blocks until the user has seen
+            # and dismissed the failure, which is exactly what a windowed app
+            # with no stderr needs here.
+            ctypes.windll.user32.MessageBoxW(None, message, title, 0x10)
+            return
+
+        _diagnostic("No native launch-error dialog is available on this platform.")
+    except Exception as dialog_error:  # noqa: BLE001 - last visible fallback
         _diagnostic(
-            "Could not show the launch error dialog "
+            "Could not show the native launch-error dialog "
             f"({_failure_details(dialog_error)})"
         )
 
@@ -98,51 +84,29 @@ def _run_web_frontend(*, debug=False, data_dir=None):
     run_web_ui(data_dir=Path(data_dir) if data_dir else None, debug=debug)
 
 
-def _run_tk_frontend():
-    """Run only the retained Tkinter frontend."""
-    from ui import run_ui
-
-    run_ui()
-
-
 def _failure_details(error):
     detail = str(error).strip()
     return f"{type(error).__name__}: {detail}" if detail else type(error).__name__
 
 
 def _run_default_frontend(*, debug=False, data_dir=None):
-    """Run the configured default, falling back to Tkinter if web cannot start."""
-    if DEFAULT_FRONTEND == TK_FRONTEND:
-        _run_tk_frontend()
-        return
-    if DEFAULT_FRONTEND != WEB_FRONTEND:  # pragma: no cover - developer error
-        raise RuntimeError(f"Unknown default frontend: {DEFAULT_FRONTEND}")
-
+    """Run the web frontend and make startup failures visible before raising."""
     try:
         _run_web_frontend(debug=debug, data_dir=data_dir)
-        return
-    except (Exception, SystemExit) as web_error:  # noqa: BLE001 - library exits fall back too
-        web_details = _failure_details(web_error)
+    except (Exception, SystemExit) as web_error:  # noqa: BLE001 - libraries may call sys.exit
+        install_hint = (
+            "\n\nInstall it with: pip install pywebview"
+            if isinstance(web_error, ImportError)
+            else ""
+        )
         message = (
-            "The web interface could not start. Cosine Companion will open "
-            "the classic interface instead.\n\n"
-            f"Technical details: {web_details}"
+            "The Cosine Companion interface could not start.\n\n"
+            f"Technical details: {_failure_details(web_error)}"
+            f"{install_hint}"
         )
         _diagnostic(message)
         if _is_frozen_gui_launch():
-            _native_launch_dialog("Cosine Companion", message)
-
-    try:
-        _run_tk_frontend()
-    except (Exception, SystemExit) as tk_error:  # noqa: BLE001 - report the loss of both UIs
-        message = (
-            "Neither Cosine Companion interface could start.\n\n"
-            f"Web interface: {web_details}\n"
-            f"Classic interface: {_failure_details(tk_error)}"
-        )
-        _diagnostic(message)
-        if _is_frozen_gui_launch():
-            _native_launch_dialog("Cosine Companion could not start", message, error=True)
+            _native_launch_dialog("Cosine Companion could not start", message)
         raise
 
 # Note: For frozen executables on macOS, SDL and OpenMP env vars are set by the
@@ -160,9 +124,12 @@ if not getattr(sys, 'frozen', False) or (getattr(sys, 'frozen', False) and sys.p
 # On macOS when launched from Finder, LaunchServices passes a '-psn_*' arg.
 # Treat that the same as no-arg GUI launch.
 if _is_frozen_gui_launch():
-    # Running as a bundled app with no arguments: launch the default UI before
-    # importing Typer. A web startup failure is visible and falls back to Tk.
-    _run_default_frontend()
+    # Run before importing Typer. If startup fails, the native dialog above is
+    # the only reliable output channel in a windowed double-click launch.
+    try:
+        _run_default_frontend()
+    except (Exception, SystemExit):  # noqa: BLE001 - already reported above
+        sys.exit(1)
     sys.exit(0)
 
 # --- CLI ---
@@ -190,14 +157,11 @@ def ui(
     debug: bool = typer.Option(False, "--debug", help="Open web devtools"),
     data_dir: str = typer.Option(None, "--data-dir", help="Index directory to open (default: the configured one)")
 ):
-    """Open the default web UI, falling back to the classic UI if needed."""
-    _run_default_frontend(debug=debug, data_dir=data_dir)
-
-
-@cli.command("ui-tk")
-def ui_tk():
-    """Open the retained classic Tkinter UI directly."""
-    _run_tk_frontend()
+    """Open the web UI."""
+    try:
+        _run_default_frontend(debug=debug, data_dir=data_dir)
+    except (Exception, SystemExit):  # noqa: BLE001 - details already printed
+        raise typer.Exit(code=1) from None
 
 
 @cli.command("ui-web")
@@ -205,21 +169,8 @@ def ui_web(
     debug: bool = typer.Option(False, "--debug", help="Open with devtools enabled"),
     data_dir: str = typer.Option(None, "--data-dir", help="Index directory to open (default: the configured one)")
 ):
-    """Open only the web UI (compatibility alias; no Tkinter fallback)."""
-    try:
-        _run_web_frontend(debug=debug, data_dir=data_dir)
-    except (Exception, SystemExit) as error:  # noqa: BLE001 - cleanly report library exits too
-        install_hint = (
-            "\nInstall it with:  pip install pywebview"
-            if isinstance(error, ImportError)
-            else ""
-        )
-        typer.echo(
-            f"The web UI could not start ({_failure_details(error)})."
-            f"{install_hint}",
-            err=True,
-        )
-        raise typer.Exit(code=1)
+    """Open the web UI (compatibility alias for ``ui``)."""
+    ui(debug=debug, data_dir=data_dir)
 
 
 @cli.command("import-playlists")
@@ -235,8 +186,7 @@ def import_playlists_command(
     parquet writes - a second or so on a 1.5 MB export.
 
     With no argument it reads ``xml_path`` out of the same ``settings.json``
-    the Tkinter app and the web UI use (``ui/app.py:185``), so the three agree
-    about which export is current.
+    the web UI uses, so both commands agree about which export is current.
 
     ``--data-dir`` names the index directory to write into, matching
     ``ui-web --data-dir`` - including where ``settings.json`` is looked up, so
@@ -244,8 +194,8 @@ def import_playlists_command(
     also what lets the concurrency tests run the real command against a
     scratch directory instead of the developer's library.
     """
-    # Lazy imports throughout, matching the other subcommands: neither UI
-    # should load playlist-import dependencies merely to open a window.
+    # Lazy imports throughout: the UI should not load playlist-import
+    # dependencies merely to open a window.
     from pathlib import Path
 
     from config import DATA
