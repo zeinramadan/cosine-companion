@@ -125,9 +125,11 @@ a = Analysis(
         'PyQt5',
         'PySide2',
         # The retired desktop frontend must not return through a transitive
-        # import or an over-broad collection hook.
+        # import or an over-broad collection hook. Pygments has an optional
+        # image formatter that can otherwise rediscover an installed Pillow.
         'tkinter',
         '_tkinter',
+        'PIL',
         'PIL.ImageTk',
         'PIL._tkinter_finder',
         'pytest',

@@ -143,8 +143,7 @@ def test_the_frozen_package_excludes_the_retired_front_end():
         "ui",
         "tkinter",
         "_tkinter",
-        "PIL.ImageTk",
-        "PIL._tkinter_finder",
+        "PIL",
     )
     unexpected = {
         name
@@ -168,6 +167,7 @@ def test_the_frozen_package_excludes_the_retired_front_end():
     required_exclusions = {
         "tkinter",
         "_tkinter",
+        "PIL",
         "PIL.ImageTk",
         "PIL._tkinter_finder",
     }
