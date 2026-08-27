@@ -1,4 +1,4 @@
-/* First-run guidance must name only routes that exist in the shipped web UI. */
+/* The shipped destinations render the shared first-run and recovery copy. */
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
