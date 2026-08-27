@@ -169,10 +169,13 @@ fails.
 **Startup recovery.** A missing or inconsistent library is rendered as an
 empty state in the web UI so Settings can be used to reindex it. Failures in
 the web infrastructure itself — importing pywebview, finding the bundled
-frontend, binding the loopback server, or creating/starting WKWebView — cause
-the default launcher to explain the failure and open Tkinter. If Tkinter also
-fails, a native fatal dialog reports both errors. A normal web-window close is
-not a failure and does not open Tkinter.
+frontend, binding the loopback server, creating/starting WKWebView, or a
+dependency terminating startup with `SystemExit` — cause the default launcher
+to explain the failure and open Tkinter. A terminal Ctrl-C remains an explicit
+request to quit: `KeyboardInterrupt` propagates without opening Tkinter. If
+Tkinter also fails or terminates with `SystemExit`, a frozen launch shows a
+native fatal dialog with both errors before preserving that failure. A normal
+web-window close is not a failure and does not open Tkinter.
 
 **How it is wired.**
 

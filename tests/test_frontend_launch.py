@@ -119,6 +119,54 @@ def test_frozen_web_failure_warns_before_opening_the_classic_fallback():
     assert "classic interface instead" in events[1][2]
 
 
+def test_web_system_exit_opens_the_classic_fallback(monkeypatch, capsys):
+    """A dependency's sys.exit is a startup failure, not a user cancellation."""
+    calls = []
+
+    def stop_web(**options):
+        calls.append(("web", options))
+        raise SystemExit("webview stopped during startup")
+
+    monkeypatch.setattr(entrypoint, "_run_web_frontend", stop_web)
+    monkeypatch.setattr(
+        entrypoint,
+        "_run_tk_frontend",
+        lambda: calls.append(("tk", {})),
+    )
+    monkeypatch.setattr(entrypoint, "_is_frozen_gui_launch", lambda: False)
+
+    entrypoint._run_default_frontend(debug=True, data_dir="/tmp/library")
+
+    assert calls == [
+        ("web", {"debug": True, "data_dir": "/tmp/library"}),
+        ("tk", {}),
+    ]
+    assert "SystemExit: webview stopped during startup" in capsys.readouterr().err
+
+
+def test_keyboard_interrupt_propagates_without_opening_the_classic_fallback(
+    monkeypatch,
+):
+    """Ctrl-C means quit even though a library-originated SystemExit falls back."""
+    calls = []
+
+    def interrupt_web(**options):
+        calls.append(("web", options))
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(entrypoint, "_run_web_frontend", interrupt_web)
+    monkeypatch.setattr(
+        entrypoint,
+        "_run_tk_frontend",
+        lambda: calls.append(("tk", {})),
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        entrypoint._run_default_frontend(debug=False, data_dir=None)
+
+    assert calls == [("web", {"debug": False, "data_dir": None})]
+
+
 def test_frozen_double_failure_uses_a_native_fatal_dialog():
     events = _run_frozen(
         ["Cosine Companion"],
@@ -135,6 +183,37 @@ def test_frozen_double_failure_uses_a_native_fatal_dialog():
     ]
     assert "loopback bind failed" in events[3][2]
     assert "Tk failed" in events[3][2]
+
+
+def test_tk_system_exit_reports_both_failures_then_propagates(monkeypatch):
+    """A frozen launch must explain a Tk sys.exit before preserving its exit."""
+    dialogs = []
+
+    def fail_web(**options):
+        raise RuntimeError("loopback bind failed")
+
+    def stop_tk():
+        raise SystemExit(9)
+
+    monkeypatch.setattr(entrypoint, "_run_web_frontend", fail_web)
+    monkeypatch.setattr(entrypoint, "_run_tk_frontend", stop_tk)
+    monkeypatch.setattr(entrypoint, "_is_frozen_gui_launch", lambda: True)
+    monkeypatch.setattr(
+        entrypoint,
+        "_native_launch_dialog",
+        lambda title, message, **options: dialogs.append((title, message, options)),
+    )
+
+    with pytest.raises(SystemExit) as stopped:
+        entrypoint._run_default_frontend()
+
+    assert stopped.value.code == 9
+    assert len(dialogs) == 2
+    title, message, options = dialogs[-1]
+    assert title == "Cosine Companion could not start"
+    assert "RuntimeError: loopback bind failed" in message
+    assert "SystemExit: 9" in message
+    assert options == {"error": True}
 
 
 def test_a_broken_tk_dialog_uses_the_macos_native_fallback(monkeypatch):
@@ -219,3 +298,16 @@ def test_ui_web_remains_a_strict_web_only_alias(monkeypatch, capsys):
     assert stopped.value.exit_code == 1
     assert calls == [("web", {"debug": False, "data_dir": None})]
     assert "cannot bind loopback" in capsys.readouterr().err
+
+
+def test_ui_web_turns_system_exit_into_a_clean_cli_error(monkeypatch, capsys):
+    def stop_web(**options):
+        raise SystemExit("webview stopped during startup")
+
+    monkeypatch.setattr(entrypoint, "_run_web_frontend", stop_web)
+
+    with pytest.raises(typer.Exit) as stopped:
+        entrypoint.ui_web(debug=False, data_dir=None)
+
+    assert stopped.value.exit_code == 1
+    assert "SystemExit: webview stopped during startup" in capsys.readouterr().err

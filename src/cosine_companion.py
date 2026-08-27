@@ -121,7 +121,7 @@ def _run_default_frontend(*, debug=False, data_dir=None):
     try:
         _run_web_frontend(debug=debug, data_dir=data_dir)
         return
-    except Exception as web_error:  # noqa: BLE001 - every startup failure falls back
+    except (Exception, SystemExit) as web_error:  # noqa: BLE001 - library exits fall back too
         web_details = _failure_details(web_error)
         message = (
             "The web interface could not start. Cosine Companion will open "
@@ -134,7 +134,7 @@ def _run_default_frontend(*, debug=False, data_dir=None):
 
     try:
         _run_tk_frontend()
-    except Exception as tk_error:  # noqa: BLE001 - report the loss of both UIs
+    except (Exception, SystemExit) as tk_error:  # noqa: BLE001 - report the loss of both UIs
         message = (
             "Neither Cosine Companion interface could start.\n\n"
             f"Web interface: {web_details}\n"
@@ -208,7 +208,7 @@ def ui_web(
     """Open only the web UI (compatibility alias; no Tkinter fallback)."""
     try:
         _run_web_frontend(debug=debug, data_dir=data_dir)
-    except Exception as error:  # noqa: BLE001 - turn startup failures into a clean CLI error
+    except (Exception, SystemExit) as error:  # noqa: BLE001 - cleanly report library exits too
         install_hint = (
             "\nInstall it with:  pip install pywebview"
             if isinstance(error, ImportError)
