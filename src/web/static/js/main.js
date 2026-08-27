@@ -34,8 +34,33 @@ const store = createStore({
   detail: null,
 });
 
+/* Reindexing republishes the server's LibrarySession, but destination-local
+ * browser arrays are intentionally not global state. Refresh the one shared
+ * summary so the sidebar count is truthful; Settings tells the user to reload
+ * before relying on lists and recommendations that were fetched earlier. */
+let librarySummaryRequest = null;
+function refreshLibrarySummary() {
+  if (librarySummaryRequest) {
+    return librarySummaryRequest;
+  }
+  librarySummaryRequest = api
+    .library()
+    .then((library) => {
+      store.setState({ library, libraryError: null });
+      return true;
+    })
+    .catch((error) => {
+      store.setState({ libraryError: error.message });
+      return false;
+    })
+    .finally(() => {
+      librarySummaryRequest = null;
+    });
+  return librarySummaryRequest;
+}
+
 mountSidebar({ store });
-mountSettings();
+mountSettings({ refreshLibrary: refreshLibrarySummary });
 mountDrawer({ store });
 // Set Creator keeps its own working state (anchors, length, the generated set);
 // the store tells it which destination is showing and whether the library
@@ -70,7 +95,4 @@ mountLibrary({
 // the page that reloaded is the one that has to go and find it again.
 mountExport({ store });
 
-api
-  .library()
-  .then((library) => store.setState({ library, libraryError: null }))
-  .catch((error) => store.setState({ libraryError: error.message }));
+refreshLibrarySummary();

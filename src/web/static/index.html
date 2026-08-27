@@ -139,12 +139,30 @@
               </div>
 
               <div class="settings__reindex-actions" id="reindex-actions">
-                <button class="button button--primary" id="reindex-incremental" type="button">
-                  Update Index
-                </button>
-                <button class="button" id="reindex-full" type="button">
-                  Rebuild Entire Index
-                </button>
+                <section class="settings__reindex-option" aria-labelledby="reindex-incremental-title">
+                  <h3 class="settings__reindex-option-title" id="reindex-incremental-title">
+                    Incremental update
+                  </h3>
+                  <p class="settings__reindex-option-copy">
+                    Embed only tracks that are not in the index yet. Usually finishes in seconds.
+                  </p>
+                  <button class="button button--primary" id="reindex-incremental" type="button">
+                    Index New Tracks
+                  </button>
+                </section>
+
+                <section class="settings__reindex-option" aria-labelledby="reindex-full-title">
+                  <h3 class="settings__reindex-option-title" id="reindex-full-title">
+                    Full rebuild
+                  </h3>
+                  <p class="settings__reindex-option-copy">
+                    Re-embed every track at about 3 seconds each — roughly 75 minutes for
+                    1,532 tracks. Requires confirmation.
+                  </p>
+                  <button class="button button--danger" id="reindex-full" type="button">
+                    Rebuild All Embeddings
+                  </button>
+                </section>
               </div>
 
               <div class="settings__reindex-progress" id="reindex-progress" hidden>

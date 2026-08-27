@@ -14,27 +14,102 @@
  */
 
 import { api, ApiError } from '../api.js';
-import { POLL_INTERVAL_MS, POLL_RETRY_MS } from './export.js';
 import {
-  progressPercent,
   formatDuration,
+  POLL_INTERVAL_MS,
+  POLL_RETRY_MS,
+  progressPercent,
   remainingSeconds,
 } from './export.js';
+import { element } from '../format.js';
 import { askyesno, showerror, showinfo, showwarning } from './message-box.js';
+
+function browserRefreshMessage(refreshState) {
+  if (refreshState === 'loading') {
+    return 'Refreshing the sidebar track count…';
+  }
+  if (refreshState === 'failed') {
+    return (
+      'The browser could not refresh its library summary, so the sidebar may still ' +
+      'show the old count. Reload this page before relying on counts, track lists, ' +
+      'or recommendations.'
+    );
+  }
+  return (
+    'The sidebar track count has been refreshed. Reload this page before relying on ' +
+    'track lists or recommendations already open in Library, Explore, Set Creator, ' +
+    'or Export.'
+  );
+}
+
+/** A completed service result. Registry success and pipeline failure differ. */
+export function completionMessage(result, { refreshState = 'ready' } = {}) {
+  const mode = result.requested_mode === 'incremental' ? 'Incremental' : 'Full rebuild';
+  let outcome;
+
+  if (result.failed) {
+    outcome =
+      '⚠ Index not updated\n\n' +
+      `No embeddings could be created for the ${result.new_tracks_found} new track(s) found.`;
+  } else if (result.up_to_date) {
+    outcome = '✓ Index already up to date\n\nNo new tracks needed embeddings.';
+  } else {
+    outcome =
+      '✓ Index updated\n\n' +
+      `Tracks in index: ${result.total_tracks_indexed}\n` +
+      `New tracks added: ${result.new_tracks_added}`;
+  }
+
+  return `${outcome}\n\nMode: ${mode}\n\n${browserRefreshMessage(refreshState)}`;
+}
+
+/** A cancelled reindex has no result document because no work was committed. */
+export function cancelledMessage() {
+  return (
+    'All embeddings computed during this run were discarded. The index is unchanged ' +
+    'from before this reindex started.\n\nRun a new update when you are ready to try again.'
+  );
+}
+
+export function errorMessage(error) {
+  return error || 'An unknown error occurred.';
+}
+
+function completedTitle(document_) {
+  if (document_.cancel_requested) {
+    return 'Reindex complete — the stop arrived too late to take effect';
+  }
+  if (document_.result.failed) {
+    return 'Reindex finished without new embeddings';
+  }
+  if (document_.result.up_to_date) {
+    return 'Index already up to date';
+  }
+  return 'Reindex complete';
+}
+
+function completedBody(document_, refreshState) {
+  const base = completionMessage(document_.result, { refreshState });
+  if (!document_.cancel_requested) {
+    return base;
+  }
+  return (
+    `${base}\n\nYour stop request arrived after the final cancellation checkpoint, ` +
+    'so the reindex finished and committed its complete result.'
+  );
+}
 
 export function mountSettings({
   pollIntervalMs = POLL_INTERVAL_MS,
   retryIntervalMs = POLL_RETRY_MS,
   now = () => Date.now(),
+  refreshLibrary = async () => true,
 } = {}) {
   const form = document.getElementById('settings-form');
   const input = document.getElementById('settings-xml-path');
   const submit = document.getElementById('settings-submit');
   const status = document.getElementById('settings-status');
 
-  // -- Reindex UI elements --
-  const reindexRoot = document.getElementById('settings-reindex');
-  const actionsDiv = document.getElementById('reindex-actions');
   const incrementalBtn = document.getElementById('reindex-incremental');
   const fullBtn = document.getElementById('reindex-full');
   const progressDiv = document.getElementById('reindex-progress');
@@ -52,6 +127,8 @@ export function mountSettings({
   let watching = null;
   let timer = null;
   let connectionLost = false;
+  let starting = false;
+  let refreshState = 'idle';
   /* Job ids whose terminal dialog has already been shown, so a re-render or a
    * late poll cannot raise it twice - and so a job that finished before this
    * page existed never raises one at all. */
@@ -112,7 +189,7 @@ export function mountSettings({
   }
 
   function renderControls() {
-    const busy = running();
+    const busy = running() || starting;
     incrementalBtn.disabled = busy;
     fullBtn.disabled = busy;
   }
@@ -164,10 +241,8 @@ export function mountSettings({
     let title = '';
 
     if (job && job.state === 'succeeded') {
-      title = job.cancel_requested
-        ? 'Reindex complete — the stop arrived too late to take effect'
-        : 'Reindex complete';
-      lines.push(completionMessage(job.result));
+      title = completedTitle(job);
+      lines.push(completedBody(job, refreshState));
     } else if (job && job.state === 'cancelled') {
       title = 'Reindex stopped';
       lines.push(cancelledMessage());
@@ -181,15 +256,16 @@ export function mountSettings({
       lines.push('Lost contact with the local server. Still trying — the reindex keeps going without this page.');
     }
 
+    if (!lines.length) {
+      outcomeDiv.hidden = true;
+      return;
+    }
+
     outcomeDiv.hidden = false;
-    outcomeDiv.innerHTML = '';
-    const eyebrow = document.createElement('p');
-    eyebrow.className = 'eyebrow';
-    eyebrow.textContent = title;
-    const body = document.createElement('p');
-    body.className = 'settings__outcome-body';
-    body.textContent = lines.join('\n\n');
-    outcomeDiv.append(eyebrow, body);
+    outcomeDiv.replaceChildren(
+      element('p', 'eyebrow', title),
+      element('p', 'settings__outcome-body', lines.join('\n\n')),
+    );
   }
 
   function render() {
@@ -198,93 +274,51 @@ export function mountSettings({
     renderOutcome();
   }
 
-  function completionMessage(result) {
-    const mode = result.requested_mode;
-    const isIncremental = mode === 'incremental';
-
-    let msg = '✓ Index Updated!\n\n';
-    msg += `Mode: ${isIncremental ? 'Incremental' : 'Full rebuild'}\n`;
-    msg += `Tracks indexed: ${result.total_tracks_indexed}\n`;
-    msg += `New tracks added: ${result.new_tracks_added}\n`;
-    if (result.failed > 0) {
-      msg += `Failed: ${result.failed}\n`;
-    }
-    msg += `\nStatus: ${result.status}`;
-    if (result.up_to_date) {
-      msg += '\nThe index was already up to date.';
-    }
-    // PR #30 refreshed the server's session; the browser's copy may still be stale.
-    msg += '\n\nNote: Other destinations (Library, Explore) may need a page reload to see updated counts.';
-    return msg;
-  }
-
-  function cancelledMessage() {
-    return (
-      '⚠ Reindex Stopped\n\n' +
-      'All embeddings computed during this run were discarded. The index remains ' +
-      'unchanged from before this reindex started.\n\n' +
-      'To update the index, run a new reindex operation.'
-    );
-  }
-
-  function errorMessage(error) {
-    return error || 'An unknown error occurred.';
-  }
-
-  async function incrementalClicked() {
+  async function startReindex(forceFull) {
+    starting = true;
+    renderControls();
     try {
-      const body = await api.startReindex({ forceFull: false });
+      const body = await api.startReindex({ forceFull });
       attach(body.job, { announce: true });
     } catch (error) {
       if (error instanceof ApiError && error.code === 'no_xml_path') {
         await showwarning(
           'No Collection Configured',
-          'Set a Rekordbox XML path above before running a reindex.',
+          'Set and save a Rekordbox XML path above, then try the index update again.',
         );
         return;
       }
       if (error instanceof ApiError && error.code === 'job_in_progress') {
-        await showwarning('Job Already Running', error.message);
-        reattach();
+        await showwarning('Another Job Is Running', error.message);
         return;
       }
       await showerror('Reindex Error', errorMessage(error.message));
+    } finally {
+      starting = false;
+      renderControls();
     }
+  }
+
+  async function incrementalClicked() {
+    await startReindex(false);
   }
 
   async function fullClicked() {
     const confirmed = await askyesno(
-      'Confirm Full Rebuild',
+      'Rebuild Every Embedding?',
       'A full rebuild re-embeds every track in your collection, even ones that ' +
         'already have embeddings.\n\n' +
         'On the real 1,532-track library, a full rebuild takes approximately ' +
         '75 minutes at ~3 seconds per track.\n\n' +
-        'An incremental update (the other button) processes only new tracks and ' +
+        'The incremental action processes only new tracks and ' +
         'completes in seconds.\n\n' +
-        'Are you sure you want to rebuild the entire index?',
+        'Start the full rebuild?',
     );
     if (!confirmed) {
       return;
     }
 
-    try {
-      const body = await api.startReindex({ forceFull: true });
-      attach(body.job, { announce: true });
-    } catch (error) {
-      if (error instanceof ApiError && error.code === 'no_xml_path') {
-        await showwarning(
-          'No Collection Configured',
-          'Set a Rekordbox XML path above before running a reindex.',
-        );
-        return;
-      }
-      if (error instanceof ApiError && error.code === 'job_in_progress') {
-        await showwarning('Job Already Running', error.message);
-        reattach();
-        return;
-      }
-      await showerror('Reindex Error', errorMessage(error.message));
-    }
+    await startReindex(true);
   }
 
   async function stopClicked() {
@@ -304,6 +338,8 @@ export function mountSettings({
   function attach(document_, { announce }) {
     job = document_;
     watching = document_.state === 'running' ? document_.id : null;
+    connectionLost = false;
+    refreshState = 'idle';
     if (!announce) {
       announced.add(document_.id);
     }
@@ -311,7 +347,7 @@ export function mountSettings({
     if (watching) {
       schedule(pollIntervalMs);
     } else {
-      finished();
+      settleTerminal();
     }
   }
 
@@ -352,8 +388,41 @@ export function mountSettings({
     }
     watching = null;
     window.clearTimeout(timer);
+    settleTerminal();
+  }
+
+  function settleTerminal() {
+    if (!job || job.state === 'running') {
+      return;
+    }
+    if (job.state !== 'succeeded') {
+      refreshState = 'idle';
+      render();
+      finished();
+      return;
+    }
+
+    const mine = job.id;
+    refreshState = 'loading';
     render();
-    finished();
+    Promise.resolve()
+      .then(refreshLibrary)
+      .then((refreshed) => {
+        if (!job || job.id !== mine || job.state !== 'succeeded') {
+          return;
+        }
+        refreshState = refreshed === false ? 'failed' : 'ready';
+        render();
+        finished();
+      })
+      .catch(() => {
+        if (!job || job.id !== mine || job.state !== 'succeeded') {
+          return;
+        }
+        refreshState = 'failed';
+        render();
+        finished();
+      });
   }
 
   function finished() {
@@ -363,13 +432,7 @@ export function mountSettings({
     announced.add(job.id);
 
     if (job.state === 'succeeded') {
-      const body = completionMessage(job.result);
-      showinfo(
-        'Reindex Complete',
-        job.cancel_requested
-          ? `${body}\n\nYour stop arrived after the last checkpoint, so the reindex finished in full.`
-          : body,
-      );
+      showinfo(completedTitle(job), completedBody(job, refreshState));
       return;
     }
     if (job.state === 'cancelled') {
@@ -396,6 +459,11 @@ export function mountSettings({
     } catch (error) {
       return;
     }
+    // A start can finish while this mount-time lookup is in flight. Its job id
+    // is already the identity we are watching, so an older list must not win.
+    if (job) {
+      return;
+    }
     const reindexJobs = (body.jobs || []).filter((each) => each.kind === 'reindex');
     if (!reindexJobs.length) {
       return;
@@ -411,4 +479,12 @@ export function mountSettings({
 
   load();
   reattach();
+
+  return {
+    isRunning: running,
+    dispose() {
+      watching = null;
+      window.clearTimeout(timer);
+    },
+  };
 }
