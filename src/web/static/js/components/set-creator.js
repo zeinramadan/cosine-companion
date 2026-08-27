@@ -641,6 +641,13 @@ export function mountSetCreator({ store }) {
   }
 
   function renderUnavailable(state) {
+    if (state.library && state.library.load_error) {
+      return stateBlock({
+        variant: 'error',
+        title: 'Library index needs rebuilding',
+        body: state.library.load_error.message,
+      });
+    }
     if (state.libraryError) {
       return stateBlock({
         variant: 'error',

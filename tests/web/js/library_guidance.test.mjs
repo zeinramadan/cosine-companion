@@ -102,3 +102,33 @@ test('Set Creator first run explains the Rekordbox export and the web Settings r
     body: `There is no cosine index to build a set from. ${FIRST_RUN_GUIDANCE}`,
   });
 });
+
+for (const destination of ['explore', 'set-creator']) {
+  test(`${destination} surfaces an actionable inconsistent-index diagnosis`, () => {
+    resetDom();
+    const message =
+      'The saved library index is inconsistent and could not be loaded. ' +
+      'Open Settings, save the path to a Rekordbox XML export, then choose ' +
+      'Rebuild All Embeddings.';
+    const library = {
+      track_count: 0,
+      is_empty: true,
+      load_error: { code: 'index_load_failed', message },
+    };
+    let root;
+    if (destination === 'explore') {
+      ({ root } = buildExploreDom());
+      mountExplore({ store: exploreStore(library), onPickSeed() {}, onShowDetail() {} });
+    } else {
+      ({ root } = buildSetCreatorDom());
+      mountSetCreator({
+        store: createStore({ destination, library, libraryError: null }),
+      });
+    }
+
+    assert.deepEqual(stateCopy(root), {
+      title: 'Library index needs rebuilding',
+      body: message,
+    });
+  });
+}

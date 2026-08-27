@@ -109,14 +109,10 @@ def test_the_host_reads_settings_from_beside_the_index(web_data_dir):
 
 
 def test_a_data_directory_with_no_index_still_yields_a_usable_api(tmp_path):
-    """The window must open. A missing or half-written index is exactly when a
-    user needs to be told something, and a traceback before the first frame
-    tells them nothing.
+    """The window must open onto first-run when no index artifacts exist.
 
-    LibrarySession.load raises here - FileNotFoundError for absent files, or
-    ValueError from the loader's validation for inconsistent ones - so the host
-    falls back to an unloaded session, which reports is_empty and drives the
-    "No index yet" state.
+    LibrarySession.load raises FileNotFoundError here. That expected absence is
+    not an inconsistent index and must not be diagnosed as one.
     """
     api, library = host.build_api(tmp_path / "empty")
 
@@ -125,11 +121,12 @@ def test_a_data_directory_with_no_index_still_yields_a_usable_api(tmp_path):
     assert status == 200
     assert body["is_empty"] is True
     assert body["track_count"] == 0
+    assert "load_error" not in body
     assert library.is_empty
 
 
 def test_an_inconsistent_index_does_not_stop_the_window_opening(web_data_dir):
-    """A loader validation error degrades to the recoverable empty state."""
+    """A loader validation error opens onto an actionable, honest state."""
     (web_data_dir / "ids.json").write_text('["only-one-id"]', encoding="utf-8")
 
     api, library = host.build_api(web_data_dir)
@@ -137,6 +134,55 @@ def test_an_inconsistent_index_does_not_stop_the_window_opening(web_data_dir):
 
     assert body["is_empty"] is True
     assert library.is_empty
+    assert body["load_error"] == {
+        "code": "index_load_failed",
+        "message": (
+            "The saved library index is inconsistent and could not be loaded. "
+            "Open Settings, save the path to a Rekordbox XML export, then choose "
+            "Rebuild All Embeddings."
+        ),
+    }
+
+
+def test_an_incomplete_index_is_not_diagnosed_as_first_run(tmp_path):
+    data_dir = tmp_path / "incomplete"
+    data_dir.mkdir()
+    (data_dir / "meta.parquet").touch()
+
+    api, _ = host.build_api(data_dir)
+    _, body = api.handle("GET", "/api/library", {})
+
+    assert body["load_error"]["code"] == "index_load_failed"
+    assert "incomplete" in body["load_error"]["message"]
+
+
+def test_index_failure_details_are_not_exposed_to_the_browser(tmp_path, monkeypatch):
+    private_detail = str(tmp_path / "private-track-title.parquet")
+
+    def fail_to_load(_data_dir):
+        raise ValueError(f"bad index near {private_detail}")
+
+    monkeypatch.setattr(host.LibrarySession, "load", fail_to_load)
+
+    api, _ = host.build_api(tmp_path / "data")
+    _, body = api.handle("GET", "/api/library", {})
+
+    assert private_detail not in str(body["load_error"])
+    assert "bad index" not in str(body["load_error"])
+
+
+def test_a_successful_reload_clears_the_startup_diagnosis(web_data_dir):
+    ids_path = web_data_dir / "ids.json"
+    original_ids = ids_path.read_bytes()
+    ids_path.write_text('["only-one-id"]', encoding="utf-8")
+    api, library = host.build_api(web_data_dir)
+
+    ids_path.write_bytes(original_ids)
+    library.reload()
+    _, body = api.handle("GET", "/api/library", {})
+
+    assert body["track_count"] == WEB_LIBRARY_TRACK_COUNT
+    assert "load_error" not in body
 
 
 def test_the_api_the_host_builds_serves_recommendations(web_data_dir):
