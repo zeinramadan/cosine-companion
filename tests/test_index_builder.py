@@ -126,11 +126,16 @@ def test_zero_vectors_are_not_divided_by_zero() -> None:
     assert np.isfinite(index.matrix).all()
 
 
-def test_search_rejects_a_corrupt_index_with_rebuild_instructions() -> None:
+@pytest.mark.parametrize(
+    "corrupt_position", [0, 1, 2], ids=["first", "middle", "last"]
+)
+def test_search_rejects_a_corrupt_index_with_rebuild_instructions(
+    corrupt_position: int,
+) -> None:
     index = NumpyCosIndex(dim=3)
-    index.add("clean", np.array([1.0, 0.0, 0.0]))
-    index.add("corrupt", np.array([0.0, 1.0, 0.0]))
-    index.matrix[1, 0] = np.nan
+    for position in range(3):
+        index.add(f"track-{position}", np.eye(3)[position])
+    index.matrix[corrupt_position, 0] = np.nan
 
     with pytest.raises(
         RuntimeError,
@@ -139,18 +144,42 @@ def test_search_rejects_a_corrupt_index_with_rebuild_instructions() -> None:
             r"non-finite scores\. Rebuild the library index in Settings"
         ),
     ):
-        index.search(np.array([1.0, 0.0, 0.0]), k=2)
+        index.search(np.array([1.0, 0.0, 0.0]), k=3)
+
+
+def test_search_preserves_callers_numpy_error_policy() -> None:
+    index = NumpyCosIndex(dim=2)
+    index.add("zero", np.zeros(2))
+
+    with np.errstate(divide="raise", over="raise", invalid="raise", under="warn"):
+        callers_policy = np.geterr()
+        index.search(np.zeros(2), k=1)
+
+        assert np.geterr() == callers_policy
 
 
 def test_search_emits_no_runtime_warnings_for_accelerate_trigger_shape() -> None:
-    index = NumpyCosIndex(dim=64)
-    zero = np.zeros(64, dtype=np.float32)
-    for position in range(64):
+    index = NumpyCosIndex(dim=256)
+    zero = np.zeros(256, dtype=np.float32)
+    for position in range(256):
         index.add(f"zero-{position}", zero)
+
+    with np.errstate(divide="warn", over="warn", invalid="warn"):
+        with warnings.catch_warnings(record=True) as positive_control:
+            warnings.simplefilter("always")
+            index.matrix @ zero
+
+    if not any(
+        issubclass(item.category, RuntimeWarning) for item in positive_control
+    ):
+        pytest.skip(
+            "this platform's NumPy matmul kernel emits no RuntimeWarnings for "
+            "a 256x256 float32 zero input"
+        )
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        results = index.search(zero, k=64)
+        results = index.search(zero, k=256)
 
     runtime_warnings = [
         str(item.message)
@@ -158,7 +187,7 @@ def test_search_emits_no_runtime_warnings_for_accelerate_trigger_shape() -> None
         if issubclass(item.category, RuntimeWarning)
     ]
     assert runtime_warnings == []
-    assert len(results) == 64
+    assert len(results) == 256
     assert all(score == 0.0 for _, score in results)
 
 

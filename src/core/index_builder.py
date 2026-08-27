@@ -61,13 +61,13 @@ class NumpyCosIndex:
         # enabled, underflow on a +0-only 1,532 x 2,560 matmul whose exact result
         # was +0; the tested OpenBLAS build was silent. A contributing
         # multiply-add that raises overflow or invalid leaves its dot-product
-        # score non-finite, while matmul performs no division, so finite scores
-        # completely distinguish these warnings from a genuine problem in the
-        # three categories suppressed here. np.dot returned identical bits but
-        # was rejected because it was silent for measured NaN and overflow
-        # results, which would make suppression implicit. Localize the three
-        # categories warned by the measured default np.geterr() to this call;
-        # underflow already defaults to ignore.
+        # score non-finite, so finite scores completely distinguish these
+        # warnings from a genuine problem in the three categories suppressed
+        # here. np.dot returned identical bits but was rejected because it was
+        # silent for measured NaN and overflow results, which would make
+        # suppression implicit. Localize the three categories warned by the
+        # measured default np.geterr() to this call; underflow already defaults
+        # to ignore.
         with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
             scores = self.matrix @ v
         if not np.isfinite(scores).all():
