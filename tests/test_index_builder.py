@@ -124,6 +124,21 @@ def test_zero_vectors_are_not_divided_by_zero() -> None:
     assert np.isfinite(index.matrix).all()
 
 
+def test_search_rejects_a_corrupt_index_with_rebuild_instructions() -> None:
+    index = NumpyCosIndex(dim=3)
+    index.add("corrupt", np.array([1.0, 0.0, 0.0]))
+    index.matrix[0, 0] = np.nan
+
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            r"Recommendation index is corrupt: similarity search produced "
+            r"non-finite scores\. Rebuild the library index in Settings"
+        ),
+    ):
+        index.search(np.array([1.0, 0.0, 0.0]), k=1)
+
+
 def test_self_match_scores_approximately_one() -> None:
     vector = np.array([2.5, -4.0, 1.25, 8.0])
     index = NumpyCosIndex(dim=4)
