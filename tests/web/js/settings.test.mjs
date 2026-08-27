@@ -216,7 +216,7 @@ test('incremental starts immediately with force_full false and disables both cho
   assert.equal(dom.full.disabled, true);
 });
 
-test('full rebuild needs a second affirmative click and sends force_full true', async () => {
+test('full rebuild focuses Yes and needs a second affirmative click before force_full true', async () => {
   const { dom } = await ready();
 
   dom.full.dispatch('click');
@@ -227,6 +227,9 @@ test('full rebuild needs a second affirmative click and sends force_full true', 
   assert.match(dialogBody(), /1,532-track library/);
   assert.match(dialogBody(), /75 minutes at ~3 seconds per track/);
   assert.equal(fetches.outstanding(START_KEY), false);
+  const yes = control('Yes');
+  assert.equal(yes.tagName, 'BUTTON');
+  assert.equal(document.activeElement, yes, 'the native affirmative button was not focused');
 
   control('No').dispatch('click');
   await settle();
@@ -237,6 +240,41 @@ test('full rebuild needs a second affirmative click and sends force_full true', 
   control('Yes').dispatch('click');
   await settle();
   assert.deepEqual(postedBody(START_KEY), { force_full: true });
+});
+
+test('Escape dismisses the full rebuild confirmation without starting it', async () => {
+  const { dom } = await ready();
+  dom.full.dispatch('click');
+  await settle();
+
+  const panel = byClass(document.body, 'modal__panel').at(-1);
+  assert.ok(panel, 'the full rebuild confirmation did not open');
+  let prevented = false;
+  panel.dispatch('keydown', {
+    key: 'Escape',
+    preventDefault() {
+      prevented = true;
+    },
+  });
+  await settle();
+
+  assert.equal(prevented, true);
+  assert.equal(openModalCount(), 0);
+  assert.equal(fetches.outstanding(START_KEY), false, 'Escape still started a rebuild');
+});
+
+test('clicking outside dismisses the full rebuild confirmation without starting it', async () => {
+  const { dom } = await ready();
+  dom.full.dispatch('click');
+  await settle();
+
+  const backdrop = byClass(document.body, 'modal').at(-1);
+  assert.ok(backdrop, 'the full rebuild confirmation did not open');
+  backdrop.dispatch('mousedown', { target: backdrop });
+  await settle();
+
+  assert.equal(openModalCount(), 0);
+  assert.equal(fetches.outstanding(START_KEY), false, 'backdrop dismissal still started a rebuild');
 });
 
 test('no_xml_path points to the control that fixes the conflict', async () => {

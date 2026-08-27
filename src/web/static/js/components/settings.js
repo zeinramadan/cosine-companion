@@ -244,6 +244,13 @@ export function mountSettings({
       title = completedTitle(job);
       lines.push(completedBody(job, refreshState));
     } else if (job && job.state === 'cancelled') {
+      // State alone is authoritative here because this component only renders
+      // reindex jobs. web/api.py:1174-1176 hardcodes their returned WorkOutcome
+      // to cancelled=False; an observed stop instead raises KeyboardInterrupt,
+      // whose web/jobs.py:413-414 path publishes CANCELLED without a result.
+      // Export deliberately differs: web/api.py:1112-1115 can return
+      // cancelled=True with real counts, so an Export renderer could not make
+      // this reindex-specific inference from state alone.
       title = 'Reindex stopped';
       lines.push(cancelledMessage());
     } else if (job && job.state === 'failed') {

@@ -355,7 +355,9 @@ def test_observed_cancel_reports_cancelled_with_no_partial_result(
     assert job["error"] is None
 
 
-def test_cancel_after_the_last_checkpoint_can_still_succeed(api, indexing):
+def test_reindex_result_cannot_be_published_as_cancelled_after_last_checkpoint(
+    api, indexing
+):
     status, body = start_reindex(api, {"force_full": True})
     job_id = body["job"]["id"]
     assert status == 202
@@ -364,6 +366,10 @@ def test_cancel_after_the_last_checkpoint_can_still_succeed(api, indexing):
     api.handle("POST", f"/api/jobs/{job_id}/cancel", {}, {})
     job = settle(api, indexing, job_id)
 
+    # A returned IndexResult is the only result-bearing reindex path. Even with
+    # a pending stop, api.py hardcodes that WorkOutcome to cancelled=False; the
+    # cancelled path is the KeyboardInterrupt path tested immediately above.
+    assert not (job["state"] == CANCELLED and job["result"] is not None)
     assert job["state"] == SUCCEEDED
     assert job["cancel_requested"] is True
     assert job["result"]["status"] == STATUS_INDEXED
