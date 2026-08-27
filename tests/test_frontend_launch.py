@@ -31,7 +31,7 @@ web_package.__path__ = []
 web_host = types.ModuleType("web.host")
 
 def run_web_ui(*, data_dir=None, debug=False):
-    events.append(["web", data_dir, debug])
+    events.append(["web", str(data_dir) if data_dir is not None else None, debug])
     if os.environ.get("WEB_FAILURE"):
         raise RuntimeError(os.environ["WEB_FAILURE"])
 
@@ -61,7 +61,7 @@ print(json.dumps(events))
 """
 
 
-def _run_frozen(argv, *, web_failure=None):
+def _run_frozen(argv, *, web_failure=None, data_dir=None):
     environment = os.environ.copy()
     environment.update(
         {
@@ -71,6 +71,10 @@ def _run_frozen(argv, *, web_failure=None):
     )
     if web_failure is not None:
         environment["WEB_FAILURE"] = web_failure
+    if data_dir is not None:
+        environment["COSINE_COMPANION_DATA_DIR"] = data_dir
+    else:
+        environment.pop("COSINE_COMPANION_DATA_DIR", None)
 
     result = subprocess.run(
         [sys.executable, "-c", FROZEN_PROBE],
@@ -107,6 +111,16 @@ def test_frozen_web_failure_shows_native_error_before_nonzero_exit():
     assert events[1][1] == "Cosine Companion could not start"
     assert "WKWebView unavailable" in events[1][2]
     assert "as critical" in events[1][3]
+
+
+def test_frozen_finder_launch_can_use_an_isolated_data_directory():
+    """Release smoke tests need not read or write the user's live library."""
+    assert _run_frozen(
+        ["Cosine Companion"], data_dir="/tmp/cosine-release-smoke"
+    ) == [
+        ["web", "/tmp/cosine-release-smoke", False],
+        ["exit", 0],
+    ]
 
 
 def test_web_system_exit_is_reported_then_propagates(monkeypatch, capsys):

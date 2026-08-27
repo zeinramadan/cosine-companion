@@ -127,7 +127,9 @@ if _is_frozen_gui_launch():
     # Run before importing Typer. If startup fails, the native dialog above is
     # the only reliable output channel in a windowed double-click launch.
     try:
-        _run_default_frontend()
+        _run_default_frontend(
+            data_dir=os.environ.get("COSINE_COMPANION_DATA_DIR")
+        )
     except (Exception, SystemExit):  # noqa: BLE001 - already reported above
         sys.exit(1)
     sys.exit(0)
