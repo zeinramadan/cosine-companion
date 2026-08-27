@@ -152,6 +152,21 @@ export const api = {
   },
 
   /**
+   * Start a reindex job. 202 with the accepted job, or 409 if one is running
+   * or if no XML path is configured.
+   *
+   * `forceFull` controls the mode: `false` (default) for incremental (only new
+   * tracks), `true` for a full rebuild. On the real 1,532-track library, a
+   * full rebuild takes ~75 minutes at ~3 seconds per track; incremental runs
+   * over a handful of new tracks complete in seconds.
+   */
+  startReindex: ({ forceFull = false } = {}) =>
+    request('/api/jobs/reindex', {}, {
+      method: 'POST',
+      body: { force_full: forceFull },
+    }),
+
+  /**
    * Ask a job to stop. 200 whether or not it was still running.
    *
    * The body is `{}` rather than absent. `server.py` refuses a POST with no

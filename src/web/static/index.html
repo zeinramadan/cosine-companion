@@ -125,6 +125,45 @@
                 <p class="settings__status" id="settings-status" role="status" aria-live="polite"></p>
               </div>
             </form>
+
+            <div class="settings__divider"></div>
+
+            <div class="settings__reindex" id="settings-reindex">
+              <div class="settings__intro">
+                <p class="eyebrow">Library indexing</p>
+                <h2 class="settings__title">Update Index</h2>
+                <p class="settings__description">
+                  Build embeddings for tracks in your Rekordbox XML. Incremental updates only
+                  process new tracks; full rebuilds re-embed the entire collection.
+                </p>
+              </div>
+
+              <div class="settings__reindex-actions" id="reindex-actions">
+                <button class="button button--primary" id="reindex-incremental" type="button">
+                  Update Index
+                </button>
+                <button class="button" id="reindex-full" type="button">
+                  Rebuild Entire Index
+                </button>
+              </div>
+
+              <div class="settings__reindex-progress" id="reindex-progress" hidden>
+                <p class="progress__label" id="reindex-progress-label"></p>
+                <div class="progress__track" id="reindex-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+                  <div class="progress__fill" id="reindex-progress-fill"></div>
+                </div>
+                <p class="progress__status" id="reindex-progress-status"></p>
+                <p class="progress__timing" id="reindex-progress-timing"></p>
+                <div class="progress__actions">
+                  <button class="button button--danger" id="reindex-stop" type="button">
+                    Stop Reindex
+                  </button>
+                  <p class="progress__note" id="reindex-stop-note"></p>
+                </div>
+              </div>
+
+              <div class="settings__reindex-outcome" id="reindex-outcome" hidden></div>
+            </div>
           </div>
         </section>
       </div>
