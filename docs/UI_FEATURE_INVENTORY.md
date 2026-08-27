@@ -70,10 +70,10 @@ FAIL when the behaviour it pins is changed — the mutations are listed in the P
 
 | Entry point | Behaviour |
 |---|---|
-| `python src/cosine_companion.py ui` | Calls `ui.run_ui()` |
+| `python src/cosine_companion.py ui` · `ui-web` · `ui-tk` | `ui` opens web with automatic Tk fallback; `ui-web` is strict web-only; `ui-tk` opens Tk directly |
 | `python src/cosine_companion.py index <xml> [--force/-f] [--sample/-s N]` | Headless indexing, no UI |
 | `python src/cosine_companion.py clean-duplicates <xml>` | Headless duplicate report, no UI |
-| Frozen `.app` double-click | `cosine_companion.py` detects `sys.frozen` with no args (or a single `-psn_*` arg from LaunchServices), prints `Launching Cosine Companion UI...`, runs `run_ui()`, then `sys.exit(0)` |
+| Frozen `.app` double-click | Detects `sys.frozen` with no args (or one LaunchServices `-psn_*` arg), opens web, warns and runs Tk on web-start failure, then exits; if both fail, a native fatal dialog reports both causes |
 
 `run_ui()` (`src/ui/__init__.py`):
 
@@ -1556,10 +1556,10 @@ Every row is a user-reachable workflow catalogued above. Task 9 records pass/fai
 
 ## 6. Web UI coverage
 
-PR 3a adds a second front end (`src/web/`, launched with
-`python src/cosine_companion.py ui-web`) alongside the Tkinter app. Tkinter is
-untouched, is still the default, and is what the packaged `.app` launches;
-nothing in §1–§5 above describes behaviour that changed.
+PR 3a added a second front end (`src/web/`, launched with
+`python src/cosine_companion.py ui-web`) alongside the Tkinter app. It is now
+the default for `ui` and the packaged `.app`; Tkinter remains reachable through
+`ui-tk` and as the automatic startup fallback described in §1.1.
 
 This section records **which catalogued controls the web UI reimplements**, so
 the rewrite can be reviewed against the contract rather than against a demo.

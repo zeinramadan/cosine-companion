@@ -10,6 +10,141 @@ efficient similarity search.
 import os
 import sys
 
+
+WEB_FRONTEND = "web"
+TK_FRONTEND = "tk"
+
+# This is the entire default-frontend switch. Both the frozen no-argument path
+# and the generic `ui` command go through it; changing this one identifier back
+# to TK_FRONTEND restores the previous default without removing either UI.
+DEFAULT_FRONTEND = WEB_FRONTEND
+
+
+def _is_frozen_gui_launch():
+    """Whether LaunchServices (or an equivalent no-arg launch) opened us."""
+    return getattr(sys, 'frozen', False) and (
+        len(sys.argv) == 1
+        or (
+            sys.platform == 'darwin'
+            and len(sys.argv) == 2
+            and sys.argv[1].startswith('-psn_')
+        )
+    )
+
+
+def _diagnostic(message):
+    """Write a launch diagnostic when a terminal exists.
+
+    PyInstaller windowed applications may replace stderr with ``None``, so a
+    diagnostic must never become a second startup failure.
+    """
+    try:
+        if sys.stderr is not None:
+            print(message, file=sys.stderr, flush=True)
+    except Exception:
+        pass
+
+
+def _native_launch_dialog(title, message, *, error=False):
+    """Show a native dialog for a frozen launch that has no terminal."""
+    try:
+        from tkinter import messagebox
+
+        show = messagebox.showerror if error else messagebox.showwarning
+        show(title, message)
+    except Exception as dialog_error:  # noqa: BLE001 - use an OS-level fallback
+        # If Tk itself is the reason both frontends failed, its messagebox is
+        # unavailable too. macOS still provides Standard Additions through
+        # osascript, so the final explanation need not disappear with Tk.
+        if sys.platform == 'darwin':
+            try:
+                import subprocess
+
+                style = "critical" if error else "warning"
+                script = (
+                    "on run argv\n"
+                    "display alert (item 1 of argv) message (item 2 of argv) "
+                    f"as {style}\n"
+                    "end run"
+                )
+                subprocess.run(
+                    ["/usr/bin/osascript", "-e", script, title, message],
+                    check=True,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=30,
+                )
+                return
+            except Exception as os_dialog_error:  # noqa: BLE001 - last resort
+                _diagnostic(
+                    "Could not show either native launch error dialog "
+                    f"({_failure_details(os_dialog_error)})"
+                )
+                return
+
+        _diagnostic(
+            "Could not show the launch error dialog "
+            f"({_failure_details(dialog_error)})"
+        )
+
+
+def _run_web_frontend(*, debug=False, data_dir=None):
+    """Run only the web frontend, allowing startup errors to reach the caller."""
+    from pathlib import Path
+
+    from web.host import run_web_ui
+
+    run_web_ui(data_dir=Path(data_dir) if data_dir else None, debug=debug)
+
+
+def _run_tk_frontend():
+    """Run only the retained Tkinter frontend."""
+    from ui import run_ui
+
+    run_ui()
+
+
+def _failure_details(error):
+    detail = str(error).strip()
+    return f"{type(error).__name__}: {detail}" if detail else type(error).__name__
+
+
+def _run_default_frontend(*, debug=False, data_dir=None):
+    """Run the configured default, falling back to Tkinter if web cannot start."""
+    if DEFAULT_FRONTEND == TK_FRONTEND:
+        _run_tk_frontend()
+        return
+    if DEFAULT_FRONTEND != WEB_FRONTEND:  # pragma: no cover - developer error
+        raise RuntimeError(f"Unknown default frontend: {DEFAULT_FRONTEND}")
+
+    try:
+        _run_web_frontend(debug=debug, data_dir=data_dir)
+        return
+    except Exception as web_error:  # noqa: BLE001 - every startup failure falls back
+        web_details = _failure_details(web_error)
+        message = (
+            "The web interface could not start. Cosine Companion will open "
+            "the classic interface instead.\n\n"
+            f"Technical details: {web_details}"
+        )
+        _diagnostic(message)
+        if _is_frozen_gui_launch():
+            _native_launch_dialog("Cosine Companion", message)
+
+    try:
+        _run_tk_frontend()
+    except Exception as tk_error:  # noqa: BLE001 - report the loss of both UIs
+        message = (
+            "Neither Cosine Companion interface could start.\n\n"
+            f"Web interface: {web_details}\n"
+            f"Classic interface: {_failure_details(tk_error)}"
+        )
+        _diagnostic(message)
+        if _is_frozen_gui_launch():
+            _native_launch_dialog("Cosine Companion could not start", message, error=True)
+        raise
+
 # Note: For frozen executables on macOS, SDL and OpenMP env vars are set by the
 # wrapper script (macos_launcher.sh) BEFORE the binary is loaded, which is necessary
 # to prevent SDL from initializing GUI components that cause crashes.
@@ -24,13 +159,10 @@ if not getattr(sys, 'frozen', False) or (getattr(sys, 'frozen', False) and sys.p
 # Check if running as frozen executable in GUI mode
 # On macOS when launched from Finder, LaunchServices passes a '-psn_*' arg.
 # Treat that the same as no-arg GUI launch.
-if getattr(sys, 'frozen', False) and (
-    len(sys.argv) == 1 or (sys.platform == 'darwin' and len(sys.argv) == 2 and sys.argv[1].startswith('-psn_'))
-):
-    # Running as bundled app with no arguments - launch UI directly
-    print("Launching Cosine Companion UI...")
-    from ui import run_ui
-    run_ui()
+if _is_frozen_gui_launch():
+    # Running as a bundled app with no arguments: launch the default UI before
+    # importing Typer. A web startup failure is visible and falls back to Tk.
+    _run_default_frontend()
     sys.exit(0)
 
 # --- CLI ---
@@ -54,10 +186,18 @@ def index(
 
 
 @cli.command()
-def ui():
-    """Open the minimal UI (manual 'Set Current' for v1)."""
-    from ui import run_ui
-    run_ui()
+def ui(
+    debug: bool = typer.Option(False, "--debug", help="Open web devtools"),
+    data_dir: str = typer.Option(None, "--data-dir", help="Index directory to open (default: the configured one)")
+):
+    """Open the default web UI, falling back to the classic UI if needed."""
+    _run_default_frontend(debug=debug, data_dir=data_dir)
+
+
+@cli.command("ui-tk")
+def ui_tk():
+    """Open the retained classic Tkinter UI directly."""
+    _run_tk_frontend()
 
 
 @cli.command("ui-web")
@@ -65,22 +205,21 @@ def ui_web(
     debug: bool = typer.Option(False, "--debug", help="Open with devtools enabled"),
     data_dir: str = typer.Option(None, "--data-dir", help="Index directory to open (default: the configured one)")
 ):
-    """EXPERIMENTAL: open the web UI in a pywebview window (Tkinter is still the default)."""
-    # Imported here, not at module scope: this is the only path that needs
-    # pywebview, and `ui` must keep launching Tkinter on a machine that does
-    # not have it installed.
+    """Open only the web UI (compatibility alias; no Tkinter fallback)."""
     try:
-        from web.host import run_web_ui
-    except ImportError as error:
+        _run_web_frontend(debug=debug, data_dir=data_dir)
+    except Exception as error:  # noqa: BLE001 - turn startup failures into a clean CLI error
+        install_hint = (
+            "\nInstall it with:  pip install pywebview"
+            if isinstance(error, ImportError)
+            else ""
+        )
         typer.echo(
-            f"The web UI needs pywebview ({error}).\n"
-            "Install it with:  pip install pywebview",
+            f"The web UI could not start ({_failure_details(error)})."
+            f"{install_hint}",
             err=True,
         )
         raise typer.Exit(code=1)
-
-    from pathlib import Path
-    run_web_ui(data_dir=Path(data_dir) if data_dir else None, debug=debug)
 
 
 @cli.command("import-playlists")
@@ -105,8 +244,8 @@ def import_playlists_command(
     also what lets the concurrency tests run the real command against a
     scratch directory instead of the developer's library.
     """
-    # Lazy imports throughout, matching the other subcommands: `ui` must keep
-    # launching on a machine where these are not needed.
+    # Lazy imports throughout, matching the other subcommands: neither UI
+    # should load playlist-import dependencies merely to open a window.
     from pathlib import Path
 
     from config import DATA
