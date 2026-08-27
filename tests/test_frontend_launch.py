@@ -143,20 +143,30 @@ def test_web_system_exit_is_reported_then_propagates(monkeypatch, capsys):
 
 def test_keyboard_interrupt_propagates_without_becoming_a_startup_error(
     monkeypatch,
+    capsys,
 ):
     """Ctrl-C remains an explicit request to quit."""
     calls = []
+    dialogs = []
 
     def interrupt_web(**options):
         calls.append(options)
         raise KeyboardInterrupt
 
     monkeypatch.setattr(entrypoint, "_run_web_frontend", interrupt_web)
+    monkeypatch.setattr(entrypoint, "_is_frozen_gui_launch", lambda: True)
+    monkeypatch.setattr(
+        entrypoint,
+        "_native_launch_dialog",
+        lambda *arguments: dialogs.append(arguments),
+    )
 
     with pytest.raises(KeyboardInterrupt):
         entrypoint._run_default_frontend(debug=False, data_dir=None)
 
     assert calls == [{"debug": False, "data_dir": None}]
+    assert capsys.readouterr().err == ""
+    assert dialogs == []
 
 
 def test_macos_native_error_uses_osascript_without_a_gui_toolkit(monkeypatch):
