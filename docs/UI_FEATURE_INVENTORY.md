@@ -1,22 +1,22 @@
-# Cosine Companion — Tkinter UI Feature Inventory
+# Cosine Companion — Historical Tkinter UI Feature Inventory
 
-**Status:** Acceptance contract for the UI rewrite (PR 3).
-**Captured from:** `feat/services-layer` (fork of `main` @ `91afe15`), re-verified surface by
-surface against `src/ui/*.py` after the service-layer extraction.
+**Status:** Frozen historical acceptance record; it does not describe the current UI.
+**Frozen at:** `main@e7750ce`, the final commit where `src/ui/` shipped, after being captured and
+re-verified during the services extraction and web rewrite.
 **Scope:** every tab, window, dialog, control, rendered string, per-track field and its
 formatting, mouse/keyboard binding, default value, sort order, and conditional
-enabled/disabled state across the 12 files of `src/ui/` (3,437 lines) plus `src/utils/icon.py`.
+enabled/disabled state in the retired Tkinter implementation and `src/utils/icon.py`.
 
-> **How to use this document.** Section 2 catalogues the surfaces in the order a user meets
-> them. Section 3 collects the cross-cutting formatting and search rules that several surfaces
-> share, so they are stated once and referenced. Section 4 lists behaviours that are defects but
-> are nonetheless *current behaviour* and therefore part of the contract until explicitly
-> retired. Section 5 is the numbered workflow list used for manual smoke testing.
+> **How to use this record.** Sections 2–5 document the source behavior the web rewrite was
+> reviewed against. Source citations are falsifiable by checking out `e7750ce`; they are not
+> directions to files in the current tree. The self-consistency suite and Tkinter smoke harness
+> were retired with their deleted subject, so this record is intentionally immutable rather than
+> maintained as current product documentation. See `README.md` and `src/web/` for the live UI.
 >
-> **The rewrite is complete when every behaviour catalogued here is reachable in the new UI.**
-> Anything intentionally dropped must be listed in that PR's description.
+> The web rewrite preserved the catalogued destinations except for the deleted-track Undo action.
+> Current recovery requires editing `deleted_tracks.json`; README documents that capability gap.
 
-### How this document is checked
+### How this document was checked
 
 A false claim here is not a documentation nit. PR 3 is reviewed against this document, so a false
 claim becomes a regression that passes review. Three kinds of check apply, and they catch different
@@ -30,11 +30,11 @@ things:
 
 Some failure modes are entirely internal to the document and no source-facing test can see them —
 a stated **count** disagreeing with its own enumeration, or one passage contradicting another.
-`tests/test_inventory_self_consistency.py` is the check whose subject is this document. What it
-settles and what it leaves open are both stated here, because a guard that is trusted for more than
-it does is worse than no guard:
+`tests/test_inventory_self_consistency.py` was the check whose subject was this document. It was
+retired when `src/ui/` was deleted because its source-facing checks could only pass vacuously or by
+querying repository history. Its former coverage is recorded here for auditability:
 
-**It verifies.** Every `file.py:N` citation names a file that exists and a line number inside it.
+**It verified.** Every `file.py:N` citation names a file that exists and a line number inside it.
 Every §-reference, every `#n` defect reference and every `tests/…::test_name` citation resolves to
 something real, and the defect table is numbered without gaps. The listbox and print-site counts
 are re-derived from the source rather than trusted, and no stated count contradicts its own
@@ -43,7 +43,7 @@ every block matching the hand-written absolute-claim vocabulary — `never`, `de
 `none of …`, `no … are written` — carries a justification token in the same block: a test
 citation, the word *pinned*, or a `file.py:N` derivation.
 
-**It does not verify.** It does not check that a citation *supports* the sentence it hangs off:
+**It did not verify.** It did not check that a citation *supports* the sentence it hangs off:
 the citation check reads the cited file's length, never the cited line, so any real line number
 satisfies it. It has no general contradiction detector — the two contradiction checks it does have
 are hand-written for specific known pairs (scrolling, and the refuted-claim list), so a new claim
