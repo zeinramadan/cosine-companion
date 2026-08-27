@@ -10,6 +10,13 @@ APP_CSS = ROOT / "src/web/static/css/app.css"
 MAIN_JS = ROOT / "src/web/static/js/main.js"
 
 
+def test_settings_explains_how_to_create_the_rekordbox_xml():
+    body = INDEX.read_text(encoding="utf-8")
+
+    assert "File → Export Collection in XML format" in body
+    assert "exported file's full path below" in body
+
+
 def test_both_reindex_tradeoffs_are_visible_before_their_buttons():
     body = INDEX.read_text(encoding="utf-8")
 

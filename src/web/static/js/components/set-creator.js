@@ -47,6 +47,7 @@ import { copyToClipboard } from '../clipboard.js';
 import { element, stateBlock, wholePercent, parseIntegerStrictly } from '../format.js';
 import { wireListbox } from '../listbox.js';
 import { openAnchorDialog } from './anchor-dialog.js';
+import { firstRunGuidance } from './library-guidance.js';
 import { showerror, showinfo, showwarning } from './message-box.js';
 
 /* Inventory :449 - `tk.StringVar(value="10")`. A STRING, not a number: :501's
@@ -649,9 +650,7 @@ export function mountSetCreator({ store }) {
     }
     return stateBlock({
       title: 'No index yet',
-      body:
-        'There is no cosine index to build a set from. Index a Rekordbox ' +
-        'collection first — Settings ▸ Update Library in the Tkinter app does this today.',
+      body: firstRunGuidance('There is no cosine index to build a set from.'),
     });
   }
 
