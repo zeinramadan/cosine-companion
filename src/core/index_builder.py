@@ -57,11 +57,17 @@ class NumpyCosIndex:
         if norm > 0:
             v = v / norm
 
-        # NumPy 2.2.6 with Apple Accelerate raised divide, overflow, and invalid
-        # here on the measured finite 1,532 x 2,560 float32 library even though
-        # every score was finite and bitwise unchanged by this local suppression;
-        # the same data and NumPy version were silent with the tested OpenBLAS
-        # build. Ignore only those measured flags, then validate the result.
+        # NumPy 2.2.6/Accelerate warned for divide, overflow, invalid, and, when
+        # enabled, underflow on a +0-only 1,532 x 2,560 matmul whose exact result
+        # was +0; the tested OpenBLAS build was silent. A contributing
+        # multiply-add that raises overflow or invalid leaves its dot-product
+        # score non-finite, while matmul performs no division, so finite scores
+        # completely distinguish these warnings from a genuine problem in the
+        # three categories suppressed here. np.dot returned identical bits but
+        # was rejected because it was silent for measured NaN and overflow
+        # results, which would make suppression implicit. Localize the three
+        # categories warned by the measured default np.geterr() to this call;
+        # underflow already defaults to ignore.
         with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
             scores = self.matrix @ v
         if not np.isfinite(scores).all():
