@@ -136,14 +136,39 @@ def test_the_frozen_package_declares_the_web_ui_it_has_to_import():
     )
 
 
-def test_the_frozen_package_still_declares_the_tkinter_front_end():
-    """Tkinter remains the no-argument frozen launch's safety net.
-
-    ``cosine_companion.py`` falls back to ``ui.run_ui`` before Typer when a
-    frozen web launch fails, so flipping the default must not remove it.
-    """
+def test_the_frozen_package_excludes_the_retired_front_end():
+    """Deleted modules must not return through hidden imports or hooks."""
     declared = _hidden_imports()
+    retired_roots = (
+        "ui",
+        "tkinter",
+        "_tkinter",
+        "PIL.ImageTk",
+        "PIL._tkinter_finder",
+    )
+    unexpected = {
+        name
+        for name in declared
+        if any(name == root or name.startswith(root + ".") for root in retired_roots)
+    }
+    assert not unexpected, (
+        "the spec still declares retired frontend modules: "
+        + ", ".join(sorted(unexpected))
+    )
 
-    required = {"ui", "ui.app", "tkinter", "PIL.ImageTk"}
-    missing = required - declared
-    assert not missing, "the spec does not declare " + ", ".join(sorted(missing))
+    analysis = _call("Analysis")
+    analysis_keywords = {
+        keyword.arg: keyword.value for keyword in analysis.keywords
+    }
+    excluded = {
+        item.value
+        for item in _unconditional_list_items(analysis_keywords["excludes"])
+        if isinstance(item, ast.Constant) and isinstance(item.value, str)
+    }
+    required_exclusions = {
+        "tkinter",
+        "_tkinter",
+        "PIL.ImageTk",
+        "PIL._tkinter_finder",
+    }
+    assert required_exclusions <= excluded
