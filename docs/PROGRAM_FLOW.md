@@ -258,13 +258,16 @@ cosine_companion.py:ui()
    │  ├─ Load a LibrarySession and assemble the JSON API
    │  ├─ Bind a token-protected loopback server on an ephemeral port
    │  └─ Create a pywebview window and start WKWebView
-   └─ On web startup failure: explain the cause, then ui.run_ui()
-      └─ Creates the retained ui.app.App() Tkinter interface
+   └─ On web Exception or SystemExit: explain the cause, then ui.run_ui()
+      ├─ Creates the retained ui.app.App() Tkinter interface
+      └─ If Tk raises Exception or SystemExit: report both causes, then re-raise
 ```
 
 The packaged `.app` no-argument/Finder path uses the same default launcher
-before Typer is imported. Missing or inconsistent library data opens the web
-empty state; it is not treated as a frontend startup failure.
+before Typer is imported. `KeyboardInterrupt` is deliberately excluded from
+both recovery handlers, so Ctrl-C exits instead of opening another interface.
+Missing or inconsistent library data opens the web empty state; it is not
+treated as a frontend startup failure.
 
 ### Phase 2: Classic Fallback Data Loading Process
 

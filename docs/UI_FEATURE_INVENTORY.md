@@ -73,7 +73,14 @@ FAIL when the behaviour it pins is changed — the mutations are listed in the P
 | `python src/cosine_companion.py ui` · `ui-web` · `ui-tk` | `ui` opens web with automatic Tk fallback; `ui-web` is strict web-only; `ui-tk` opens Tk directly |
 | `python src/cosine_companion.py index <xml> [--force/-f] [--sample/-s N]` | Headless indexing, no UI |
 | `python src/cosine_companion.py clean-duplicates <xml>` | Headless duplicate report, no UI |
-| Frozen `.app` double-click | Detects `sys.frozen` with no args (or one LaunchServices `-psn_*` arg), opens web, warns and runs Tk on web-start failure, then exits; if both fail, a native fatal dialog reports both causes |
+| Frozen `.app` double-click | Detects `sys.frozen` with no args (or one LaunchServices `-psn_*` arg), opens web, warns and runs Tk when web startup raises `Exception` or `SystemExit`, then exits; if Tk also raises either, a native fatal dialog reports both causes before the Tk failure is re-raised |
+
+`KeyboardInterrupt` is intentionally outside both recovery handlers: Ctrl-C
+propagates without opening Tkinter
+(`tests/test_frontend_launch.py::test_keyboard_interrupt_propagates_without_opening_the_classic_fallback`).
+Library-originated `SystemExit` is treated as a startup failure at the default
+web boundary, the Tk fallback boundary, and the strict `ui-web` boundary; those
+paths are pinned in `tests/test_frontend_launch.py`.
 
 `run_ui()` (`src/ui/__init__.py`):
 
