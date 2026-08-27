@@ -47,15 +47,82 @@ export function buildExploreDom() {
   return { root };
 }
 
-/** Build the Settings form's mount points. Mirrors index.html. */
+/** Build the Settings destination, shell and modal layer. Mirrors index.html. */
 export function buildSettingsDom() {
+  const app = withId(new Node('div'), 'app');
+  const root = withId(new Node('section'), 'view-settings');
   const form = withId(new Node('form'), 'settings-form');
   const input = withId(new Node('input'), 'settings-xml-path');
   const submit = withId(new Node('button'), 'settings-submit');
   const status = withId(new Node('p'), 'settings-status');
   form.append(input, submit, status);
-  document.body.append(form);
-  return { form, input, submit, status };
+
+  const reindex = withId(new Node('div'), 'settings-reindex');
+  const actions = withId(new Node('div'), 'reindex-actions');
+  const incremental = withId(new Node('button'), 'reindex-incremental');
+  incremental.textContent = 'Index New Tracks';
+  const full = withId(new Node('button'), 'reindex-full');
+  full.textContent = 'Rebuild All Embeddings';
+  actions.append(incremental, full);
+
+  const progress = withId(new Node('div'), 'reindex-progress');
+  progress.hidden = true;
+  progress.className = 'settings__reindex-progress';
+  const progressLabel = withId(new Node('p'), 'reindex-progress-label');
+  progressLabel.className = 'progress__label';
+  const progressTrack = withId(new Node('div'), 'reindex-progress-track');
+  progressTrack.className = 'progress__track';
+  const progressFill = withId(new Node('div'), 'reindex-progress-fill');
+  progressFill.className = 'progress__fill';
+  progressTrack.append(progressFill);
+  const progressStatus = withId(new Node('p'), 'reindex-progress-status');
+  progressStatus.className = 'progress__status';
+  const progressTiming = withId(new Node('p'), 'reindex-progress-timing');
+  progressTiming.className = 'progress__timing';
+  const progressActions = new Node('div');
+  progressActions.className = 'progress__actions';
+  const stop = withId(new Node('button'), 'reindex-stop');
+  stop.textContent = 'Stop Reindex';
+  const stopNote = withId(new Node('p'), 'reindex-stop-note');
+  stopNote.className = 'progress__note';
+  progressActions.append(stop, stopNote);
+  progress.append(
+    progressLabel,
+    progressTrack,
+    progressStatus,
+    progressTiming,
+    progressActions,
+  );
+
+  const outcome = withId(new Node('div'), 'reindex-outcome');
+  outcome.hidden = true;
+  outcome.className = 'settings__reindex-outcome';
+  reindex.append(actions, progress, outcome);
+  root.append(form, reindex);
+  app.append(root);
+
+  const modalLayer = withId(new Node('div'), 'modal-layer');
+  document.body.append(app, modalLayer);
+  return {
+    app,
+    root,
+    modalLayer,
+    form,
+    input,
+    submit,
+    status,
+    incremental,
+    full,
+    progress,
+    progressLabel,
+    progressTrack,
+    progressFill,
+    progressStatus,
+    progressTiming,
+    stop,
+    stopNote,
+    outcome,
+  };
 }
 
 /** Build the Set Creator's mount point, the shell and the modal layer.

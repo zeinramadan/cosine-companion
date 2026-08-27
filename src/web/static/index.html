@@ -125,6 +125,63 @@
                 <p class="settings__status" id="settings-status" role="status" aria-live="polite"></p>
               </div>
             </form>
+
+            <div class="settings__divider"></div>
+
+            <div class="settings__reindex" id="settings-reindex">
+              <div class="settings__intro">
+                <p class="eyebrow">Library indexing</p>
+                <h2 class="settings__title">Update Index</h2>
+                <p class="settings__description">
+                  Build embeddings for tracks in your Rekordbox XML. Incremental updates only
+                  process new tracks; full rebuilds re-embed the entire collection.
+                </p>
+              </div>
+
+              <div class="settings__reindex-actions" id="reindex-actions">
+                <section class="settings__reindex-option" aria-labelledby="reindex-incremental-title">
+                  <h3 class="settings__reindex-option-title" id="reindex-incremental-title">
+                    Incremental update
+                  </h3>
+                  <p class="settings__reindex-option-copy">
+                    Embed only tracks that are not in the index yet. Usually finishes in seconds.
+                  </p>
+                  <button class="button button--primary" id="reindex-incremental" type="button">
+                    Index New Tracks
+                  </button>
+                </section>
+
+                <section class="settings__reindex-option" aria-labelledby="reindex-full-title">
+                  <h3 class="settings__reindex-option-title" id="reindex-full-title">
+                    Full rebuild
+                  </h3>
+                  <p class="settings__reindex-option-copy">
+                    Re-embed every track at about 3 seconds each — roughly 75 minutes for
+                    1,532 tracks. Requires confirmation.
+                  </p>
+                  <button class="button button--danger" id="reindex-full" type="button">
+                    Rebuild All Embeddings
+                  </button>
+                </section>
+              </div>
+
+              <div class="settings__reindex-progress" id="reindex-progress" hidden>
+                <p class="progress__label" id="reindex-progress-label"></p>
+                <div class="progress__track" id="reindex-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+                  <div class="progress__fill" id="reindex-progress-fill"></div>
+                </div>
+                <p class="progress__status" id="reindex-progress-status"></p>
+                <p class="progress__timing" id="reindex-progress-timing"></p>
+                <div class="progress__actions">
+                  <button class="button button--danger" id="reindex-stop" type="button">
+                    Stop Reindex
+                  </button>
+                  <p class="progress__note" id="reindex-stop-note"></p>
+                </div>
+              </div>
+
+              <div class="settings__reindex-outcome" id="reindex-outcome" hidden></div>
+            </div>
           </div>
         </section>
       </div>
