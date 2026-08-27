@@ -1,36 +1,22 @@
 # Manual verification harnesses
 
 Not collected by pytest (no `test_*.py` names). These cover what unit tests
-cannot: Tkinter wiring, a real Essentia indexing pass, and a measurement over
-the whole real library.
+cannot: a real Essentia indexing pass and measurements over the whole real
+library.
 
 `web_jobs_real_export.py` reads `data/` and writes only into a temp directory.
-`smoke.py` drives the app against a **throwaway copy** of `data/` and verifies
-the real directory by fingerprinting every file's size and mtime before and
-after the run. `real_indexing.py` reads real track metadata and audio, but its
-required `ReindexWindow.data_dir` binds every index and playlist write to a new
-scratch directory. The real data directory is only ever read.
+`real_indexing.py` reads real track metadata and audio, but starts re-index jobs
+through the shipping web API with a `LibrarySession` bound to a new scratch
+directory. It fingerprints every source-data file by size, mtime, and SHA-256
+before and after. The real data directory is only ever read.
 `ranking_equivalence.py` only reads.
-
-## `smoke.py` — workflow coverage
-
-Drives the real `App` through the workflows catalogued in
-`docs/UI_FEATURE_INVENTORY.md` §5 and prints a pass/fail table — 43 checks,
-including the post-deletion stale-consumer set (22a–22f) that pins which
-surfaces refresh after a delete and which keep showing the deleted track
-(defect #14). Workflow 34 (cancelling a reindex) needs a real indexing run and
-lives in the other script.
-
-```bash
-PYTHONPATH=src python tests/manual/smoke.py
-PYTHONPATH=src python tests/manual/smoke.py --only 4,6,7
-```
 
 ## `real_indexing.py` — real Essentia pass
 
-Runs the actual `ReindexWindow` with the actual embedder over N real tracks
-(default 4), then repeats and cancels partway, asserting the log lines,
-terminal states and persistence in both cases.
+Starts the real `POST /api/jobs/reindex` path with the actual embedder over N
+real tracks (default 4), verifies the live library endpoint publishes the
+committed index, then repeats and cancels partway through the real job route.
+It asserts terminal wire states and persistence in both cases.
 
 The Discogs-EffNet `.pb` model is gitignored, so point `COCO_MODELS` at a
 checkout that has it:
