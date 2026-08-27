@@ -62,11 +62,13 @@ conda activate dj-companion
 
 #### Download the ML Model
 
-The application requires the Discogs-EffNet model (~300 MB):
+The application requires the 16,367,182-byte Discogs-EffNet model:
 
 ```bash
 cd models/
-curl -O https://essentia.upf.edu/models/feature-extractors/discogs_multi_embeddings/discogs_multi_embeddings-effnet-bs64-1.pb
+curl --fail --show-error --location --remote-name \
+  https://essentia.upf.edu/models/feature-extractors/discogs-effnet/discogs_multi_embeddings-effnet-bs64-1.pb
+echo "2c964064951217e1e345461cf88884086a21f4bca2ae0d48187ee75edc263cd7  discogs_multi_embeddings-effnet-bs64-1.pb" | shasum -a 256 --check
 cd ..
 ```
 

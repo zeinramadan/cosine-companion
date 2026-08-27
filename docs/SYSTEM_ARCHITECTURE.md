@@ -1341,9 +1341,10 @@ jobs:
 **Model Source**: Essentia Models Repository
 
 ```
-URL: https://essentia.upf.edu/models/feature-extractors/discogs_multi_embeddings/
+URL: https://essentia.upf.edu/models/feature-extractors/discogs-effnet/discogs_multi_embeddings-effnet-bs64-1.pb
 File: discogs_multi_embeddings-effnet-bs64-1.pb
-Size: ~300MB
+Size: 16,367,182 bytes
+SHA-256: 2c964064951217e1e345461cf88884086a21f4bca2ae0d48187ee75edc263cd7
 Format: TensorFlow frozen graph (.pb)
 ```
 

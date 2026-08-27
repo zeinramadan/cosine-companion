@@ -9,6 +9,10 @@ permissions:
 jobs:
   build-macos:
     runs-on: macos-latest
+    env:
+      ESSENTIA_MODEL_PATH: models/discogs_multi_embeddings-effnet-bs64-1.pb
+      ESSENTIA_MODEL_URL: https://essentia.upf.edu/models/feature-extractors/discogs-effnet/discogs_multi_embeddings-effnet-bs64-1.pb
+      ESSENTIA_MODEL_SHA256: 2c964064951217e1e345461cf88884086a21f4bca2ae0d48187ee75edc263cd7
     
     steps:
     - name: Checkout code
@@ -27,8 +31,8 @@ jobs:
       id: cache-model
       uses: actions/cache@v4
       with:
-        path: models/discogs_multi_embeddings-effnet-bs64-1.pb
-        key: essentia-model-v1
+        path: ${{ env.ESSENTIA_MODEL_PATH }}
+        key: essentia-model-sha256-${{ env.ESSENTIA_MODEL_SHA256 }}
     
     - name: Install dependencies
       env:
@@ -40,14 +44,21 @@ jobs:
     - name: Download Essentia model
       if: steps.cache-model.outputs.cache-hit != 'true'
       run: |
-        mkdir -p models
-        cd models
-        curl -L -O "https://essentia.upf.edu/models/feature-extractors/discogs_multi_embeddings/discogs_multi_embeddings-effnet-bs64-1.pb"
+        mkdir -p "$(dirname "$ESSENTIA_MODEL_PATH")"
+        curl --fail --show-error --location \
+          --output "${ESSENTIA_MODEL_PATH}.download" \
+          "$ESSENTIA_MODEL_URL"
+        mv "${ESSENTIA_MODEL_PATH}.download" "$ESSENTIA_MODEL_PATH"
+
+    # Deliberately unconditional: a cache hit is untrusted input too.
+    - name: Verify Essentia model
+      run: python build_app.py --verify-model "$ESSENTIA_MODEL_PATH"
     
     - name: Build app
       run: |
         python build_app.py
         test -f "dist/Cosine Companion.app/Contents/MacOS/Cosine Companion"
+        python build_app.py --verify-model "dist/Cosine Companion.app/Contents/Resources/$ESSENTIA_MODEL_PATH"
     
     - name: Create DMG
       run: |

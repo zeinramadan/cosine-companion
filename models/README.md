@@ -8,16 +8,17 @@ This directory contains the machine learning models required for audio similarit
 
 **File:** `discogs_multi_embeddings-effnet-bs64-1.pb`
 
-**Download Link:** [Essentia Models Repository](https://essentia.upf.edu/models/feature-extractors/discogs_multi_embeddings/)
+**Download Link:** [Essentia Discogs-EffNet models](https://essentia.upf.edu/models/feature-extractors/discogs-effnet/)
 
 **Direct Download:**
 ```bash
-wget https://essentia.upf.edu/models/feature-extractors/discogs_multi_embeddings/discogs_multi_embeddings-effnet-bs64-1.pb
+wget https://essentia.upf.edu/models/feature-extractors/discogs-effnet/discogs_multi_embeddings-effnet-bs64-1.pb
 ```
 
 Or using curl:
 ```bash
-curl -O https://essentia.upf.edu/models/feature-extractors/discogs_multi_embeddings/discogs_multi_embeddings-effnet-bs64-1.pb
+curl --fail --show-error --location --remote-name \
+  https://essentia.upf.edu/models/feature-extractors/discogs-effnet/discogs_multi_embeddings-effnet-bs64-1.pb
 ```
 
 ### Model Information
@@ -29,7 +30,8 @@ curl -O https://essentia.upf.edu/models/feature-extractors/discogs_multi_embeddi
 | **Input** | 32kHz mono audio |
 | **Raw Output** | Frame-wise embeddings (variable length) |
 | **Pooled Output** | 2,560-dimensional vector (1,280 mean + 1,280 std pooling) |
-| **File Size** | ~300 MB |
+| **File Size** | 16,367,182 bytes |
+| **SHA-256** | `2c964064951217e1e345461cf88884086a21f4bca2ae0d48187ee75edc263cd7` |
 | **License** | See [Essentia licensing terms](https://essentia.upf.edu/licensing_information.html) |
 
 ### Installation Steps
@@ -52,7 +54,7 @@ models/
 **Model not found error:**
 - Verify the file is in the `models/` directory
 - Check the filename matches exactly (case-sensitive)
-- Ensure the file downloaded completely (~300 MB)
+- Run `python build_app.py --verify-model models/discogs_multi_embeddings-effnet-bs64-1.pb`
 
 **TensorFlow prediction errors:**
 - Make sure you have `essentia-tensorflow` installed: `pip install essentia-tensorflow`
@@ -71,4 +73,4 @@ For technical details, see [docs/EMBEDDINGS_GUIDE.md](../docs/EMBEDDINGS_GUIDE.m
 ### More Information
 
 - [Essentia Models Documentation](https://essentia.upf.edu/models.html)
-- [Discogs-EffNet Paper](https://essentia.upf.edu/models/feature-extractors/discogs_multi_embeddings/)
+- [Discogs-EffNet model documentation](https://essentia.upf.edu/models.html#discogs-effnet)
