@@ -55,20 +55,22 @@ def watch_rekordbox_db(callback, stop_event, interval=1.5):
         time.sleep(interval)
 ```
 
-### 3) Integrate with the UI (non-invasive)
-In `src/ui/app.py` (or a dedicated mixin):
-- Build a `by_path` mapping from `meta.parquet` once during init: `{path or path_local -> track_id}` (normalize paths by stripping `file://` and URL-decoding as needed).
-- Add a method:
+### 3) Integrate with the web UI
+Add a headless service that owns the provider thread and publishes the latest
+matched track ID through a token-authenticated API endpoint. Build a `by_path`
+mapping from the live `LibrarySession` snapshot: `{path or path_local ->
+track_id}` (normalize paths by stripping `file://` and URL-decoding as needed).
+The service callback can use this shape:
 
 ```python
-def on_external_track_change(self, meta: dict):
+def on_external_track_change(meta: dict):
     # meta = {"title":..., "artist":..., "path":...}
     tid = self.by_path.get(normalize(meta.get("path"))) or self.lookup_by_artist_title(meta)
     if tid:
-        self.set_current(tid)
+        publish_current_track(tid)
 ```
 
-- Start the watcher thread on app start and stop it on close:
+- Start exactly one watcher with the web host and stop it when the window exits:
 
 ```python
 import threading
@@ -79,7 +81,7 @@ threading.Thread(target=watch_rekordbox_db,
                  args=(self.on_external_track_change, self.stop_event),
                  daemon=True).start()
 
-# on close handler:
+# host shutdown:
 self.stop_event.set()
 ```
 
@@ -96,7 +98,7 @@ When performing with CDJs/XDJ connected over Ethernet/Wi‑Fi, listen for deck e
 
 ### Steps
 1. Add `providers/prolink.py` using a community lib (e.g., `python-prolink`) or your own UDP listener.
-2. On `track_loaded`, emit `{title, artist, path}` and reuse `on_external_track_change()` in the UI.
+2. On `track_loaded`, emit `{title, artist, path}` and reuse the same service callback.
 3. Control which provider is active via a CLI flag or a config file (e.g., `--auto current=db|prolink|off`).
 
 **Pros:** Works without Rekordbox running.  
@@ -133,10 +135,11 @@ Create and cache dictionaries:
 ---
 
 ## UI Hooks (Summary)
-- Add `on_external_track_change(meta)` in `src/ui/app.py` (or a mixin).
-- Start exactly one provider thread on app start (configurable).
-- Stop it on window close.
-- The rest of the UI remains unchanged.
+- Add the provider callback to a headless service.
+- Expose the latest matched track ID through `src/web/api.py`.
+- Poll or subscribe from the Explore JavaScript component and reuse its existing
+  set-current path.
+- Start exactly one provider thread on host start and stop it on window close.
 
 ---
 
@@ -149,7 +152,8 @@ current = "db"   # db | prolink | file | off
 interval = 1.5
 ```
 
-Then wire `--auto current=db` in `cosine_companion.py` and pass to `ui.run_ui(auto_provider=...)`.
+Then wire `--auto current=db` in `cosine_companion.py` and pass the selection to
+`web.host.run_web_ui`.
 
 ---
 

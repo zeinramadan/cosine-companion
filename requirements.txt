@@ -20,14 +20,13 @@ lxml>=4.6.0
 # CLI interface
 typer>=0.4.0
 
-# Web UI (the default `ui`; `ui-web` is strict and `ui-tk` remains available)
+# Web UI (`ui`; `ui-web` remains as a compatibility alias)
 # The ONLY new runtime dependency of the web backbone. Everything else the web
 # layer needs is in the standard library - the HTTP server is
 # http.server.ThreadingHTTPServer and the frontend has no build step.
 pywebview>=5.0
 
-# UI / Icons
-Pillow>=9.0.0
+# Native macOS window integration
 pyobjc-framework-Cocoa>=9.0; sys_platform == 'darwin'  # For macOS dock icon
 
 # Packaging (optional - for building standalone app)

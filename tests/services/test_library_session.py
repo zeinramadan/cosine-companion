@@ -369,16 +369,6 @@ def test_the_all_tracks_count_and_export_list_agree_after_delete(tmp_library):
     assert session.track_count == 3
 
 
-def test_the_export_tab_label_source_reads_len_meta():
-    """Guard against the label quietly reverting to track_count."""
-    from pathlib import Path
-
-    source = (Path(__file__).resolve().parents[2] / "src" / "ui" / "playlist_export_tab.py").read_text()
-
-    assert "count = len(self.library.meta)" in source
-    assert "self.library.track_count" not in source
-
-
 def test_reload_preserves_the_already_refreshed_meta(tmp_library):
     session = LibrarySession.load(tmp_library)
     session.delete_tracks(["t2"])

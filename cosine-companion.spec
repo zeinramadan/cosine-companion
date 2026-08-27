@@ -21,7 +21,6 @@ src_dir = project_root / "src"
 pandas_hidden = collect_submodules('pandas')
 numpy_hidden = collect_submodules('numpy')
 lxml_hidden = collect_submodules('lxml')
-pil_hidden = collect_submodules('PIL')
 essentia_hidden = collect_submodules('essentia')
 dateutil_hidden = collect_submodules('dateutil')
 pytz_hidden = collect_submodules('pytz')
@@ -32,7 +31,6 @@ pandas_all_datas, pandas_all_bins, pandas_all_hidden = collect_all('pandas')
 numpy_all_datas, numpy_all_bins, numpy_all_hidden = collect_all('numpy')
 
 pandas_datas = collect_data_files('pandas')
-pil_datas = collect_data_files('PIL')
 lxml_datas = collect_data_files('lxml')
 pyarrow_datas = collect_data_files('pyarrow')
 
@@ -55,7 +53,7 @@ a = Analysis(
         # Include the no-build web frontend where web.assets expects it under
         # sys._MEIPASS in a frozen process.
         (str(project_root / 'src' / 'web' / 'static'), 'web/static'),
-    ] + pandas_datas + pil_datas + lxml_datas + pandas_all_datas + numpy_all_datas + pyarrow_datas,
+    ] + pandas_datas + lxml_datas + pandas_all_datas + numpy_all_datas + pyarrow_datas,
     hiddenimports=[
         # Core modules
         'core',
@@ -77,16 +75,6 @@ a = Analysis(
         'recommendations.models',
         'recommendations.transitions',
         'recommendations.search',
-        # UI modules
-        'ui',
-        'ui.app',
-        'ui.onboarding',
-        'ui.recommendations_tab',
-        'ui.set_creator_tab',
-        'ui.library_tab',
-        'ui.dialogs',
-        'ui.settings_window',
-        'ui.reindex_window',
         # Web UI modules. `cosine_companion.py` reaches these through a
         # function-body import inside a try/except (the `ui-web` command).
         # Listed explicitly so the recipe is the record: whether modulegraph
@@ -100,7 +88,6 @@ a = Analysis(
         'web.jobs',
         # Utils modules
         'utils',
-        'utils.icon',
         # Config modules
         'config',
         'config.paths',
@@ -112,10 +99,6 @@ a = Analysis(
         'soundfile',
         'essentia',
         'typer',
-        'tkinter',
-        'PIL',
-        'PIL.Image',
-        'PIL.ImageTk',
         # pywebview, which the web UI's window is. The DISTRIBUTION is
         # `pywebview` (requirements.txt:27) but the IMPORT is `webview` - its
         # top_level.txt says so - and a hiddenimports entry is an import name.
@@ -128,12 +111,11 @@ a = Analysis(
         'pandas',
         'numpy',
         'lxml',
-        'PIL',
         'essentia',
         'dateutil',
         'pytz',
         'pyarrow',
-    ] + pandas_hidden + numpy_hidden + lxml_hidden + pil_hidden + essentia_hidden + dateutil_hidden + pytz_hidden + pyarrow_hidden + pandas_all_hidden + numpy_all_hidden,
+    ] + pandas_hidden + numpy_hidden + lxml_hidden + essentia_hidden + dateutil_hidden + pytz_hidden + pyarrow_hidden + pandas_all_hidden + numpy_all_hidden,
     hookspath=[str(project_root / 'hooks')],
     hooksconfig={},
     runtime_hooks=[str(project_root / 'hooks' / 'rthook_macos_env.py')],
@@ -142,6 +124,14 @@ a = Analysis(
         'scipy',
         'PyQt5',
         'PySide2',
+        # The retired desktop frontend must not return through a transitive
+        # import or an over-broad collection hook. Pygments has an optional
+        # image formatter that can otherwise rediscover an installed Pillow.
+        'tkinter',
+        '_tkinter',
+        'PIL',
+        'PIL.ImageTk',
+        'PIL._tkinter_finder',
         'pytest',
         'jupyter',
     ],

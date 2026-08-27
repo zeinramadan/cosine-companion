@@ -150,15 +150,6 @@ def test_the_embedder_is_still_reachable_from_the_pipeline():
     assert result.stdout.strip() == "ok"
 
 
-def test_importing_the_tkinter_app_never_loads_essentia():
-    """On main, `import ui.app` worked without Essentia. This branch must not
-    break that invariant - the desktop app only needs the embedder when the
-    user actually starts an indexing run."""
-    pytest.importorskip("tkinter", reason="headless build of Python without Tk")
-
-    assert _loaded_forbidden_after("import ui.app\n") == []
-
-
 def test_the_indexing_service_still_reaches_the_pipeline_when_it_runs():
     """The laziness must be an import-time deferral, not a dropped dependency:
     IndexingService.run() has to end up calling processing.pipeline."""

@@ -3,8 +3,8 @@
 No window is opened here. CI is headless, and a test that needed a display
 would be a test that never runs where it matters. What is checked is everything
 around the window: that ``web.host`` imports at all (pywebview is installed in
-CI), that importing it does not drag Tkinter in, that it opens nothing as a
-side effect of being imported, and that the session it builds is the right one -
+CI), that importing it does not drag a second GUI toolkit in, that it opens
+nothing as a side effect of being imported, and that the session it builds is the right one -
 including for a data directory with no index, where the window must still open
 onto a stated empty state rather than a traceback.
 """
@@ -44,8 +44,7 @@ def test_the_host_imports():
 
 
 def test_importing_the_host_does_not_load_tkinter():
-    """The web UI is an alternative to Tkinter, not a wrapper around it. A
-    frozen build that loaded both would pay for both."""
+    """A transitive import must not restore the retired GUI dependency."""
     loaded = _subprocess_modules(
         "import sys\n"
         "import web.host\n"
@@ -98,8 +97,7 @@ def test_the_host_builds_an_api_over_the_given_data_directory(web_data_dir):
 
 
 def test_the_host_reads_settings_from_beside_the_index(web_data_dir):
-    """The Tkinter app uses DATA/settings.json (ui/app.py:185); the web host
-    must look in the same place or the two disagree about the XML path."""
+    """The host must read settings beside an explicitly selected index."""
     (web_data_dir / "settings.json").write_text(
         '{"xml_path": "/tmp/collection.xml"}', encoding="utf-8"
     )
@@ -131,9 +129,7 @@ def test_a_data_directory_with_no_index_still_yields_a_usable_api(tmp_path):
 
 
 def test_an_inconsistent_index_does_not_stop_the_window_opening(web_data_dir):
-    """The loader validates ids.json against index.npy and raises ValueError on
-    a mismatch - the same condition the Tkinter app reports as "Inconsistent
-    Index Data" (tests/test_app.py). Here it degrades to the empty state."""
+    """A loader validation error degrades to the recoverable empty state."""
     (web_data_dir / "ids.json").write_text('["only-one-id"]', encoding="utf-8")
 
     api, library = host.build_api(web_data_dir)

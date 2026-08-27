@@ -1,9 +1,10 @@
-"""The frontend switch, including the frozen branch that runs before Typer."""
+"""The web-only launcher, including the frozen branch before Typer imports."""
 
 import json
 import os
 import subprocess
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,7 @@ FROZEN_PROBE = r"""
 import json
 import os
 import runpy
+import subprocess
 import sys
 import types
 
@@ -29,7 +31,7 @@ web_package.__path__ = []
 web_host = types.ModuleType("web.host")
 
 def run_web_ui(*, data_dir=None, debug=False):
-    events.append(["web", data_dir, debug])
+    events.append(["web", str(data_dir) if data_dir is not None else None, debug])
     if os.environ.get("WEB_FAILURE"):
         raise RuntimeError(os.environ["WEB_FAILURE"])
 
@@ -37,29 +39,15 @@ web_host.run_web_ui = run_web_ui
 sys.modules["web"] = web_package
 sys.modules["web.host"] = web_host
 
-classic_ui = types.ModuleType("ui")
+def native_dialog(command, **options):
+    events.append(["dialog", command[3], command[4], command[2]])
 
-def run_ui():
-    events.append(["tk"])
-    if os.environ.get("TK_FAILURE"):
-        raise RuntimeError(os.environ["TK_FAILURE"])
-
-classic_ui.run_ui = run_ui
-sys.modules["ui"] = classic_ui
-
-messagebox = types.SimpleNamespace(
-    showwarning=lambda title, message: events.append(["warning", title, message]),
-    showerror=lambda title, message: events.append(["error", title, message]),
-)
-tkinter = types.ModuleType("tkinter")
-tkinter.messagebox = messagebox
-sys.modules["tkinter"] = tkinter
+subprocess.run = native_dialog
 
 sys.frozen = True
 sys.platform = "darwin"
 sys.argv = json.loads(os.environ["FROZEN_ARGV"])
-# This is the relevant PyInstaller --windowed condition: there is no terminal
-# on which a printed explanation can be relied upon.
+# A PyInstaller --windowed launch has no terminal for the diagnostic.
 sys.stderr = None
 
 try:
@@ -73,7 +61,7 @@ print(json.dumps(events))
 """
 
 
-def _run_frozen(argv, *, web_failure=None, tk_failure=None):
+def _run_frozen(argv, *, web_failure=None, data_dir=None):
     environment = os.environ.copy()
     environment.update(
         {
@@ -83,8 +71,10 @@ def _run_frozen(argv, *, web_failure=None, tk_failure=None):
     )
     if web_failure is not None:
         environment["WEB_FAILURE"] = web_failure
-    if tk_failure is not None:
-        environment["TK_FAILURE"] = tk_failure
+    if data_dir is not None:
+        environment["COSINE_COMPANION_DATA_DIR"] = data_dir
+    else:
+        environment.pop("COSINE_COMPANION_DATA_DIR", None)
 
     result = subprocess.run(
         [sys.executable, "-c", FROZEN_PROBE],
@@ -111,128 +101,66 @@ def test_frozen_finder_launch_uses_the_web_frontend(argv):
     assert _run_frozen(argv) == [["web", None, False], ["exit", 0]]
 
 
-def test_frozen_web_failure_warns_before_opening_the_classic_fallback():
-    events = _run_frozen(["Cosine Companion"], web_failure="WKWebView unavailable")
+def test_frozen_web_failure_shows_native_error_before_nonzero_exit():
+    events = _run_frozen(
+        ["Cosine Companion"], web_failure="WKWebView unavailable"
+    )
 
-    assert [event[0] for event in events] == ["web", "warning", "tk", "exit"]
+    assert [event[0] for event in events] == ["web", "dialog", "exit"]
+    assert events[-1] == ["exit", 1]
+    assert events[1][1] == "Cosine Companion could not start"
     assert "WKWebView unavailable" in events[1][2]
-    assert "classic interface instead" in events[1][2]
+    assert "as critical" in events[1][3]
 
 
-def test_web_system_exit_opens_the_classic_fallback(monkeypatch, capsys):
-    """A dependency's sys.exit is a startup failure, not a user cancellation."""
+def test_frozen_finder_launch_can_use_an_isolated_data_directory():
+    """Release smoke tests need not read or write the user's live library."""
+    assert _run_frozen(
+        ["Cosine Companion"], data_dir="/tmp/cosine-release-smoke"
+    ) == [
+        ["web", "/tmp/cosine-release-smoke", False],
+        ["exit", 0],
+    ]
+
+
+def test_web_system_exit_is_reported_then_propagates(monkeypatch, capsys):
+    """A dependency's sys.exit is a startup failure, not a close request."""
     calls = []
 
     def stop_web(**options):
-        calls.append(("web", options))
+        calls.append(options)
         raise SystemExit("webview stopped during startup")
 
     monkeypatch.setattr(entrypoint, "_run_web_frontend", stop_web)
-    monkeypatch.setattr(
-        entrypoint,
-        "_run_tk_frontend",
-        lambda: calls.append(("tk", {})),
-    )
     monkeypatch.setattr(entrypoint, "_is_frozen_gui_launch", lambda: False)
 
-    entrypoint._run_default_frontend(debug=True, data_dir="/tmp/library")
+    with pytest.raises(SystemExit, match="webview stopped during startup"):
+        entrypoint._run_default_frontend(debug=True, data_dir="/tmp/library")
 
-    assert calls == [
-        ("web", {"debug": True, "data_dir": "/tmp/library"}),
-        ("tk", {}),
-    ]
+    assert calls == [{"debug": True, "data_dir": "/tmp/library"}]
     assert "SystemExit: webview stopped during startup" in capsys.readouterr().err
 
 
-def test_keyboard_interrupt_propagates_without_opening_the_classic_fallback(
+def test_keyboard_interrupt_propagates_without_becoming_a_startup_error(
     monkeypatch,
 ):
-    """Ctrl-C means quit even though a library-originated SystemExit falls back."""
+    """Ctrl-C remains an explicit request to quit."""
     calls = []
 
     def interrupt_web(**options):
-        calls.append(("web", options))
+        calls.append(options)
         raise KeyboardInterrupt
 
     monkeypatch.setattr(entrypoint, "_run_web_frontend", interrupt_web)
-    monkeypatch.setattr(
-        entrypoint,
-        "_run_tk_frontend",
-        lambda: calls.append(("tk", {})),
-    )
 
     with pytest.raises(KeyboardInterrupt):
         entrypoint._run_default_frontend(debug=False, data_dir=None)
 
-    assert calls == [("web", {"debug": False, "data_dir": None})]
+    assert calls == [{"debug": False, "data_dir": None}]
 
 
-def test_frozen_double_failure_uses_a_native_fatal_dialog():
-    events = _run_frozen(
-        ["Cosine Companion"],
-        web_failure="loopback bind failed",
-        tk_failure="Tk failed",
-    )
-
-    assert [event[0] for event in events] == [
-        "web",
-        "warning",
-        "tk",
-        "error",
-        "raised",
-    ]
-    assert "loopback bind failed" in events[3][2]
-    assert "Tk failed" in events[3][2]
-
-
-def test_tk_system_exit_reports_both_failures_then_propagates(monkeypatch):
-    """A frozen launch must explain a Tk sys.exit before preserving its exit."""
-    dialogs = []
-
-    def fail_web(**options):
-        raise RuntimeError("loopback bind failed")
-
-    def stop_tk():
-        raise SystemExit(9)
-
-    monkeypatch.setattr(entrypoint, "_run_web_frontend", fail_web)
-    monkeypatch.setattr(entrypoint, "_run_tk_frontend", stop_tk)
-    monkeypatch.setattr(entrypoint, "_is_frozen_gui_launch", lambda: True)
-    monkeypatch.setattr(
-        entrypoint,
-        "_native_launch_dialog",
-        lambda title, message, **options: dialogs.append((title, message, options)),
-    )
-
-    with pytest.raises(SystemExit) as stopped:
-        entrypoint._run_default_frontend()
-
-    assert stopped.value.code == 9
-    assert len(dialogs) == 2
-    title, message, options = dialogs[-1]
-    assert title == "Cosine Companion could not start"
-    assert "RuntimeError: loopback bind failed" in message
-    assert "SystemExit: 9" in message
-    assert options == {"error": True}
-
-
-def test_a_broken_tk_dialog_uses_the_macos_native_fallback(monkeypatch):
+def test_macos_native_error_uses_osascript_without_a_gui_toolkit(monkeypatch):
     calls = []
-
-    broken_messagebox = type(
-        "BrokenMessagebox",
-        (),
-        {
-            "showwarning": staticmethod(
-                lambda *args: (_ for _ in ()).throw(RuntimeError("Tcl failed"))
-            ),
-            "showerror": staticmethod(
-                lambda *args: (_ for _ in ()).throw(RuntimeError("Tcl failed"))
-            ),
-        },
-    )
-    tkinter = type("Tkinter", (), {"messagebox": broken_messagebox})
-    monkeypatch.setitem(sys.modules, "tkinter", tkinter)
     monkeypatch.setattr(entrypoint.sys, "platform", "darwin")
     monkeypatch.setattr(
         subprocess,
@@ -240,74 +168,84 @@ def test_a_broken_tk_dialog_uses_the_macos_native_fallback(monkeypatch):
         lambda command, **options: calls.append((command, options)),
     )
 
-    entrypoint._native_launch_dialog("Could not start", "Both UIs failed", error=True)
+    entrypoint._native_launch_dialog("Could not start", "Web UI failed")
 
     assert len(calls) == 1
     command, options = calls[0]
     assert command[0:2] == ["/usr/bin/osascript", "-e"]
     assert "as critical" in command[2]
-    assert command[3:] == ["Could not start", "Both UIs failed"]
+    assert command[3:] == ["Could not start", "Web UI failed"]
     assert options["check"] is True
+    assert options["timeout"] == 30
 
 
-def test_ui_command_uses_the_web_default_and_ui_tk_is_direct(monkeypatch):
+def test_windows_native_error_uses_message_box(monkeypatch):
+    calls = []
+    fake_user32 = types.SimpleNamespace(
+        MessageBoxW=lambda *arguments: calls.append(arguments)
+    )
+    monkeypatch.setattr(entrypoint.sys, "platform", "win32")
+    monkeypatch.setattr(
+        __import__("ctypes"),
+        "windll",
+        types.SimpleNamespace(user32=fake_user32),
+        raising=False,
+    )
+
+    entrypoint._native_launch_dialog("Could not start", "Web UI failed")
+
+    assert calls == [(None, "Web UI failed", "Could not start", 0x10)]
+
+
+def test_ui_command_runs_the_web_frontend(monkeypatch):
     calls = []
     monkeypatch.setattr(
         entrypoint,
         "_run_default_frontend",
-        lambda **options: calls.append(("default", options)),
-    )
-    monkeypatch.setattr(
-        entrypoint,
-        "_run_tk_frontend",
-        lambda: calls.append(("tk", {})),
-    )
-    monkeypatch.setattr(
-        entrypoint,
-        "_run_web_frontend",
-        lambda **options: calls.append(("web", options)),
+        lambda **options: calls.append(options),
     )
 
     entrypoint.ui(debug=True, data_dir="/tmp/library")
-    entrypoint.ui_tk()
 
-    assert entrypoint.DEFAULT_FRONTEND == entrypoint.WEB_FRONTEND
-    assert calls == [
-        ("default", {"debug": True, "data_dir": "/tmp/library"}),
-        ("tk", {}),
-    ]
+    assert calls == [{"debug": True, "data_dir": "/tmp/library"}]
 
 
-def test_ui_web_remains_a_strict_web_only_alias(monkeypatch, capsys):
-    calls = []
-
+@pytest.mark.parametrize("command", [entrypoint.ui, entrypoint.ui_web])
+def test_both_ui_commands_turn_startup_failure_into_a_clean_cli_error(
+    monkeypatch, capsys, command
+):
     def fail_web(**options):
-        calls.append(("web", options))
         raise OSError("cannot bind loopback")
 
     monkeypatch.setattr(entrypoint, "_run_web_frontend", fail_web)
-    monkeypatch.setattr(
-        entrypoint,
-        "_run_tk_frontend",
-        lambda: calls.append(("tk", {})),
-    )
 
     with pytest.raises(typer.Exit) as stopped:
-        entrypoint.ui_web(debug=False, data_dir=None)
+        command(debug=False, data_dir=None)
 
     assert stopped.value.exit_code == 1
-    assert calls == [("web", {"debug": False, "data_dir": None})]
-    assert "cannot bind loopback" in capsys.readouterr().err
+    assert "OSError: cannot bind loopback" in capsys.readouterr().err
 
 
-def test_ui_web_turns_system_exit_into_a_clean_cli_error(monkeypatch, capsys):
+def test_ui_turns_system_exit_into_a_clean_cli_error(monkeypatch, capsys):
     def stop_web(**options):
         raise SystemExit("webview stopped during startup")
 
     monkeypatch.setattr(entrypoint, "_run_web_frontend", stop_web)
 
     with pytest.raises(typer.Exit) as stopped:
-        entrypoint.ui_web(debug=False, data_dir=None)
+        entrypoint.ui(debug=False, data_dir=None)
 
     assert stopped.value.exit_code == 1
     assert "SystemExit: webview stopped during startup" in capsys.readouterr().err
+
+
+def test_missing_pywebview_error_includes_install_hint(monkeypatch, capsys):
+    def missing_webview(**options):
+        raise ImportError("No module named webview")
+
+    monkeypatch.setattr(entrypoint, "_run_web_frontend", missing_webview)
+
+    with pytest.raises(typer.Exit):
+        entrypoint.ui(debug=False, data_dir=None)
+
+    assert "pip install pywebview" in capsys.readouterr().err

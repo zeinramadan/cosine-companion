@@ -187,7 +187,6 @@ def check_dependencies():
     required = [
         ("pandas", "pip install pandas"),
         ("numpy", "pip install numpy"),
-        ("PIL", "pip install Pillow"),
         ("lxml", "pip install lxml"),
         ("soundfile", "pip install soundfile"),
         ("essentia", "pip install essentia-tensorflow"),

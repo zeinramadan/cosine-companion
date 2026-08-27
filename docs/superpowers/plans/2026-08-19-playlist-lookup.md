@@ -1,5 +1,10 @@
 # PR 4 — Rekordbox playlist lookup (track → playlists)
 
+> **Historical plan.** This records the constraints of one completed rewrite
+> stage. References to the retired desktop frontend are evidence of that stage,
+> not current implementation guidance. See `README.md` and
+> `docs/SYSTEM_ARCHITECTURE.md` for the current web-only product.
+
 **Branch:** `feat/playlist-lookup` · **Base:** `main@37d5a4b`
 **Spec:** `docs/superpowers/specs/2026-08-18-ui-rewrite-and-playlist-lookup-design.md` §6
 **Contract:** `docs/UI_FEATURE_INVENTORY.md` (this PR ADDS a surface; it has no Tkinter counterpart)

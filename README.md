@@ -94,21 +94,17 @@ This analyzes your audio files and builds a searchable index. Re-run when you ad
 python src/cosine_companion.py ui
 ```
 
-This opens the web UI in a pywebview window. If the web window cannot start,
-Cosine Companion explains the problem and opens the retained classic Tkinter
-interface so the library remains reachable. To request either frontend
-explicitly:
+This opens the web UI in a pywebview window. `ui-web` remains as a compatibility
+alias for scripts that already use it:
 
 ```bash
-# Web only: fail instead of falling back to Tkinter
 python src/cosine_companion.py ui-web
-
-# Classic Tkinter fallback directly
-python src/cosine_companion.py ui-tk
 ```
 
-The packaged `.app` follows the same web-first behaviour when opened from
-Finder. See [the web UI](#the-web-ui).
+The packaged `.app` opens the same interface from Finder. If the web window
+cannot start, a native macOS error dialog shows the technical cause before the
+app exits; a double-click launch never depends on terminal output. See
+[the web UI](#the-web-ui).
 
 ### 4. Start Exploring
 
@@ -138,17 +134,14 @@ python src/cosine_companion.py index /path/to/rekordbox.xml
 # Force full re-index (rebuilds everything)
 python src/cosine_companion.py index /path/to/rekordbox.xml --force
 
-# Launch the default web interface (with automatic Tkinter fallback)
+# Launch the web interface
 python src/cosine_companion.py ui
 
-# Require the web UI (compatibility alias; no fallback)
+# Compatibility alias for the same web interface
 python src/cosine_companion.py ui-web
 
 # ...with devtools, and against a specific index directory
 python src/cosine_companion.py ui-web --debug --data-dir /path/to/data
-
-# Launch the classic Tkinter interface directly
-python src/cosine_companion.py ui-tk
 
 # Check for duplicate tracks
 python src/cosine_companion.py clean-duplicates /path/to/rekordbox.xml
@@ -158,24 +151,19 @@ python src/cosine_companion.py clean-duplicates /path/to/rekordbox.xml
 
 `ui` opens a [pywebview](https://pywebview.flowrl.com/) window (WKWebView on
 macOS - the same engine as Safari) onto a small JSON API served over loopback.
-`ui-web` is the web-only compatibility alias. The engine underneath both
-frontends is identical.
+`ui-web` is a compatibility alias for the same interface.
 
-**Status.** This is the default interface. Explore, Library, Set Creator,
-Settings (including reindexing), and Export all work end to end. Tkinter remains
-available through `ui-tk` and as the automatic safety net when web startup
-fails.
+**Status.** Explore, Library, Set Creator, Settings (including reindexing), and
+Export all work end to end. This is the only desktop interface.
 
 **Startup recovery.** A missing or inconsistent library is rendered as an
 empty state in the web UI so Settings can be used to reindex it. Failures in
 the web infrastructure itself — importing pywebview, finding the bundled
 frontend, binding the loopback server, creating/starting WKWebView, or a
-dependency terminating startup with `SystemExit` — cause the default launcher
-to explain the failure and open Tkinter. A terminal Ctrl-C remains an explicit
-request to quit: `KeyboardInterrupt` propagates without opening Tkinter. If
-Tkinter also fails or terminates with `SystemExit`, a frozen launch shows a
-native fatal dialog with both errors before preserving that failure. A normal
-web-window close is not a failure and does not open Tkinter.
+dependency terminating startup with `SystemExit` — are fatal. Terminal launches
+print the cause and exit 1; frozen macOS and Windows launches show the same cause
+in an OS-native dialog before exiting 1. A terminal Ctrl-C remains an explicit
+request to quit, and a normal web-window close remains a successful exit.
 
 **How it is wired.**
 
@@ -195,6 +183,16 @@ web-window close is not a failure and does not open Tkinter.
 `requirements.txt`. Nothing else needs it: `src/web/server.py` and
 `src/web/api.py` deliberately do not import it, which is what lets the API be
 tested on a headless CI runner. Only `src/web/host.py` does.
+
+### Known limitation: deleted-track recovery
+
+Library deletion records a track in `deleted_tracks.json` so later index runs
+do not add it back. The retired interface had an **Undo** action; the web UI
+does not yet expose one. Recovering a mistakenly deleted track currently means
+closing Cosine Companion, backing up and hand-editing `deleted_tracks.json` to
+remove that track's entry, then re-indexing the Rekordbox collection. This is a
+known capability gap, not an intentional change to the deletion model. The
+core removal function remains in place for a future web recovery flow.
 
 ## How It Works
 
@@ -230,8 +228,7 @@ cosine-companion/
 │   ├── processing/         # Audio analysis and XML parsing
 │   ├── recommendations/    # Recommendation engine and scoring
 │   ├── services/           # Headless session/service layer (no UI imports)
-│   ├── ui/                 # Retained classic Tkinter GUI and startup fallback
-│   └── web/                # Default web UI: loopback API + no-build frontend
+│   └── web/                # Desktop UI: loopback API + no-build frontend
 ├── tests/                  # pytest suite (run in CI on every PR)
 ├── benchmarks/             # Recommendation benchmark harness and results
 ├── models/                 # ML models (download required)
@@ -257,8 +254,7 @@ cosine-companion/
 - `numpy`, `pandas` - Exact similarity search and data processing
 - `lxml` - XML parsing
 - `typer` - CLI
-- `tkinter` - retained classic GUI and startup fallback (included with Python)
-- `pywebview` - default desktop window
+- `pywebview` - desktop window
 
 ## Contributing
 

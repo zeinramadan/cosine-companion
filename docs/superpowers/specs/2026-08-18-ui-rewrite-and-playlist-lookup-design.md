@@ -1,5 +1,10 @@
 # Cosine Companion — UI Rewrite & Rekordbox Playlist Lookup
 
+> **Historical design.** This document preserves the staged rewrite rationale,
+> including references to the frontend that existed during migration. The
+> rewrite is complete and that implementation was removed after `e7750ce`; see
+> `README.md` and `docs/SYSTEM_ARCHITECTURE.md` for the current system.
+
 **Date:** 2026-08-18
 **Status:** Design approved; ready for implementation planning
 **Scope:** PRs 2–4. PR 1 (exact NumPy search) is merged as `2058da4`.

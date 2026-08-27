@@ -1,173 +1,238 @@
 #!/usr/bin/env python3
-"""Task 8 Step 6: a REAL indexing pass through ReindexWindow.
+"""Run real Essentia indexing through the shipping web job API.
 
-Mocked tests cannot prove the Tk wiring, so this drives the actual window with
-the actual Essentia embedder over a handful of real tracks, then repeats it and
-cancels partway. ReindexWindow's required data_dir binds every index and
-playlist write to a fresh throwaway directory. The checkout's data and model
-files, including /Users/zein/dj-cosine, are only ever read.
+This is deliberately a manual harness: it reads real track metadata and audio,
+loads the real Discogs-EffNet model, and can take minutes. Every write is bound
+to a temporary data directory. The source library is fingerprinted before and
+after so a mistaken global-path write is a failure.
+
+    COCO_MODELS=/path/to/models PYTHONPATH=src python tests/manual/real_indexing.py 4
 """
-import shutil, sys, tempfile, time
+
+import hashlib
+import os
+import sys
+import tempfile
+import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from urllib.parse import quote
 
-import os
+
 REPO = Path(os.environ.get("COCO_REPO", Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(REPO / "src"))
 
-TMP = Path(tempfile.mkdtemp(prefix="coco-realindex-"))
-SCRATCH_DATA = TMP / "data"; SCRATCH_DATA.mkdir()
+import pandas as pd  # noqa: E402
 
-# The .pb model is gitignored, so it only exists in the primary checkout.
-# READ ONLY - nothing is written there.
-import processing.embeddings as E
-E.MODELS = Path(os.environ.get("COCO_MODELS", REPO / "models"))
-
-import pandas as pd
-meta = pd.read_parquet(REPO / "data" / "meta.parquet")
-import os
-usable = meta[meta["path_local"].apply(lambda p: bool(p) and os.path.exists(p))]
-
-N = int(sys.argv[1]) if len(sys.argv) > 1 else 4
-picked = usable.head(N)
+import processing.embeddings as embeddings_module  # noqa: E402
+from services.library_session import LibrarySession  # noqa: E402
+from services.settings_store import SettingsStore, XML_PATH_KEY  # noqa: E402
+from web.api import CocoApi  # noqa: E402
+from web.jobs import CANCELLED, RUNNING, SUCCEEDED  # noqa: E402
 
 
-def write_xml(path, rows):
-    entries = "".join(
-        f'<TRACK TrackID="{r.track_id}" Name="{r.title}" Artist="{r.artist}" '
-        f'AverageBpm="{r.bpm:.2f}" Tonality="{r.key}" Album="" '
-        f'Location="file://localhost{quote(str(r.path_local))}"/>'
-        for r in rows.itertuples()
-    )
-    path.write_text(
-        '<?xml version="1.0" encoding="UTF-8"?>'
-        f'<DJ_PLAYLISTS Version="1.0.0"><COLLECTION Entries="{len(rows)}">'
-        f"{entries}</COLLECTION></DJ_PLAYLISTS>", encoding="utf-8")
-    return path
+embeddings_module.MODELS = Path(
+    os.environ.get("COCO_MODELS", REPO / "models")
+)
 
-
-xml = write_xml(TMP / "small.xml", picked)
-print(f"fixture XML: {N} real tracks -> {xml}")
-
-import tkinter as tk
-from tkinter import messagebox
-import ui.reindex_window as rw
-rw.messagebox.askyesno = lambda *a, **k: True
-
-root = tk.Tk(); root.withdraw()
-
+WAIT_SECONDS = 900.0
+INDEX_FILES = ("meta.parquet", "embeddings.parquet", "index.npy", "ids.json")
 FAILURES = []
-def expect(cond, label):
-    print(("  PASS  " if cond else "  FAIL  ") + label)
-    if not cond:
+
+
+def expect(condition, label, detail=""):
+    mark = "PASS" if condition else "FAIL"
+    suffix = f" - {detail}" if detail else ""
+    print(f"  [{mark}] {label}{suffix}")
+    if not condition:
         FAILURES.append(label)
 
 
-# ---------------------------------------------------------------- run 1
-print("\n=== RUN 1: full pass, no cancellation ===")
-t0 = time.time()
-win = rw.ReindexWindow(root, str(xml), force_full=False, data_dir=SCRATCH_DATA)
+def fingerprint(directory):
+    """Size, mtime, and sha256 for every content file in ``directory``."""
+    record = {}
+    for path in sorted(directory.rglob("*")):
+        if path.is_file():
+            stat = path.stat()
+            record[str(path.relative_to(directory))] = (
+                stat.st_size,
+                stat.st_mtime_ns,
+                hashlib.sha256(path.read_bytes()).hexdigest(),
+            )
+    return record
 
-def poll1():
-    if not win.indexing_thread.is_alive() and win.message_queue.empty():
-        root.quit(); return
-    if time.time() - t0 > 900:
-        print("  TIMED OUT"); root.quit(); return
-    root.after(200, poll1)
 
-root.after(500, poll1)
-root.mainloop()
-for _ in range(10):
-    root.update_idletasks(); root.update()
+def write_xml(path, rows):
+    root = ET.Element("DJ_PLAYLISTS", Version="1.0.0")
+    collection = ET.SubElement(root, "COLLECTION", Entries=str(len(rows)))
+    for row in rows.itertuples():
+        ET.SubElement(
+            collection,
+            "TRACK",
+            TrackID=str(row.track_id),
+            Name=str(row.title),
+            Artist=str(row.artist),
+            AverageBpm=f"{row.bpm:.2f}",
+            Tonality=str(row.key),
+            Album="",
+            Location="file://localhost" + quote(str(row.path_local), safe="/"),
+        )
+    ET.SubElement(root, "PLAYLISTS")
+    ET.ElementTree(root).write(path, encoding="utf-8", xml_declaration=True)
+    return path
 
-log = win.log_text.get("1.0", tk.END)
-elapsed = time.time() - t0
-print(f"--- log ({elapsed:.1f}s) ---")
-print(log.strip())
-print("--- end log ---")
 
-expect("🎵 Cosine Companion - Incremental Indexing" in log, "header line rendered")
-expect("📖 Reading Rekordbox XML..." in log, "XML phase rendered")
-expect(f"   Found {N} tracks in XML" in log, "XML track count rendered")
-expect("🔍 Checking for duplicate tracks..." in log, "duplicates phase rendered")
-expect(f"🎯 Processing {N} new tracks..." in log, "processing header rendered")
-expect(f"[  1/{N}]" in log, "per-track progress line 1 shows i/N")
-expect(f"[{N:3d}/{N}]" in log, f"per-track progress line {N} shows i/N")
-expect(f"✨ Generated {N} new embeddings" in log, "embedding summary rendered")
-expect("✅ Indexing complete!" in log, "completion banner rendered")
-expect(f"   • Total tracks indexed: {N}" in log, "total count rendered")
-expect("✅ Indexing completed successfully!" in log, "window success line appended")
-expect(win.status_label.cget("text") == "✅ Library updated successfully!", "green success status")
-expect(str(win.status_label.cget("fg")) == "green", "status colour green")
-buttons = [w.cget("text") for w in win.button_frame.winfo_children()]
-expect(buttons == ["Done"], f"Cancel replaced by Done (got {buttons})")
-expect(not win.cancel_requested, "cancel flag clear")
-expect((SCRATCH_DATA / "meta.parquet").exists(), "meta.parquet written")
-expect(len(pd.read_parquet(SCRATCH_DATA / "meta.parquet")) == N, "all tracks persisted")
-expect(sys.stdout is not None and hasattr(sys.stdout, "isatty"), "sys.stdout never swapped")
-win.destroy()
+def api_for(data_dir, xml_path):
+    settings = SettingsStore(data_dir / "settings.json")
+    settings.set(XML_PATH_KEY, str(xml_path))
+    return CocoApi(LibrarySession(data_dir), settings)
 
-# ---------------------------------------------------------------- run 2
-print("\n=== RUN 2: cancel partway ===")
-shutil.rmtree(SCRATCH_DATA); SCRATCH_DATA.mkdir()
-M = max(N, 6)
-xml2 = write_xml(TMP / "small2.xml", usable.head(M))
-t0 = time.time()
-win2 = rw.ReindexWindow(root, str(xml2), force_full=False, data_dir=SCRATCH_DATA)
-cancelled_at = {}
 
-def poll2():
-    text = win2.log_text.get("1.0", tk.END)
-    if "[  2/" in text and not win2.cancel_requested:
-        cancelled_at["log"] = text
-        win2.cancel_indexing()
-    if not win2.indexing_thread.is_alive() and win2.message_queue.empty():
-        root.quit(); return
-    if time.time() - t0 > 900:
-        print("  TIMED OUT"); root.quit(); return
-    root.after(150, poll2)
+def read_job(api, job_id):
+    status, body = api.handle("GET", f"/api/jobs/{job_id}", {})
+    assert status == 200, body
+    return body["job"]
 
-root.after(300, poll2)
-root.mainloop()
-for _ in range(10):
-    root.update_idletasks(); root.update()
 
-log2 = win2.log_text.get("1.0", tk.END)
-print(f"--- log ({time.time()-t0:.1f}s) ---")
-print(log2.strip())
-print("--- end log ---")
+def wait_for_terminal(api, job_id, *, on_progress=None):
+    deadline = time.monotonic() + WAIT_SECONDS
+    last_progress = None
+    while time.monotonic() < deadline:
+        job = read_job(api, job_id)
+        progress = job["progress"]
+        marker = (progress["current"], progress["total"], progress["message"])
+        if marker != last_progress:
+            print(f"    {progress['message']}")
+            last_progress = marker
+        if on_progress is not None:
+            on_progress(job)
+        if job["state"] != RUNNING:
+            return job
+        time.sleep(0.05)
+    raise TimeoutError(f"job {job_id} did not finish within {WAIT_SECONDS}s")
 
-# SCOPE OF THIS HARNESS, stated so it is not mistaken for full coverage:
-#
-# * It exercises TIMING A only (inventory Sec 2.13). It cancels after track 2 of
-#   at least 6, which guarantees a later per-track checkpoint, so the pipeline
-#   always raises KeyboardInterrupt here. It cannot observe timing B - a cancel
-#   first set after the LAST checkpoint - which completes the run, writes the
-#   data files and DOES append "Indexing cancelled by user" (defect #17). That
-#   timing is pinned deterministically instead, in
-#   tests/services/test_indexing_service.py and
-#   tests/test_ui_reports_success_for_every_terminal_outcome.py.
-# * The two assertions below check PRESENCE, deliberately. The order of the two
-#   cancellation lines is a race (defect #18): cancel_indexing sets the Event
-#   before it queues its own line, so the worker can queue its line first. An
-#   ordering assertion here would pass almost always and fail in the field.
-expect(win2.cancel_requested, "cancel flag set")
-expect("⚠️ Cancellation requested..." in log2, "cancellation-requested line rendered")
-expect("⚠️ Cancellation detected, stopping..." in log2, "pipeline cancellation line rendered")
-expect("⚠️ Indexing cancelled by user" not in log2,
-       "'cancelled by user' line still ABSENT (KeyboardInterrupt is a BaseException)")
-expect(win2.status_label.cget("text") == "⚠️ Indexing cancelled", "orange cancelled status")
-expect(str(win2.status_label.cget("fg")) == "orange", "status colour orange")
-buttons2 = [w.cget("text") for w in win2.button_frame.winfo_children()]
-expect(buttons2 == ["Close"], f"Cancel replaced by Close (got {buttons2})")
-expect(not (SCRATCH_DATA / "meta.parquet").exists(),
-       "cancelled run persisted NOTHING (work discarded, defect #4)")
-win2.destroy()
-root.destroy()
 
-print(f"\nscratch data dir: {TMP}")
-if FAILURES:
-    print(f"\n{len(FAILURES)} FAILED:")
-    for f in FAILURES: print("  -", f)
-    sys.exit(1)
-print("\nALL REAL-INDEXING CHECKS PASSED")
+def start_reindex(api):
+    status, body = api.handle(
+        "POST", "/api/jobs/reindex", {}, {"force_full": False}
+    )
+    assert status == 202, body
+    return body["job"]["id"]
+
+
+def complete_run(scratch_data, xml_path, track_count):
+    print("\n=== RUN 1: full pass through POST /api/jobs/reindex ===")
+    api = api_for(scratch_data, xml_path)
+    started_at = time.monotonic()
+    terminal = wait_for_terminal(api, start_reindex(api))
+    elapsed = time.monotonic() - started_at
+
+    expect(terminal["state"] == SUCCEEDED, "job succeeded", terminal["state"])
+    result = terminal["result"] or {}
+    expect(result.get("status") == "indexed", "result says indexed", str(result))
+    expect(
+        result.get("total_tracks_indexed") == track_count,
+        "result reports every track",
+        str(result.get("total_tracks_indexed")),
+    )
+    expect(
+        all((scratch_data / name).is_file() for name in INDEX_FILES),
+        "all four index files were committed",
+    )
+    expect(
+        len(pd.read_parquet(scratch_data / "meta.parquet")) == track_count,
+        "all tracks were persisted",
+    )
+    status, library = api.handle("GET", "/api/library", {})
+    expect(status == 200, "library endpoint remains available")
+    expect(
+        library["track_count"] == track_count,
+        "live API session published the new index",
+        str(library["track_count"]),
+    )
+    print(f"    elapsed {elapsed:.1f}s")
+
+
+def cancelled_run(scratch_data, xml_path, track_count):
+    print("\n=== RUN 2: cancel through POST /api/jobs/{id}/cancel ===")
+    api = api_for(scratch_data, xml_path)
+    job_id = start_reindex(api)
+    cancellation = {}
+
+    def cancel_after_second_track(job):
+        progress = job["progress"]
+        if (
+            not cancellation
+            and progress["total"] == track_count
+            and progress["current"] >= 2
+        ):
+            status, body = api.handle(
+                "POST", f"/api/jobs/{job_id}/cancel", {}, {}
+            )
+            cancellation.update(status=status, body=body)
+
+    terminal = wait_for_terminal(
+        api, job_id, on_progress=cancel_after_second_track
+    )
+
+    expect(cancellation.get("status") == 200, "cancel endpoint accepted the stop")
+    cancelled_job = cancellation.get("body", {}).get("job", {})
+    expect(
+        cancelled_job.get("cancel_requested") is True,
+        "cancel signal was delivered",
+    )
+    expect(terminal["state"] == CANCELLED, "job reports cancelled", terminal["state"])
+    expect(terminal["result"] is None, "cancelled job has no partial result")
+    expect(
+        not any((scratch_data / name).exists() for name in INDEX_FILES),
+        "cancelled run committed no index files",
+    )
+
+
+def main():
+    source_data = REPO / "data"
+    if not (source_data / "meta.parquet").is_file():
+        print(f"no real library at {source_data}", file=sys.stderr)
+        return 2
+
+    before = fingerprint(source_data)
+    metadata = pd.read_parquet(source_data / "meta.parquet")
+    usable = metadata[
+        metadata["path_local"].apply(lambda value: bool(value) and os.path.exists(value))
+    ]
+    requested = int(sys.argv[1]) if len(sys.argv) > 1 else 4
+    if requested < 1:
+        print("track count must be positive", file=sys.stderr)
+        return 2
+    if len(usable) < max(requested, 6):
+        print("at least six real audio files are required", file=sys.stderr)
+        return 2
+
+    with tempfile.TemporaryDirectory(prefix="coco-realindex-") as temporary:
+        root = Path(temporary)
+
+        complete_data = root / "complete-data"
+        complete_data.mkdir()
+        complete_xml = write_xml(root / "complete.xml", usable.head(requested))
+        complete_run(complete_data, complete_xml, requested)
+
+        cancel_count = max(requested, 6)
+        cancelled_data = root / "cancelled-data"
+        cancelled_data.mkdir()
+        cancelled_xml = write_xml(root / "cancelled.xml", usable.head(cancel_count))
+        cancelled_run(cancelled_data, cancelled_xml, cancel_count)
+
+    after = fingerprint(source_data)
+    expect(after == before, "source data directory is byte- and mtime-identical")
+
+    if FAILURES:
+        print(f"\n{len(FAILURES)} FAILED:")
+        for failure in FAILURES:
+            print(f"  - {failure}")
+        return 1
+    print("\nALL REAL-INDEXING WEB-JOB CHECKS PASSED")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

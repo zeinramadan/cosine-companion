@@ -20,7 +20,6 @@ typer==0.27.1
 # build resolved on 2026-08-20 instead of speculating about older releases.
 soundfile==0.14.0
 essentia-tensorflow==2.1b6.dev1389
-Pillow==12.3.0
 pyobjc-framework-Cocoa==12.2.2
 pyinstaller==6.22.2
 

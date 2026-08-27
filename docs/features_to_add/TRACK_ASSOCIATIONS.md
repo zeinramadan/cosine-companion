@@ -115,16 +115,16 @@ pipeline falls back to the track `path`.
    - Use existing `search_tracks(query, meta_ix)` for association dialog
    - Add fuzzy matching if needed
 
-4. **Create association dialogs in `src/ui/`**
-   - `AddAssociationDialog` class
-   - Track search functionality
-   - Association creation interface
+4. **Add association API routes in `src/web/api.py`**
+   - List, create, update, and remove associations
+   - Reuse existing track search
+   - Validate every referenced track against one library snapshot
 
 ### Phase 3: UI Integration
-5. **Update main UI (`src/ui/app.py` and mixins)**
-   - Convert suggestions area to tabbed interface using `ttk.Notebook`
-   - Create `MyAssociationsTab` class
-   - Update track selection to show both tabs
+5. **Update the Explore web destination**
+   - Add AI Suggestions / My Associations tabs in the existing component
+   - Add an association modal using the shared modal and palette primitives
+   - Update track selection to load both result sets
 
 6. **Association management features**
    - Add/remove associations
@@ -148,7 +148,8 @@ pipeline falls back to the track `path`.
 ```
 dj-cosine/
 ├── src/core/associations.py     # New: association management
-├── src/ui/                      # Modified: add associations UI
+├── src/web/api.py               # Modified: association routes
+├── src/web/static/js/           # Modified: association tab and modal
 ├── src/config/paths.py          # Modified: add associations path
 ├── src/recommendations/search.py# Reuse search helper
 └── data/
