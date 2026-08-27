@@ -57,6 +57,18 @@ class NumpyCosIndex:
         if norm > 0:
             v = v / norm
 
-        scores = self.matrix @ v
+        # NumPy 2.2.6 with Apple Accelerate raised divide, overflow, and invalid
+        # here on the measured finite 1,532 x 2,560 float32 library even though
+        # every score was finite and bitwise unchanged by this local suppression;
+        # the same data and NumPy version were silent with the tested OpenBLAS
+        # build. Ignore only those measured flags, then validate the result.
+        with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+            scores = self.matrix @ v
+        if not np.isfinite(scores).all():
+            raise RuntimeError(
+                "Recommendation index is corrupt: similarity search produced "
+                "non-finite scores. Rebuild the library index in Settings, then "
+                "try again."
+            )
         ranked_indices = np.argsort(-scores, kind="stable")[:count]
         return [(self.ids[i], float(scores[i])) for i in ranked_indices]
