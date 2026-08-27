@@ -14,12 +14,15 @@ API, and the API is behind the token.
 """
 
 import socket
+from pathlib import Path
 
 import pytest
 
 from webtest_support import StubApi, client_for
 
 from web.server import CocoServer
+
+STATIC = Path(__file__).resolve().parents[2] / "src/web/static"
 
 
 # -- the assets that ship --------------------------------------------------
@@ -96,6 +99,52 @@ def test_static_responses_are_not_cached(client):
     """The assets sit on disk beside the interpreter reading them; a stale
     cached module is pure cost, and it makes `--debug` iteration confusing."""
     assert "no-store" in client.get("/index.html").headers["Cache-Control"]
+
+
+def test_every_tkinter_reference_in_static_assets_is_source_commentary():
+    """Enumerate every occurrence; historical design notes may remain."""
+    occurrences = []
+    user_visible = []
+    for path in sorted(STATIC.rglob("*")):
+        if path.suffix not in {".css", ".html", ".js"}:
+            continue
+        block_comment_end = None
+        for line_number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            comment_columns = set()
+            column = 0
+            while column < len(line):
+                if block_comment_end is not None:
+                    comment_columns.add(column)
+                    if line.startswith(block_comment_end, column):
+                        comment_columns.update(
+                            range(column, column + len(block_comment_end))
+                        )
+                        column += len(block_comment_end)
+                        block_comment_end = None
+                    else:
+                        column += 1
+                elif line.startswith("/*", column):
+                    block_comment_end = "*/"
+                elif line.startswith("<!--", column):
+                    block_comment_end = "-->"
+                elif line.startswith("//", column):
+                    comment_columns.update(range(column, len(line)))
+                    break
+                else:
+                    column += 1
+
+            column = line.find("Tkinter")
+            while column >= 0:
+                item = (str(path.relative_to(STATIC)), line_number, line.strip())
+                occurrences.append(item)
+                if column not in comment_columns:
+                    user_visible.append(item)
+                column = line.find("Tkinter", column + 1)
+
+    assert occurrences, "the historical references this test classifies disappeared"
+    assert user_visible == []
 
 
 # -- path traversal --------------------------------------------------------
