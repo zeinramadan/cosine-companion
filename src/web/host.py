@@ -78,8 +78,8 @@ class _HostApi(CocoApi):
     def _library(self, query):
         status, body = super()._library(query)
         # A successful rebuild reloads this same session. Stop reporting the
-        # startup failure as soon as that happens, including for a valid
-        # zero-track index (``ids == []`` rather than an unloaded ``None``).
+        # startup failure as soon as that happens. ``ids is None`` is the
+        # never-loaded sentinel; ``is_empty`` only says that ``index is None``.
         if self._library_load_error is not None and self.library.snapshot().ids is None:
             body["load_error"] = dict(self._library_load_error)
         return status, body

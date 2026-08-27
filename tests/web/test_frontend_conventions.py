@@ -3532,7 +3532,7 @@ def test_the_export_progress_block_cannot_be_scrolled_out_of_reach():
     needs it most.
 
     §2.6's progress block holds the only Stop button in the application, and
-    the window opens at 1280x840 (``web/host.py:34-36``). The three numbered
+    the window opens at 1280x840 (``web/host.py:36-37``). The three numbered
     sections and the action button fill that on their own, so in the normal
     flow the block appeared BELOW the fold at the moment an export started -
     measured in headless Chrome at 1280x980, a taller window than the app

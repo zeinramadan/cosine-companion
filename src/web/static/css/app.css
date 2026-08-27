@@ -827,7 +827,7 @@ button {
    carries the same treatment for the same reason.
 
    It matters more here than there. The window ships at 1280x840
-   (`web/host.py:34-36`) and the three numbered sections plus the action button
+   (`web/host.py:36-37`) and the three numbered sections plus the action button
    already fill it, so left in the normal flow the progress block and the Stop
    button appeared BELOW the fold at the exact moment an export started: the
    one control a user might urgently want was off screen, and the bar reporting

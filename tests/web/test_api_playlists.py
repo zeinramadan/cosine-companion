@@ -133,7 +133,7 @@ def test_a_schema_2_install_shows_the_import_call_to_action_not_an_error(
     --------------------------
     The repaired request is made against the SAME ``CocoApi`` as the broken
     one, because that is the only version of this that means anything:
-    ``web/host.py:78`` builds one and the window holds it until it closes. An
+    ``web/host.py:123`` builds one and the window holds it until it closes. An
     earlier version of this test built a second API afterwards, which is a
     restarted app - and a restarted app was exactly what the user was being
     made to do.

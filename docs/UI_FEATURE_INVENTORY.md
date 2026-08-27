@@ -2681,7 +2681,7 @@ which is a bar that moves rather than a slideshow, and 24 polls at the measured
 0.46 ms is 11 ms of server time for the whole export.
 
 *The progress block had to be pinned to the bottom of the scrollport.* Found in
-the browser, not in a test. The window opens at 1280×840 (`web/host.py:34-36`)
+the browser, not in a test. The window opens at 1280×840 (`web/host.py:36-37`)
 and the three numbered sections plus the action button fill it, so in the normal
 flow the progress block and the Stop button rendered BELOW the fold at the exact
 moment an export started — measured in headless Chrome at 1280×980, a taller
