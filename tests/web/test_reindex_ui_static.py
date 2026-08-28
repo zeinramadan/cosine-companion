@@ -96,6 +96,52 @@ def _button_labels():
     return parser.labels
 
 
+def _mounted_component_modules():
+    """``component module -> called exports`` derived from ``main.js``."""
+    body = _js(MAIN_JS)
+    component_targets = set()
+    for statement in re.findall(
+        r"(?ms)^\s*import\b.*?;[ \t]*(?:\n|$)", body
+    ):
+        targets = re.findall(r"['\"]([^'\"]+)['\"]", statement)
+        assert len(targets) == 1, f"could not read main.js import: {statement.strip()}"
+        if targets[0].startswith("./components/"):
+            component_targets.add(targets[0])
+
+    assert component_targets, "main.js imports no components"
+
+    parsed_targets = set()
+    mounted = {}
+    for names, target in re.findall(
+        r"import\s*\{([^}]*)\}\s*from\s*['\"]([^'\"]+)['\"]", body
+    ):
+        if target not in component_targets:
+            continue
+        parsed_targets.add(target)
+        module = (JS / target).resolve()
+        assert module.is_relative_to(JS / "components"), (
+            f"component imported outside components/: {target}"
+        )
+        assert module.is_file(), f"component does not exist: {target}"
+
+        for name in names.split(","):
+            binding = re.fullmatch(
+                r"\s*([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?\s*",
+                name,
+            )
+            assert binding is not None, f"could not read {target} import: {name!r}"
+            exported, local = binding.group(1), binding.group(2) or binding.group(1)
+            if re.search(rf"\b{re.escape(local)}\s*\(", body):
+                mounted.setdefault(module, set()).add(exported)
+
+    assert parsed_targets == component_targets, (
+        "main.js has a component import the structural reader cannot follow: "
+        f"all={sorted(component_targets)}, parsed={sorted(parsed_targets)}"
+    )
+    assert mounted, "main.js calls no imported component; the call reader stopped matching"
+    return mounted
+
+
 def _destination_components():
     """``destination -> mounted component`` derived from HTML and main.js."""
     catalog = _ButtonLabels()
@@ -108,28 +154,8 @@ def _destination_components():
         f"controls={sorted(catalog.navigation)}, sections={sorted(catalog.sections)}"
     )
 
-    imported = []
-    for names, target in re.findall(
-        r"import\s*\{([^}]*)\}\s*from\s*['\"]([^'\"]+)['\"]", _js(MAIN_JS)
-    ):
-        mounts = [
-            name.strip()
-            for name in names.split(",")
-            if name.strip().startswith("mount")
-        ]
-        if not mounts:
-            continue
-        module = (JS / target).resolve()
-        assert module.is_relative_to(JS / "components"), (
-            f"destination mount imported outside components/: {target}"
-        )
-        assert module.is_file(), f"mounted component does not exist: {target}"
-        imported.append((mounts, module))
-
-    assert imported, "main.js imports no component mount; the import reader stopped matching"
-
     components = {}
-    for mounts, module in imported:
+    for module, called_exports in _mounted_component_modules().items():
         body = _js(module)
         roots = set(
             re.findall(
@@ -149,10 +175,13 @@ def _destination_components():
             f"{components[destination].name}, {module.name}"
         )
         exported = [
-            mount for mount in mounts if re.search(rf"\bexport\s+function\s+{mount}\s*\(", body)
+            mount
+            for mount in called_exports
+            if re.search(rf"\bexport\s+function\s+{re.escape(mount)}\s*\(", body)
         ]
         assert exported, (
-            f"{module.name} names view-{destination} but exports none of {mounts}"
+            f"{module.name} names view-{destination} but exports none of "
+            f"{sorted(called_exports)}"
         )
         components[destination] = module
 
@@ -203,6 +232,39 @@ def test_every_destination_renders_the_saved_index_error_instead_of_an_empty_sta
             offenders[destination] = {"module": module.name, "missing": missing}
 
     assert offenders == {}, f"destinations can render a false empty state: {offenders}"
+
+
+LIBRARY_TRACK_COUNT = re.compile(r"\btrack_count\b")
+LIBRARY_LOAD_ERROR = re.compile(r"\bload_error\b")
+
+
+def test_every_mounted_track_count_consumer_also_consults_load_error():
+    """A mounted surface may not treat an unloadable index as zero tracks.
+
+    The surface set is derived from component imports that ``main.js`` actually
+    calls. The guarded class is then derived by the canonical library-summary
+    field it consumes, ``track_count``; a newly mounted count surface joins
+    without adding its filename here. Requiring the sibling ``load_error``
+    field is deliberately spelling-flexible so destructuring, optional chaining
+    and other legitimate local refactors remain possible.
+
+    This is a source convention, not data-flow analysis: it cannot prove that
+    the two reads influence the same output, and it does not cover a count
+    fetched from another endpoint or represented by a future field. The real
+    sidebar module's three-state behavioural test proves today's control flow.
+    """
+    consumers = {}
+    offenders = {}
+    for module in sorted(_mounted_component_modules()):
+        body = _js(module)
+        if not LIBRARY_TRACK_COUNT.search(body):
+            continue
+        consumers[module.name] = module
+        if not LIBRARY_LOAD_ERROR.search(body):
+            offenders[module.name] = "reads track_count without load_error"
+
+    assert consumers, "no mounted track_count consumer; the structural reader stopped matching"
+    assert offenders == {}, f"mounted count surfaces can render a false zero: {offenders}"
 
 
 def _first_run_guidance():

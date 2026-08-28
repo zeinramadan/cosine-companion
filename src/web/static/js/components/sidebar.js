@@ -45,6 +45,10 @@ export function mountSidebar({ store }) {
 
     title.textContent = VIEW_TITLES[active] || 'Cosine Companion';
 
+    if (state.library && state.library.load_error) {
+      count.textContent = '—';
+      return;
+    }
     count.textContent =
       state.library && Number.isFinite(state.library.track_count)
         ? state.library.track_count.toLocaleString()
