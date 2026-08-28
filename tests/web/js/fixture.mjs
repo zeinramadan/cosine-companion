@@ -51,6 +51,8 @@ export function buildExploreDom() {
 export function buildSettingsDom() {
   const app = withId(new Node('div'), 'app');
   const root = withId(new Node('section'), 'view-settings');
+  const loadError = withId(new Node('div'), 'settings-load-error');
+  loadError.hidden = true;
   const form = withId(new Node('form'), 'settings-form');
   const input = withId(new Node('input'), 'settings-xml-path');
   const submit = withId(new Node('button'), 'settings-submit');
@@ -98,7 +100,7 @@ export function buildSettingsDom() {
   outcome.hidden = true;
   outcome.className = 'settings__reindex-outcome';
   reindex.append(actions, progress, outcome);
-  root.append(form, reindex);
+  root.append(loadError, form, reindex);
   app.append(root);
 
   const modalLayer = withId(new Node('div'), 'modal-layer');
@@ -106,6 +108,7 @@ export function buildSettingsDom() {
   return {
     app,
     root,
+    loadError,
     modalLayer,
     form,
     input,
@@ -146,6 +149,9 @@ export function buildSetCreatorDom() {
 /** Build the Library destination's fixed controls. Mirrors index.html. */
 export function buildLibraryDom() {
   const root = withId(new Node('section'), 'view-library');
+  const loadError = withId(new Node('div'), 'library-load-error');
+  loadError.hidden = true;
+  const content = withId(new Node('div'), 'library-content');
   const input = withId(new Node('input'), 'library-search');
   const clear = withId(new Node('button'), 'library-clear');
   const refresh = withId(new Node('button'), 'library-refresh');
@@ -155,9 +161,22 @@ export function buildLibraryDom() {
   const status = withId(new Node('p'), 'library-status');
   const list = withId(new Node('ul'), 'library-tracks');
   list.scrollTop = 0;
-  root.append(input, clear, refresh, remove, setCurrent, stats, status, list);
+  content.append(input, clear, refresh, remove, setCurrent, stats, status, list);
+  root.append(loadError, content);
   document.body.append(root);
-  return { root, input, clear, refresh, remove, setCurrent, stats, status, list };
+  return {
+    root,
+    loadError,
+    content,
+    input,
+    clear,
+    refresh,
+    remove,
+    setCurrent,
+    stats,
+    status,
+    list,
+  };
 }
 
 /** Build the Export destination's mount point, the shell and the modal layer.

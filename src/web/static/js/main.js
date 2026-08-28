@@ -60,7 +60,7 @@ function refreshLibrarySummary() {
 }
 
 mountSidebar({ store });
-mountSettings({ refreshLibrary: refreshLibrarySummary });
+mountSettings({ store, refreshLibrary: refreshLibrarySummary });
 mountDrawer({ store });
 // Set Creator keeps its own working state (anchors, length, the generated set);
 // the store tells it which destination is showing and whether the library
