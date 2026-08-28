@@ -29,6 +29,7 @@
 
 import { api, ApiError } from '../api.js';
 import { copyToClipboard } from '../clipboard.js';
+import { firstRunGuidance } from './library-guidance.js';
 import {
   bpm as formatBpm,
   displayName,
@@ -439,9 +440,7 @@ export function mountExplore({ store, onPickSeed, onShowDetail }) {
       return stateBlock({
         variant: 'error',
         title: 'No index yet',
-        body:
-          'There is no cosine index to search. Index a Rekordbox collection ' +
-          'first — Settings ▸ Update Library in the Tkinter app does this today.',
+        body: firstRunGuidance('There is no cosine index to search.'),
       });
     }
     if (error.code === 'unknown_track') {
@@ -459,6 +458,13 @@ export function mountExplore({ store, onPickSeed, onShowDetail }) {
   }
 
   function renderEmptyPrompt(state) {
+    if (state.library && state.library.load_error) {
+      return stateBlock({
+        variant: 'error',
+        title: 'Library index needs rebuilding',
+        body: state.library.load_error.message,
+      });
+    }
     if (state.libraryError) {
       return stateBlock({
         variant: 'error',
@@ -469,9 +475,7 @@ export function mountExplore({ store, onPickSeed, onShowDetail }) {
     if (state.library && state.library.is_empty) {
       return stateBlock({
         title: 'No index yet',
-        body:
-          'Index a Rekordbox collection first — Settings ▸ Update Library in ' +
-          'the Tkinter app does this today.',
+        body: firstRunGuidance('There is no cosine index to search.'),
       });
     }
 

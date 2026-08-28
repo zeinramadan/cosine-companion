@@ -17,11 +17,12 @@ Importing this module opens nothing. A window is created only inside
 """
 
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import webview
 
 from config import DATA
+from core.index_store import INDEX_MANIFEST_FILENAME, legacy_index_file_paths
 from services.explore_session import ExploreSession
 from services.library_session import LibrarySession
 from services.playlist_service import PlaylistService
@@ -40,25 +41,69 @@ WINDOW_MIN_SIZE = (960, 640)
 #: ends must agree about the configured XML path.
 SETTINGS_FILENAME = "settings.json"
 
+INDEX_LOAD_ERROR_CODE = "index_load_failed"
+_INDEX_REBUILD_ROUTE = (
+    "Open Settings, save the path to a Rekordbox XML export, then choose "
+    "Rebuild All Embeddings."
+)
 
-def _load_library(data_dir: Path) -> LibrarySession:
-    """Load the library, or return an unloaded session if it cannot be read.
+
+def _has_index_artifacts(data_dir: Path) -> bool:
+    """Whether ``data_dir`` contains a committed or partial index file set."""
+    paths = (*legacy_index_file_paths(data_dir), data_dir / INDEX_MANIFEST_FILENAME)
+    return any(path.exists() for path in paths)
+
+
+def _index_load_error(error: Exception) -> Dict[str, str]:
+    """Describe an unusable saved index without exposing exception details."""
+    if isinstance(error, ValueError):
+        reason = "The saved library index is inconsistent and could not be loaded."
+    elif isinstance(error, FileNotFoundError):
+        reason = "The saved library index is incomplete and could not be loaded."
+    else:
+        reason = "The saved library index could not be read."
+    return {
+        "code": INDEX_LOAD_ERROR_CODE,
+        "message": f"{reason} {_INDEX_REBUILD_ROUTE}",
+    }
+
+
+class _HostApi(CocoApi):
+    """Add the host's startup diagnosis to the library summary."""
+
+    def __init__(self, *args, library_load_error=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._library_load_error = library_load_error
+
+    def _library(self, query):
+        status, body = super()._library(query)
+        # A successful rebuild reloads this same session. Stop reporting the
+        # startup failure as soon as that happens. ``ids is None`` is the
+        # never-loaded sentinel; ``is_empty`` only says that ``index is None``.
+        if self._library_load_error is not None and self.library.snapshot().ids is None:
+            body["load_error"] = dict(self._library_load_error)
+        return status, body
+
+
+def _load_library(
+    data_dir: Path,
+) -> Tuple[LibrarySession, Optional[Dict[str, str]]]:
+    """Load the library and distinguish first run from an unusable saved index.
 
     The window has to open. ``LibrarySession.load`` raises FileNotFoundError
-    when the four index files are absent and ValueError when the loader's
-    validation finds them inconsistent - and both are exactly the moments a
-    user needs to be told something, which a traceback before the first frame
-    does not do. An unloaded session reports ``is_empty``, which the frontend
-    renders as "No index yet".
-
-    This is not a silent repair: the reason is printed, and the Tkinter app's
-    own "Inconsistent Index Data" dialog (tests/test_app.py) is unchanged.
+    when no index exists and ValueError when validation finds existing files
+    inconsistent. Both cases return an unloaded session so the window opens,
+    but only the genuine no-artifact case is first-run. Every other read
+    failure is returned as a sanitized diagnosis for the web UI; the raw
+    exception remains terminal-only developer output.
     """
     try:
-        return LibrarySession.load(data_dir)
+        return LibrarySession.load(data_dir), None
     except Exception as error:  # noqa: BLE001 - any read failure ends the same way
+        if isinstance(error, FileNotFoundError) and not _has_index_artifacts(data_dir):
+            return LibrarySession(data_dir), None
         print(f"Could not load the library from {data_dir}: {error}", flush=True)
-        return LibrarySession(data_dir)
+        return LibrarySession(data_dir), _index_load_error(error)
 
 
 def build_api(data_dir: Optional[Path] = None) -> Tuple[CocoApi, LibrarySession]:
@@ -68,15 +113,19 @@ def build_api(data_dir: Optional[Path] = None) -> Tuple[CocoApi, LibrarySession]
     Returns the API and the library, because callers want to inspect both.
     """
     resolved = Path(data_dir) if data_dir is not None else DATA
-    library = _load_library(resolved)
+    library, library_load_error = _load_library(resolved)
     settings = SettingsStore(resolved / SETTINGS_FILENAME)
     # Passed explicitly rather than left to CocoApi's default so the wiring is
     # visible here with the rest of it. Constructing it reads nothing; the
     # tables are opened on the first drawer that asks for them, and their
     # absence is a state the drawer renders rather than an error.
     playlists = PlaylistService(resolved)
-    api = CocoApi(
-        library, settings, explore=ExploreSession(library), playlists=playlists
+    api = _HostApi(
+        library,
+        settings,
+        explore=ExploreSession(library),
+        playlists=playlists,
+        library_load_error=library_load_error,
     )
     return api, library
 

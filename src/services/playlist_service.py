@@ -36,7 +36,7 @@ than an error:
 
 THE WRITER IS ANOTHER PROCESS, SO THE CACHE IS INVALIDATED FROM DISK
 --------------------------------------------------------------------
-``web/host.py:77`` builds one of these inside ``build_api`` and the window
+``web/host.py:122`` builds one of these inside ``build_api`` and the window
 holds it until it closes, while ``import-playlists`` - the command this service
 tells the user to run - is a different process entirely. Nothing inside this
 process is notified when that command commits, so an index cached behind a
@@ -143,7 +143,7 @@ class _Generation:
 
     WHY THE THREE OF THEM ARE ONE OBJECT
     ------------------------------------
-    ``web/server.py`` is a ``ThreadingHTTPServer`` and ``web/host.py:77``
+    ``web/server.py`` is a ``ThreadingHTTPServer`` and ``web/host.py:122``
     builds ONE ``PlaylistService`` for the life of the window, so every drawer
     open is a request THREAD calling into the same instance. Held as three
     attributes, a generation can be observed half-swapped: a reader that has

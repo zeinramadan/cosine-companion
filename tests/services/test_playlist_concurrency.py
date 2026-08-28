@@ -848,7 +848,7 @@ def test_a_reader_looping_across_real_imports_never_observes_a_blend(tmp_path):
 # THE LONG-LIVED READER - one service, held for the life of the window
 # ---------------------------------------------------------------------------
 #
-# ``web/host.py:77`` builds ONE ``PlaylistService`` inside ``build_api`` and the
+# ``web/host.py:122`` builds ONE ``PlaylistService`` inside ``build_api`` and the
 # window holds it until it closes, so every test above that builds a fresh
 # service after an import is measuring a process that has just started. The
 # workflow this feature is for does the opposite: the drawer names the command,
@@ -946,7 +946,7 @@ def test_the_staleness_prompt_clears_when_the_user_runs_the_command_it_names(
 # ONE SERVICE, MANY REQUEST THREADS
 # ---------------------------------------------------------------------------
 #
-# ``web/server.py`` serves on a ``ThreadingHTTPServer`` and ``web/host.py:77``
+# ``web/server.py`` serves on a ``ThreadingHTTPServer`` and ``web/host.py:122``
 # builds ONE ``PlaylistService`` for the life of the window, so every drawer
 # open is a request THREAD calling into the SAME instance. Two of them can be
 # inside ``lookup`` at once, and an import committed by the CLI can land
