@@ -197,6 +197,42 @@ export function buildExportDom() {
   return { app, root, modalLayer };
 }
 
+/** Build the always-mounted sidebar and its destination targets. Mirrors index.html. */
+export function buildSidebarDom() {
+  const app = withId(new Node('div'), 'app');
+  const nav = withId(new Node('nav'), 'nav');
+  const destinations = ['explore', 'set-creator', 'library', 'export', 'settings'];
+
+  for (const destination of destinations) {
+    const item = new Node('button');
+    item.setAttribute('data-destination', destination);
+    item.dataset.destination = destination;
+    nav.append(item);
+  }
+
+  const footer = new Node('p');
+  const count = withId(new Node('span'), 'library-count');
+  count.textContent = '—';
+  const suffix = new Node('span');
+  suffix.textContent = ' tracks indexed';
+  footer.append(count, suffix);
+  nav.append(footer);
+
+  const main = new Node('main');
+  const title = withId(new Node('h1'), 'view-title');
+  main.append(title);
+  const views = {};
+  for (const destination of destinations) {
+    const view = withId(new Node('section'), `view-${destination}`);
+    views[destination] = view;
+    main.append(view);
+  }
+
+  app.append(nav, main);
+  document.body.append(app);
+  return { app, nav, title, count, footer, views };
+}
+
 /** Empty the shim's document between mounts. */
 export function resetDom() {
   document.body.replaceChildren();
