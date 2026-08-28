@@ -3905,6 +3905,22 @@ def test_every_interactive_control_is_a_real_element():
         assert re.search(r'type="(?:button|submit)"', match.group(0)), match.group(0)
 
 
+def test_deleted_track_restore_copy_requires_reindex_before_library_recovery():
+    """Restoring changes only the exclusion file, so both UI surfaces say so."""
+    markup = " ".join(html(INDEX_HTML).split())
+    component = js(JS / "components" / "library.js")
+
+    assert (
+        "Restoring removes a track from the exclusion list only. It does not put "
+        "the track back in the indexed library; run Index New Tracks after restoring."
+        in markup
+    )
+    assert "This only removes the deletion exclusion." in component
+    assert "will not return to " in component
+    assert "until you run Index New Tracks." in component
+    assert "Run Index New Tracks to add ${object} back to the library." in component
+
+
 def test_every_script_file_is_reachable_from_the_entry_module():
     """A no-build frontend has no bundler to tell you a file is orphaned."""
     reachable = set()

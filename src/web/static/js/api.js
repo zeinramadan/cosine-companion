@@ -92,8 +92,14 @@ export const api = {
   health: () => request('/api/health'),
   library: () => request('/api/library'),
   libraryTracks: () => request('/api/library/tracks'),
+  deletedLibraryTracks: () => request('/api/library/deleted-tracks'),
   deleteLibraryTracks: (trackIds) =>
     request('/api/library/tracks/delete', {}, {
+      method: 'POST',
+      body: { track_ids: trackIds.join('\n') },
+    }),
+  restoreDeletedLibraryTracks: (trackIds) =>
+    request('/api/library/deleted-tracks/restore', {}, {
       method: 'POST',
       body: { track_ids: trackIds.join('\n') },
     }),

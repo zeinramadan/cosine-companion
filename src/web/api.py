@@ -511,6 +511,22 @@ def _body_fields(body: Any, allowed: frozenset) -> Dict[str, Any]:
     return body
 
 
+def _track_ids_body(body: Any) -> List[str]:
+    """A non-empty, duplicate-free newline-delimited track-id selection."""
+    if not isinstance(body, dict) or set(body) != {"track_ids"}:
+        raise bad_request("The JSON body must contain exactly one field: track_ids.")
+
+    encoded_ids = body["track_ids"]
+    if not isinstance(encoded_ids, str) or not encoded_ids:
+        raise bad_request("track_ids must be a non-empty newline-delimited string.")
+    track_ids = encoded_ids.split("\n")
+    if any(not track_id for track_id in track_ids):
+        raise bad_request("track_ids must not contain blank track IDs.")
+    if len(set(track_ids)) != len(track_ids):
+        raise bad_request("track_ids must not contain duplicates.")
+    return track_ids
+
+
 def _path_field(fields: Dict[str, Any], name: str) -> str:
     """A required, non-blank, length-capped filesystem path from a body.
 
@@ -756,6 +772,16 @@ class CocoApi:
         ("GET", re.compile(r"^/api/library$"), "_library"),
         ("GET", re.compile(r"^/api/library/tracks$"), "_library_tracks"),
         (
+            "GET",
+            re.compile(r"^/api/library/deleted-tracks$"),
+            "_deleted_library_tracks",
+        ),
+        (
+            "POST",
+            re.compile(r"^/api/library/deleted-tracks/restore$"),
+            "_restore_deleted_library_tracks",
+        ),
+        (
             "POST",
             re.compile(r"^/api/library/tracks/delete$"),
             "_delete_library_tracks",
@@ -860,19 +886,7 @@ class CocoApi:
         still fits the server's fixed 16 KiB request-body ceiling; a JSON array
         of the same IDs does not.
         """
-        if not isinstance(body, dict) or set(body) != {"track_ids"}:
-            raise bad_request(
-                "The JSON body must contain exactly one field: track_ids."
-            )
-
-        encoded_ids = body["track_ids"]
-        if not isinstance(encoded_ids, str) or not encoded_ids:
-            raise bad_request("track_ids must be a non-empty newline-delimited string.")
-        track_ids = encoded_ids.split("\n")
-        if any(not track_id for track_id in track_ids):
-            raise bad_request("track_ids must not contain blank track IDs.")
-        if len(set(track_ids)) != len(track_ids):
-            raise bad_request("track_ids must not contain duplicates.")
+        track_ids = _track_ids_body(body)
 
         # Serialise validation with the mutation so two simultaneous requests
         # cannot both validate one ID and let the second silently delete zero.
@@ -889,6 +903,42 @@ class CocoApi:
                         "track_count": self.library.track_count,
                         "is_empty": self.library.is_empty,
                     },
+                }
+            )
+
+    def _deleted_library_tracks(self, query):
+        """Deleted rows discoverable by id and their preserved metadata."""
+        deleted = self.library.deleted_tracks()
+        tracks = [
+            {
+                "track_id": str(track_id),
+                "artist": metadata.get("artist", ""),
+                "title": metadata.get("title", ""),
+            }
+            for track_id, metadata in deleted.items()
+        ]
+        return 200, _jsonable({"tracks": tracks, "total": len(tracks)})
+
+    def _restore_deleted_library_tracks(self, query, body):
+        """Remove exclusions; reindexing is still required to rebuild rows."""
+        track_ids = _track_ids_body(body)
+
+        with self._library_write_lock:
+            deleted = self.library.deleted_tracks()
+            for track_id in track_ids:
+                if track_id not in deleted:
+                    raise ApiError(
+                        404,
+                        "unknown_deleted_track",
+                        f"No deleted track with id {track_id!r}.",
+                    )
+            removed = self.library.restore_deleted_tracks(track_ids)
+            return 200, _jsonable(
+                {
+                    "removed_from_deleted": removed,
+                    "track_ids": track_ids,
+                    "remaining": len(deleted) - removed,
+                    "reindex_required": True,
                 }
             )
 
