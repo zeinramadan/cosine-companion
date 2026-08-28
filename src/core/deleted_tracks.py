@@ -105,35 +105,20 @@ def add_deleted_tracks_with_metadata(
     save_deleted_tracks_with_info(existing_deleted, path=path)
 
 
-def add_deleted_tracks(track_ids: Set[str]) -> None:
-    """
-    Add track IDs to the deleted tracks list (without metadata).
-    
-    Args:
-        track_ids: Set of track IDs to mark as deleted
-    """
-    existing_deleted = load_deleted_tracks_with_info()
-    
-    for track_id in track_ids:
-        if track_id not in existing_deleted:
-            existing_deleted[track_id] = {"artist": "Unknown", "title": track_id}
-    
-    save_deleted_tracks_with_info(existing_deleted)
-
-
-def remove_from_deleted_tracks(track_ids: Set[str]) -> None:
+def remove_from_deleted_tracks(track_ids: Set[str], path=None) -> None:
     """
     Remove track IDs from the deleted tracks list (if user wants to re-add them).
     
     Args:
         track_ids: Set of track IDs to remove from deleted list
+        path: Explicit deleted-tracks file for the library being restored
     """
-    existing_deleted = load_deleted_tracks_with_info()
+    existing_deleted = load_deleted_tracks_with_info(path=path)
     
     for track_id in track_ids:
         existing_deleted.pop(track_id, None)
     
-    save_deleted_tracks_with_info(existing_deleted)
+    save_deleted_tracks_with_info(existing_deleted, path=path)
 
 
 def filter_deleted_tracks(
