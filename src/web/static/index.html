@@ -62,7 +62,8 @@
         <section class="view" id="view-set-creator" hidden aria-label="Set Creator"></section>
 
         <section class="view" id="view-library" hidden aria-label="Library">
-          <div class="library">
+          <div id="library-load-error" hidden></div>
+          <div class="library" id="library-content">
             <div class="library__search">
               <label class="library__label" for="library-search">Search:</label>
               <input
@@ -99,6 +100,7 @@
 
         <section class="view" id="view-settings" hidden aria-label="Settings">
           <div class="settings">
+            <div id="settings-load-error" hidden></div>
             <div class="settings__intro">
               <p class="eyebrow">Library configuration</p>
               <h2 class="settings__title">Rekordbox XML</h2>

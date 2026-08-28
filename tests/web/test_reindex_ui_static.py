@@ -138,7 +138,7 @@ def test_reindex_stop_remains_visible_at_a_resolvable_sticky_offset():
 def test_the_production_boot_wires_reindex_success_to_the_shared_library_summary():
     body = MAIN_JS.read_text(encoding="utf-8")
 
-    assert "mountSettings({ refreshLibrary: refreshLibrarySummary });" in body
+    assert "mountSettings({ store, refreshLibrary: refreshLibrarySummary });" in body
     assert ".library()" in body
     assert "store.setState({ library, libraryError: null });" in body
     assert "return false;" in body

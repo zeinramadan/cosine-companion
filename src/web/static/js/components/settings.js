@@ -21,7 +21,7 @@ import {
   progressPercent,
   remainingSeconds,
 } from './export.js';
-import { element } from '../format.js';
+import { element, stateBlock } from '../format.js';
 import { askyesno, showerror, showinfo, showwarning } from './message-box.js';
 
 function browserRefreshMessage(refreshState) {
@@ -100,11 +100,14 @@ function completedBody(document_, refreshState) {
 }
 
 export function mountSettings({
+  store = null,
   pollIntervalMs = POLL_INTERVAL_MS,
   retryIntervalMs = POLL_RETRY_MS,
   now = () => Date.now(),
   refreshLibrary = async () => true,
 } = {}) {
+  const root = document.getElementById('view-settings');
+  const loadError = root.querySelector('#settings-load-error');
   const form = document.getElementById('settings-form');
   const input = document.getElementById('settings-xml-path');
   const submit = document.getElementById('settings-submit');
@@ -133,6 +136,23 @@ export function mountSettings({
    * late poll cannot raise it twice - and so a job that finished before this
    * page existed never raises one at all. */
   const announced = new Set();
+
+  function renderLibraryLoadError() {
+    const state = store ? store.getState() : {};
+    if (state.library && state.library.load_error) {
+      loadError.hidden = false;
+      loadError.replaceChildren(
+        stateBlock({
+          variant: 'error',
+          title: 'Library index needs rebuilding',
+          body: state.library.load_error.message,
+        }),
+      );
+      return;
+    }
+    loadError.hidden = true;
+    loadError.replaceChildren();
+  }
 
   function report(message, state = 'idle') {
     status.textContent = message;
@@ -484,6 +504,8 @@ export function mountSettings({
   fullBtn.addEventListener('click', fullClicked);
   stopBtn.addEventListener('click', stopClicked);
 
+  const unsubscribe = store ? store.subscribe(renderLibraryLoadError) : () => {};
+  renderLibraryLoadError();
   load();
   reattach();
 
@@ -492,6 +514,7 @@ export function mountSettings({
     dispose() {
       watching = null;
       window.clearTimeout(timer);
+      unsubscribe();
     },
   };
 }

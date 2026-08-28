@@ -148,6 +148,49 @@ async function mount({ destination = 'export' } = {}) {
   return { dom, store, view: mounted };
 }
 
+test('a broken saved index replaces Export’s empty-selection invitation', async () => {
+  await closeDialogs();
+  if (mounted) {
+    mounted.dispose();
+    mounted = null;
+  }
+  resetDom();
+  fetches = installFetch();
+  const dom = buildExportDom();
+  const message =
+    'The saved library index is inconsistent and could not be loaded. ' +
+    'Open Settings, save the path to a Rekordbox XML export, then choose ' +
+    'Rebuild All Embeddings.';
+  const store = createStore({
+    destination: 'export',
+    library: {
+      track_count: 0,
+      is_empty: true,
+      load_error: { code: 'index_load_failed', message },
+    },
+    libraryError: null,
+  });
+  mounted = mountExport({
+    store,
+    pollIntervalMs: 1,
+    retryIntervalMs: 1,
+    now: () => clock,
+  });
+  await settle();
+
+  assert.deepEqual(
+    fetches.requests.map((request) => request.path),
+    ['/api/jobs'],
+    'Export fetched a broken index as an empty track list',
+  );
+  assert.deepEqual(textsByClass(dom.root, 'state__title'), [
+    'Library index needs rebuilding',
+  ]);
+  assert.deepEqual(textsByClass(dom.root, 'state__body'), [message]);
+  assert.deepEqual(textsByClass(dom.root, 'exportv__selected-empty'), []);
+  assert.deepEqual(textsByClass(dom.root, 'exportv__info'), []);
+});
+
 /** Mount, answer the two requests a mount makes, and be ready to export. */
 async function ready(options = {}) {
   const context = await mount(options);

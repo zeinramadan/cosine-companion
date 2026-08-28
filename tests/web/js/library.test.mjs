@@ -79,6 +79,39 @@ test('Library renders the exact sorted rows and the untrimmed four-field filter'
   assert.equal(view.stats.textContent, '3 tracks');
 });
 
+test('Library replaces its false zero state with the saved-index diagnosis', async () => {
+  const fetches = installFetch();
+  const dom = buildLibraryDom();
+  const { createStore } = await import('../../../src/web/static/js/store.js');
+  const { mountLibrary } = await import(
+    '../../../src/web/static/js/components/library.js'
+  );
+  const message =
+    'The saved library index is inconsistent and could not be loaded. ' +
+    'Open Settings, save the path to a Rekordbox XML export, then choose ' +
+    'Rebuild All Embeddings.';
+  const store = createStore({
+    destination: 'library',
+    library: {
+      track_count: 0,
+      is_empty: true,
+      load_error: { code: 'index_load_failed', message },
+    },
+    seed: null,
+  });
+
+  mountLibrary({ store, onSetCurrent() {}, onClearCurrent() {} });
+  await settle();
+
+  assert.deepEqual(fetches.requests, [], 'the broken index was fetched as an empty table');
+  assert.equal(dom.content.hidden, true, 'the 0 tracks count is still visible');
+  assert.equal(dom.loadError.hidden, false);
+  assert.deepEqual(
+    dom.loadError.children[0].children.map((child) => child.textContent),
+    ['Library index needs rebuilding', message],
+  );
+});
+
 test('Set as Current takes the first selected row without changing history itself', async () => {
   const view = await mounted();
   const alerts = [];

@@ -20,6 +20,7 @@ import {
 installGlobals();
 
 const { openModalCount } = await import('../../../src/web/static/js/modal.js');
+const { createStore } = await import('../../../src/web/static/js/store.js');
 const {
   cancelledMessage,
   completionMessage,
@@ -78,19 +79,21 @@ async function closeDialogs() {
   assert.equal(openModalCount(), 0, 'a dialog survived the drain');
 }
 
-async function mount({ refreshLibrary = async () => true } = {}) {
+async function mount({ refreshLibrary = async () => true, library = null } = {}) {
   await closeDialogs();
   if (mounted) mounted.dispose();
   resetDom();
   fetches = installFetch();
   const dom = buildSettingsDom();
+  const store = createStore({ destination: 'settings', library, libraryError: null });
   mounted = mountSettings({
+    store,
     pollIntervalMs: 1,
     retryIntervalMs: 1,
     now: () => clock,
     refreshLibrary,
   });
-  return { dom, view: mounted };
+  return { dom, store, view: mounted };
 }
 
 async function ready(options = {}) {
@@ -167,6 +170,28 @@ test('the Settings destination loads and persists the edited XML path', async ()
   assert.equal(dom.status.dataset.state, 'success');
   assert.equal(dom.input.disabled, false);
   assert.equal(dom.submit.disabled, false);
+});
+
+test('Settings explains a broken saved index beside the controls that fix it', async () => {
+  const message =
+    'The saved library index is inconsistent and could not be loaded. ' +
+    'Open Settings, save the path to a Rekordbox XML export, then choose ' +
+    'Rebuild All Embeddings.';
+  const { dom } = await mount({
+    library: {
+      track_count: 0,
+      is_empty: true,
+      load_error: { code: 'index_load_failed', message },
+    },
+  });
+
+  assert.equal(dom.loadError.hidden, false);
+  assert.deepEqual(textsByClass(dom.loadError, 'state__title'), [
+    'Library index needs rebuilding',
+  ]);
+  assert.deepEqual(textsByClass(dom.loadError, 'state__body'), [message]);
+  assert.equal(dom.incremental.textContent, 'Index New Tracks');
+  assert.equal(dom.full.textContent, 'Rebuild All Embeddings');
 });
 
 test('failed and blank Settings saves retain the existing form behaviour', async () => {

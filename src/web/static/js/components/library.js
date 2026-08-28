@@ -7,7 +7,7 @@
  */
 
 import { api } from '../api.js';
-import { element } from '../format.js';
+import { element, stateBlock } from '../format.js';
 
 
 export function sortLibraryTracks(tracks) {
@@ -45,6 +45,9 @@ export function libraryRowText(track) {
 }
 
 export function mountLibrary({ store, onSetCurrent, onClearCurrent }) {
+  const root = document.getElementById('view-library');
+  const content = root.querySelector('#library-content');
+  const loadError = root.querySelector('#library-load-error');
   const input = document.getElementById('library-search');
   const clear = document.getElementById('library-clear');
   const refresh = document.getElementById('library-refresh');
@@ -59,6 +62,31 @@ export function mountLibrary({ store, onSetCurrent, onClearCurrent }) {
   let selected = new Set();
   let anchor = null;
   let loading = false;
+  let blockedByLoadError = false;
+
+  function renderAvailability(state) {
+    if (state.library && state.library.load_error) {
+      blockedByLoadError = true;
+      content.hidden = true;
+      loadError.hidden = false;
+      loadError.replaceChildren(
+        stateBlock({
+          variant: 'error',
+          title: 'Library index needs rebuilding',
+          body: state.library.load_error.message,
+        }),
+      );
+      return;
+    }
+
+    loadError.hidden = true;
+    loadError.replaceChildren();
+    content.hidden = false;
+    if (blockedByLoadError) {
+      blockedByLoadError = false;
+      load();
+    }
+  }
 
   function report(message, state = 'idle') {
     status.textContent = message;
@@ -244,6 +272,15 @@ export function mountLibrary({ store, onSetCurrent, onClearCurrent }) {
   setCurrent.addEventListener('click', setSelectedAsCurrent);
   remove.addEventListener('click', deleteSelected);
 
-  load();
-  return { load, deleteSelected, setSelectedAsCurrent };
+  const unsubscribe = store.subscribe(renderAvailability);
+  renderAvailability(store.getState());
+  if (!blockedByLoadError) {
+    load();
+  }
+  return {
+    load,
+    deleteSelected,
+    setSelectedAsCurrent,
+    dispose: unsubscribe,
+  };
 }

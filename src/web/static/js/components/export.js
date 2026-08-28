@@ -70,7 +70,7 @@
  */
 
 import { api, ApiError } from '../api.js';
-import { element } from '../format.js';
+import { element, stateBlock } from '../format.js';
 import { libraryRowText, sortLibraryTracks } from './library.js';
 import { askyesno, showerror, showinfo, showwarning } from './message-box.js';
 import { openTrackSelectorDialog } from './track-selector-dialog.js';
@@ -454,6 +454,7 @@ export function mountExport({
   let tracksById = new Map();
   let libraryState = 'idle';
   let libraryError = null;
+  let blockedByLoadError = false;
 
   /* The latest job document, and whether we are still asking about it. */
   let job = null;
@@ -1090,6 +1091,26 @@ export function mountExport({
     if (state.destination !== 'export') {
       return;
     }
+    if (state.library && state.library.load_error) {
+      blockedByLoadError = true;
+      libraryState = 'error';
+      libraryError = state.library.load_error.message;
+      root.replaceChildren(
+        stateBlock({
+          variant: 'error',
+          title: 'Library index needs rebuilding',
+          body: state.library.load_error.message,
+        }),
+      );
+      renderControls();
+      return;
+    }
+    if (blockedByLoadError) {
+      blockedByLoadError = false;
+      libraryState = 'idle';
+      libraryError = null;
+    }
+    root.replaceChildren(view);
     loadLibrary();
     // :565 - the label is refreshed whenever this becomes visible.
     renderSelection();
