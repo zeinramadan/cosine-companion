@@ -42,7 +42,11 @@ import numpy as np
 import pandas as pd
 
 from config import DATA
-from core.deleted_tracks import add_deleted_tracks_with_metadata
+from core.deleted_tracks import (
+    add_deleted_tracks_with_metadata,
+    load_deleted_tracks_with_info,
+    remove_from_deleted_tracks,
+)
 from core.index_builder import NumpyCosIndex
 from core.index_store import write_index_generation
 from core.loader import load_all
@@ -212,6 +216,13 @@ class LibrarySession:
         with self._lock:
             return search_tracks(query, self._meta_ix, limit=limit)
 
+    def deleted_tracks(self) -> Dict[str, Dict[str, str]]:
+        """Return exclusions belonging to this session's data directory."""
+        with self._mutation_lock:
+            return load_deleted_tracks_with_info(
+                path=self.data_dir / "deleted_tracks.json"
+            )
+
     # -- mutation ----------------------------------------------------------
 
     def delete_tracks(self, track_ids: Iterable[str]) -> int:
@@ -279,6 +290,29 @@ class LibrarySession:
             self._ids = new_ids
             self._index = new_index
             return deleted_count
+
+    def restore_deleted_tracks(self, track_ids: Iterable[str]) -> int:
+        """Allow deleted tracks to be included by a future indexing run.
+
+        This changes only ``deleted_tracks.json``. It does not recreate any
+        metadata, embedding, or index row; the caller must reindex for that.
+        """
+        track_ids_to_restore = set(track_ids)
+        if not track_ids_to_restore:
+            return 0
+
+        with self._mutation_lock:
+            existing = load_deleted_tracks_with_info(
+                path=self.data_dir / "deleted_tracks.json"
+            )
+            restored_count = len(track_ids_to_restore.intersection(existing))
+            if restored_count == 0:
+                return 0
+            remove_from_deleted_tracks(
+                track_ids_to_restore,
+                path=self.data_dir / "deleted_tracks.json",
+            )
+            return restored_count
 
     def _deleted_track_record(self, track_id: str) -> Dict[str, str]:
         track = self.get_track(track_id)
