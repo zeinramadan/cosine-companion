@@ -93,6 +93,32 @@
               role="listbox"
               aria-label="Library tracks"
               aria-multiselectable="true"></ul>
+
+            <section class="library__deleted" aria-labelledby="library-deleted-title">
+              <div class="library__deleted-header">
+                <div>
+                  <h2 class="library__deleted-title" id="library-deleted-title">
+                    Deleted tracks
+                  </h2>
+                  <p class="library__deleted-copy">
+                    Restoring removes a track from the exclusion list only. It does not put
+                    the track back in the indexed library; run Index New Tracks after restoring.
+                  </p>
+                </div>
+                <button class="button" id="library-restore-all" type="button">
+                  Restore All for Reindex
+                </button>
+              </div>
+              <p
+                class="library__deleted-status"
+                id="library-deleted-status"
+                role="status"
+                aria-live="polite"></p>
+              <ul
+                class="library__deleted-tracks"
+                id="library-deleted-tracks"
+                aria-label="Deleted tracks"></ul>
+            </section>
           </div>
         </section>
 

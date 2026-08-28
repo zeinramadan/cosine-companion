@@ -27,7 +27,12 @@ const TRACKS = [
   },
 ];
 
-async function mounted() {
+const DELETED_TRACKS = [
+  { track_id: 'gone-b', artist: 'Rene Wise', title: 'Tizer --skip' },
+  { track_id: 'gone-a', artist: 'Blawan', title: 'Toast' },
+];
+
+async function mounted({ deletedTracks = DELETED_TRACKS } = {}) {
   const fetches = installFetch();
   const dom = buildLibraryDom();
   const { createStore } = await import('../../../src/web/static/js/store.js');
@@ -47,6 +52,10 @@ async function mounted() {
     onClearCurrent: () => cleared.push(true),
   });
   fetches.deliver('/api/library/tracks?q=', { tracks: TRACKS, total: 3 });
+  fetches.deliver('/api/library/deleted-tracks?q=', {
+    tracks: deletedTracks,
+    total: deletedTracks.length,
+  });
   await settle();
   return { fetches, store, setCurrentCalls, cleared, ...dom };
 }
@@ -161,10 +170,101 @@ test('Delete Selected confirms exact copy, writes once, refreshes and clears the
     total: 1,
   });
   await settle();
+  view.fetches.deliver('/api/library/deleted-tracks?q=', {
+    tracks: [...DELETED_TRACKS, TRACKS[0], TRACKS[2]],
+    total: 4,
+  });
+  await settle();
 
   assert.equal(view.status.textContent, '✅ Deleted 2 tracks from library');
   assert.equal(view.stats.textContent, '1 tracks');
   assert.equal(view.store.getState().library.track_count, 1);
   assert.deepEqual(view.cleared, [true]);
   assert.deepEqual(alerts, []);
+});
+
+test('Deleted tracks show artist, title and id instead of an undiscoverable exclusion', async () => {
+  const view = await mounted();
+
+  assert.deepEqual(
+    view.deletedList.children.map((row) => row.textContent),
+    [
+      'Blawan – ToastTrack ID: gone-aRestore for Reindex',
+      'Rene Wise – Tizer --skipTrack ID: gone-bRestore for Reindex',
+    ],
+  );
+  assert.equal(view.restoreAll.disabled, false);
+});
+
+test('Restoring one only removes its exclusion and directs the user to reindex', async () => {
+  const view = await mounted();
+  const confirmations = [];
+  window.confirm = (message) => confirmations.push(message) && true;
+
+  view.deletedList.children[1].children[1].dispatch('click');
+  await settle();
+
+  assert.deepEqual(confirmations, [
+    'Restore Rene Wise – Tizer --skip for reindexing?\n\n' +
+      'This only removes the deletion exclusion. The track will not return to ' +
+      'the library until you run Index New Tracks.',
+  ]);
+  const write = view.fetches.requests.at(-1);
+  assert.equal(write.path, '/api/library/deleted-tracks/restore');
+  assert.equal(write.options.method, 'POST');
+  assert.deepEqual(JSON.parse(write.options.body), { track_ids: 'gone-b' });
+
+  view.fetches.deliver('/api/library/deleted-tracks/restore?q=', {
+    removed_from_deleted: 1,
+    track_ids: ['gone-b'],
+    remaining: 1,
+    reindex_required: true,
+  });
+  await settle();
+
+  assert.deepEqual(
+    view.deletedList.children.map((row) => row.textContent),
+    ['Blawan – ToastTrack ID: gone-aRestore for Reindex'],
+  );
+  assert.equal(
+    view.deletedStatus.textContent,
+    '✅ Track is eligible for indexing again. ' +
+      'Run Index New Tracks to add it back to the library.',
+  );
+});
+
+test('Restore All uses the same mutation and still denies immediate library recovery', async () => {
+  const view = await mounted();
+  const confirmations = [];
+  window.confirm = (message) => confirmations.push(message) && true;
+
+  view.restoreAll.dispatch('click');
+  await settle();
+
+  assert.deepEqual(confirmations, [
+    'Restore 2 deleted tracks for reindexing?\n\n' +
+      'This only removes the deletion exclusion. The tracks will not return to ' +
+      'the library until you run Index New Tracks.',
+  ]);
+  const write = view.fetches.requests.at(-1);
+  assert.equal(write.path, '/api/library/deleted-tracks/restore');
+  assert.deepEqual(JSON.parse(write.options.body), {
+    track_ids: 'gone-a\ngone-b',
+  });
+
+  view.fetches.deliver('/api/library/deleted-tracks/restore?q=', {
+    removed_from_deleted: 2,
+    track_ids: ['gone-a', 'gone-b'],
+    remaining: 0,
+    reindex_required: true,
+  });
+  await settle();
+
+  assert.equal(view.deletedList.textContent, 'No tracks are excluded from indexing.');
+  assert.equal(view.restoreAll.disabled, true);
+  assert.equal(
+    view.deletedStatus.textContent,
+    '✅ Tracks are eligible for indexing again. ' +
+      'Run Index New Tracks to add them back to the library.',
+  );
 });

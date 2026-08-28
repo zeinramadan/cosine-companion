@@ -1,4 +1,4 @@
-/* The Library destination: browse, filter, select, seed and delete tracks.
+/* The Library destination: browse, filter, select, seed, delete and restore tracks.
  *
  * Inventory §2.7 is intentionally visible in this module. The browser list
  * keeps Tk's artist/title ordering, untrimmed four-field substring filter,
@@ -56,12 +56,17 @@ export function mountLibrary({ store, onSetCurrent, onClearCurrent }) {
   const stats = document.getElementById('library-stats');
   const status = document.getElementById('library-status');
   const list = document.getElementById('library-tracks');
+  const deletedList = document.getElementById('library-deleted-tracks');
+  const deletedStatus = document.getElementById('library-deleted-status');
+  const restoreAll = document.getElementById('library-restore-all');
 
   let tracks = [];
   let filtered = [];
+  let deletedTracks = [];
   let selected = new Set();
   let anchor = null;
   let loading = false;
+  let deletedBusy = false;
   let blockedByLoadError = false;
 
   function renderAvailability(state) {
@@ -85,12 +90,18 @@ export function mountLibrary({ store, onSetCurrent, onClearCurrent }) {
     if (blockedByLoadError) {
       blockedByLoadError = false;
       load();
+      loadDeleted();
     }
   }
 
   function report(message, state = 'idle') {
     status.textContent = message;
     status.dataset.state = state;
+  }
+
+  function reportDeleted(message, state = 'idle') {
+    deletedStatus.textContent = message;
+    deletedStatus.dataset.state = state;
   }
 
   function renderStats() {
@@ -194,6 +205,94 @@ export function mountLibrary({ store, onSetCurrent, onClearCurrent }) {
     }
   }
 
+  function renderDeletedList() {
+    restoreAll.disabled = deletedBusy || deletedTracks.length === 0;
+    if (!deletedTracks.length) {
+      deletedList.replaceChildren(
+        element('li', 'library__deleted-empty', 'No tracks are excluded from indexing.'),
+      );
+      return;
+    }
+
+    const rows = deletedTracks.map((track) => {
+      const row = element('li', 'library__deleted-row');
+      const identity = element('div', 'library__deleted-identity');
+      identity.append(
+        element(
+          'p',
+          'library__deleted-name',
+          `${track.artist || ''} – ${track.title || ''}`,
+        ),
+        element('p', 'library__deleted-id', `Track ID: ${track.track_id}`),
+      );
+      const restore = element('button', 'button', 'Restore for Reindex');
+      restore.type = 'button';
+      restore.disabled = deletedBusy;
+      restore.addEventListener('click', () => restoreDeleted([track]));
+      row.append(identity, restore);
+      return row;
+    });
+    deletedList.replaceChildren(...rows);
+  }
+
+  async function loadDeleted({ preserveStatus = false } = {}) {
+    if (deletedBusy) return;
+    deletedBusy = true;
+    renderDeletedList();
+    if (!preserveStatus) reportDeleted('Loading deleted tracks…');
+
+    try {
+      const body = await api.deletedLibraryTracks();
+      deletedTracks = sortLibraryTracks(body.tracks || []);
+      if (!preserveStatus) reportDeleted('');
+    } catch (error) {
+      reportDeleted(`❌ Error loading deleted tracks: ${error.message}`, 'error');
+    } finally {
+      deletedBusy = false;
+      renderDeletedList();
+    }
+  }
+
+  function restoreConfirmation(chosen) {
+    const target = chosen.length === 1
+      ? `${chosen[0].artist || ''} – ${chosen[0].title || ''}`
+      : `${chosen.length} deleted tracks`;
+    const subject = chosen.length === 1 ? 'The track' : 'The tracks';
+    return (
+      `Restore ${target} for reindexing?\n\n` +
+      `This only removes the deletion exclusion. ${subject} will not return to ` +
+      'the library until you run Index New Tracks.'
+    );
+  }
+
+  async function restoreDeleted(chosen) {
+    if (!chosen.length || !window.confirm(restoreConfirmation(chosen))) return;
+
+    deletedBusy = true;
+    renderDeletedList();
+    reportDeleted('Removing deletion exclusions…');
+    const restoredIds = new Set(chosen.map((track) => track.track_id));
+    try {
+      const body = await api.restoreDeletedLibraryTracks([...restoredIds]);
+      deletedTracks = deletedTracks.filter(
+        (track) => !restoredIds.has(track.track_id),
+      );
+      const subject = body.removed_from_deleted === 1 ? 'Track is' : 'Tracks are';
+      const object = body.removed_from_deleted === 1 ? 'it' : 'them';
+      reportDeleted(
+        `✅ ${subject} eligible for indexing again. ` +
+        `Run Index New Tracks to add ${object} back to the library.`,
+        'success',
+      );
+    } catch (error) {
+      window.alert(`Failed to restore deleted tracks: ${error.message}`);
+      reportDeleted('❌ Error restoring deleted tracks', 'error');
+    } finally {
+      deletedBusy = false;
+      renderDeletedList();
+    }
+  }
+
   function selectedTracks() {
     return filtered.filter((track) => selected.has(track.track_id));
   }
@@ -251,6 +350,7 @@ export function mountLibrary({ store, onSetCurrent, onClearCurrent }) {
           scrollTo: Math.max(0, firstVisible - deletedAbove),
           preserveStatus: true,
         });
+        await loadDeleted();
       } else {
         report('❌ No tracks were deleted', 'error');
       }
@@ -268,18 +368,25 @@ export function mountLibrary({ store, onSetCurrent, onClearCurrent }) {
     input.value = '';
     applyFilter();
   });
-  refresh.addEventListener('click', () => load());
+  refresh.addEventListener('click', () => {
+    load();
+    loadDeleted();
+  });
   setCurrent.addEventListener('click', setSelectedAsCurrent);
   remove.addEventListener('click', deleteSelected);
+  restoreAll.addEventListener('click', () => restoreDeleted(deletedTracks));
 
   const unsubscribe = store.subscribe(renderAvailability);
   renderAvailability(store.getState());
   if (!blockedByLoadError) {
     load();
+    loadDeleted();
   }
   return {
     load,
+    loadDeleted,
     deleteSelected,
+    restoreDeleted,
     setSelectedAsCurrent,
     dispose: unsubscribe,
   };

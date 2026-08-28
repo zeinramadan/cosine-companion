@@ -160,8 +160,23 @@ export function buildLibraryDom() {
   const stats = withId(new Node('p'), 'library-stats');
   const status = withId(new Node('p'), 'library-status');
   const list = withId(new Node('ul'), 'library-tracks');
+  const restoreAll = withId(new Node('button'), 'library-restore-all');
+  const deletedStatus = withId(new Node('p'), 'library-deleted-status');
+  const deletedList = withId(new Node('ul'), 'library-deleted-tracks');
   list.scrollTop = 0;
-  content.append(input, clear, refresh, remove, setCurrent, stats, status, list);
+  content.append(
+    input,
+    clear,
+    refresh,
+    remove,
+    setCurrent,
+    stats,
+    status,
+    list,
+    restoreAll,
+    deletedStatus,
+    deletedList,
+  );
   root.append(loadError, content);
   document.body.append(root);
   return {
@@ -176,6 +191,9 @@ export function buildLibraryDom() {
     stats,
     status,
     list,
+    restoreAll,
+    deletedStatus,
+    deletedList,
   };
 }
 
